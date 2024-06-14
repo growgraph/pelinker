@@ -1,0 +1,720 @@
+property,label,description
+http://purl.obolibrary.org/obo/BFO_0000050,part of,a core relation that holds between a part and its whole
+http://purl.obolibrary.org/obo/BFO_0000051,has part,a core relation that holds between a whole and its part
+http://purl.obolibrary.org/obo/BFO_0000054,realized in,
+http://purl.obolibrary.org/obo/BFO_0000055,realizes,
+http://purl.obolibrary.org/obo/BFO_0000060,obsolete preceded by,
+http://purl.obolibrary.org/obo/BFO_0000062,preceded by,"x is preceded by y if and only if the time point at which y ends is before or equivalent to the time point at which x starts. Formally: x preceded by y iff ω(y) <= α(x), where α is a function that maps a process to a start point, and ω is a function that maps a process to an end point."
+http://purl.obolibrary.org/obo/BFO_0000063,precedes,"x precedes y if and only if the time point at which x ends is before or equivalent to the time point at which y starts. Formally: x precedes y iff ω(x) <= α(y), where α is a function that maps a process to a start point, and ω is a function that maps a process to an end point."
+http://purl.obolibrary.org/obo/BFO_0000066,occurs in,b occurs_in c =def b is a process and c is a material entity or immaterial entity& there exists a spatiotemporal region r and b occupies_spatiotemporal_region r.& forall(t) if b exists_at t then c exists_at t & there exist spatial regions s and s’ where & b spatially_projects_onto s at t& c is occupies_spatial_region s’ at t& s is a proper_continuant_part_of s’ at t
+http://purl.obolibrary.org/obo/BFO_0000067,contains process,[copied from inverse property 'occurs in'] b occurs_in c =def b is a process and c is a material entity or immaterial entity& there exists a spatiotemporal region r and b occupies_spatiotemporal_region r.& forall(t) if b exists_at t then c exists_at t & there exist spatial regions s and s’ where & b spatially_projects_onto s at t& c is occupies_spatial_region s’ at t& s is a proper_continuant_part_of s’ at t
+http://purl.obolibrary.org/obo/ENVO_01003004,derives from part of,"A relation between two distinct material entities, the new entity and the old entity, in which the new entity begins to exist through the separation or transformation of a part of the old entity, and the new entity inherits a significant portion of the matter belonging to that part of the old entity."
+http://purl.obolibrary.org/obo/RO_0000052,characteristic of,"a relation between a specifically dependent continuant (the characteristic) and any other entity (the bearer), in which the characteristic depends on the bearer for its existence."
+http://purl.obolibrary.org/obo/RO_0000053,has characteristic,Inverse of characteristic_of
+http://purl.obolibrary.org/obo/RO_0000056,participates in,"a relation between a continuant and a process, in which the continuant is somehow involved in the process"
+http://purl.obolibrary.org/obo/RO_0000057,has participant,"a relation between a process and a continuant, in which the continuant is somehow involved in the process"
+http://purl.obolibrary.org/obo/RO_0000058,is concretized as,"A relationship between a generically dependent continuant and a specifically dependent continuant, in which the generically dependent continuant depends on some independent continuant in virtue of the fact that the specifically dependent continuant also depends on that same independent continuant. A generically dependent continuant may be concretized as multiple specifically dependent continuants."
+http://purl.obolibrary.org/obo/RO_0000059,concretizes,"A relationship between a specifically dependent continuant and a generically dependent continuant, in which the generically dependent continuant depends on some independent continuant in virtue of the fact that the specifically dependent continuant also depends on that same independent continuant. Multiple specifically dependent continuants can concretize the same generically dependent continuant."
+http://purl.obolibrary.org/obo/RO_0000079,function of,"a relation between a function and an independent continuant (the bearer), in which the function specifically depends on the bearer for its existence"
+http://purl.obolibrary.org/obo/RO_0000080,quality of,"a relation between a quality and an independent continuant (the bearer), in which the quality specifically depends on the bearer for its existence"
+http://purl.obolibrary.org/obo/RO_0000081,role of,"a relation between a role and an independent continuant (the bearer), in which the role specifically depends on the bearer for its existence"
+http://purl.obolibrary.org/obo/RO_0000085,has function,"a relation between an independent continuant (the bearer) and a function, in which the function specifically depends on the bearer for its existence"
+http://purl.obolibrary.org/obo/RO_0000086,has quality,"a relation between an independent continuant (the bearer) and a quality, in which the quality specifically depends on the bearer for its existence"
+http://purl.obolibrary.org/obo/RO_0000087,has role,"a relation between an independent continuant (the bearer) and a role, in which the role specifically depends on the bearer for its existence"
+http://purl.obolibrary.org/obo/RO_0000091,has disposition,"a relation between an independent continuant (the bearer) and a disposition, in which the disposition specifically depends on the bearer for its existence"
+http://purl.obolibrary.org/obo/RO_0000092,disposition of,inverse of has disposition
+http://purl.obolibrary.org/obo/RO_0000300,obsolete in neural circuit with,"OBSOLETE A relation that holds between two neurons connected directly via a synapse, or indirectly via a series of synaptically connected neurons."
+http://purl.obolibrary.org/obo/RO_0000301,obsolete upstream in neural circuit with,"OBSOLETE A relation that holds between a neuron that is synapsed_to another neuron or a neuron that is connected indirectly to another by a chain of neurons, each synapsed_to the next, in which the direction is from the last to the first."
+http://purl.obolibrary.org/obo/RO_0000302,obsolete downstream in neural circuit with,"OBSOLETE A relation that holds between a neuron that is synapsed_by another neuron or a neuron that is connected indirectly to another by a chain of neurons, each synapsed_by the next, in which the direction is from the last to the first."
+http://purl.obolibrary.org/obo/RO_0001000,derives from,"a relation between two distinct material entities, the new entity and the old entity, in which the new entity begins to exist when the old entity ceases to exist, and the new entity inherits the significant portion of the matter of the old entity"
+http://purl.obolibrary.org/obo/RO_0001001,derives into,"a relation between two distinct material entities, the old entity and the new entity, in which the new entity begins to exist when the old entity ceases to exist, and the new entity inherits the significant portion of the matter of the old entity"
+http://purl.obolibrary.org/obo/RO_0001015,location of,"a relation between two independent continuants, the location and the target, in which the target is entirely within the location"
+http://purl.obolibrary.org/obo/RO_0001018,obsolete contained in,
+http://purl.obolibrary.org/obo/RO_0001019,obsolete contains,
+http://purl.obolibrary.org/obo/RO_0001020,is allergic trigger for,"A relation between a material entity and a condition (a phenotype or disease) of a host, in which the material entity is not part of the host, and is considered harmless to non-allergic hosts, and the condition results in pathological processes that include an abnormally strong immune response against the material entity."
+http://purl.obolibrary.org/obo/RO_0001021,is autoimmune trigger for,"A relation between a material entity and a condition (a phenotype or disease) of a host, in which the material entity is part of the host itself, and the condition results in pathological processes that include an abnormally strong immune response against the material entity."
+http://purl.obolibrary.org/obo/RO_0001022,has allergic trigger,"A relation between a condition (a phenotype or disease) of a host and a material entity, in which the material entity is not part of the host, and is considered harmless to non-allergic hosts, and the condition results in pathological processes that include an abnormally strong immune response against the material entity."
+http://purl.obolibrary.org/obo/RO_0001023,has autoimmune trigger,"A relation between a condition (a phenotype or disease) of a host and a material entity, in which the material entity is part of the host itself, and the condition results in pathological processes that include an abnormally strong immune response against the material entity."
+http://purl.obolibrary.org/obo/RO_0001025,located in,"a relation between two independent continuants, the target and the location, in which the target is entirely within the location"
+http://purl.obolibrary.org/obo/RO_0002000,2D boundary of,"a relation between a 2D immaterial entity (the boundary) and a material entity, in which the boundary delimits the material entity"
+http://purl.obolibrary.org/obo/RO_0002001,aligned with,
+http://purl.obolibrary.org/obo/RO_0002002,has 2D boundary,"a relation between a material entity and a 2D immaterial entity (the boundary), in which the boundary delimits the material entity"
+http://purl.obolibrary.org/obo/RO_0002003,electrically_synapsed_to,A relation that holds between two neurons that are electrically coupled via gap junctions.
+http://purl.obolibrary.org/obo/RO_0002004,tracheates,The relationship that holds between a trachea or tracheole and an antomical structure that is contained in (and so provides an oxygen supply to).
+http://purl.obolibrary.org/obo/RO_0002005,innervated_by,
+http://purl.obolibrary.org/obo/RO_0002006,has synaptic terminal of,
+http://purl.obolibrary.org/obo/RO_0002007,bounding layer of,"X outer_layer_of Y iff:
+. X :continuant that bearer_of some PATO:laminar
+. X part_of Y
+. exists Z :surface
+. X has_boundary Z
+. Z boundary_of Y
+
+has_boundary: http://purl.obolibrary.org/obo/RO_0002002
+boundary_of: http://purl.obolibrary.org/obo/RO_0002000"
+http://purl.obolibrary.org/obo/RO_0002008,coincident with,A relation that holds between two linear structures that are approximately parallel to each other for their entire length and where either the two structures are adjacent to each other or one is part of the other.
+http://purl.obolibrary.org/obo/RO_0002009,cell expresses,"A relation that applies between a cell(c) and a gene(g) , where the process of 'transcription, DNA templated (GO_0006351)' is occuring in in cell c and that process has input gene g."
+http://purl.obolibrary.org/obo/RO_0002010,regulates in another organism,"x 'regulates in other organism' y if and only if: (x is the realization of a function to exert an effect on the frequency, rate or extent of y) AND (the agents of x are produced by organism o1 and the agents of y are produced by organism o2)."
+http://purl.obolibrary.org/obo/RO_0002011,regulates transport of,A relationship that holds between a  process that regulates a transport process and the entity transported by that process.
+http://purl.obolibrary.org/obo/RO_0002012,occurrent part of,A part of relation that applies only between occurrents.
+http://purl.obolibrary.org/obo/RO_0002013,has regulatory component activity,"A 'has regulatory component activity' B if A and B are GO molecular functions (GO_0003674), A has_component B and A is regulated by B."
+http://purl.obolibrary.org/obo/RO_0002014,has negative regulatory component activity,"A relationship that holds between a GO molecular function and a component of that molecular function that negatively regulates the activity of the whole.  More formally, A 'has regulatory component activity' B iff :A and B are GO molecular functions (GO_0003674), A has_component B and A is negatively regulated by B."
+http://purl.obolibrary.org/obo/RO_0002015,has positive regulatory component activity,"A relationship that holds between a GO molecular function and a component of that molecular function that positively regulates the activity of the whole.  More formally, A 'has regulatory component activity' B iff :A and B are GO molecular functions (GO_0003674), A has_component B and A is positively regulated by B."
+http://purl.obolibrary.org/obo/RO_0002016,has necessary component activity,
+http://purl.obolibrary.org/obo/RO_0002017,has component activity,
+http://purl.obolibrary.org/obo/RO_0002018,has component process,"w 'has process component' p if p and w are processes,  w 'has part' p and w is such that it can be directly disassembled into into n parts p, p2, p3, ..., pn, where these parts are of similar type."
+http://purl.obolibrary.org/obo/RO_0002019,has ligand,"A relationship that holds between between a receptor and an chemical entity, typically a small molecule or peptide, that carries information between cells or compartments of a cell and which binds the receptor and regulates its effector function."
+http://purl.obolibrary.org/obo/RO_0002020,transports,Holds between p and c when p is a transport process or transporter activity and the outcome of this p is to move c from one location to another.
+http://purl.obolibrary.org/obo/RO_0002021,occurs across,"A relationship between a process and a barrier, where the process occurs in a region spanning the barrier. For cellular processes the barrier is typically a membrane. Examples include transport across a membrane and membrane depolarization."
+http://purl.obolibrary.org/obo/RO_0002022,directly regulated by,
+http://purl.obolibrary.org/obo/RO_0002023,directly negatively regulated by,"Process(P2) is directly negatively regulated by process(P1) iff: P1 negatively regulates P2 via direct physical interaction between an agent executing P1 (or some part of P1) and an agent executing P2 (or some part of P2).  For example, if protein A has protein binding activity(P1) that targets protein B and this binding  negatively regulates the kinase activity (P2) of protein B then P2 directly negatively regulated by P1."
+http://purl.obolibrary.org/obo/RO_0002024,directly positively regulated by,"Process(P2) is directly postively regulated by process(P1) iff: P1 positively regulates P2 via direct physical interaction between an agent executing P1 (or some part of P1) and an agent executing P2 (or some part of P2).  For example, if protein A has protein binding activity(P1) that targets protein B and this binding positively regulates the kinase activity (P2) of protein B then P2 is directly postively regulated by P1."
+http://purl.obolibrary.org/obo/RO_0002025,has effector activity,"A 'has effector activity' B if A and B are GO molecular functions (GO_0003674),  A 'has component activity' B and B is the effector (output function) of B.  Each compound function has only one effector activity."
+http://purl.obolibrary.org/obo/RO_0002026,in register with,"A relationship that holds between two images, A and B, where:
+A depicts X;
+B depicts Y;
+X and Y are both of type T'
+C is a 2 layer image consiting of layers A and B;
+A and B are aligned in C according to a shared co-ordinate framework so that common features of X and Y are co-incident with each other.
+Note: A and B may be 2D or 3D.
+Examples include: the relationship between two channels collected simultaneously from a confocal microscope; the relationship between an image dpeicting X and a painted annotation layer that delineates regions of X; the relationship between the tracing of a neuron on an EM stack and the co-ordinate space of the stack; the relationship between two separately collected images that have been brought into register via some image registration software."
+http://purl.obolibrary.org/obo/RO_0002081,before or simultaneous with,
+http://purl.obolibrary.org/obo/RO_0002082,simultaneous with,"x simultaneous with y iff ω(x) = ω(y) and ω(α ) = ω(α), where α is a function that maps a process to a start point, and ω is a function that maps a process to an end point and '=' indicates the same instance in time."
+http://purl.obolibrary.org/obo/RO_0002083,before,
+http://purl.obolibrary.org/obo/RO_0002084,during which ends,
+http://purl.obolibrary.org/obo/RO_0002085,encompasses,
+http://purl.obolibrary.org/obo/RO_0002086,ends after,
+http://purl.obolibrary.org/obo/RO_0002087,immediately preceded by,
+http://purl.obolibrary.org/obo/RO_0002088,during which starts,
+http://purl.obolibrary.org/obo/RO_0002089,starts before,
+http://purl.obolibrary.org/obo/RO_0002090,immediately precedes,
+http://purl.obolibrary.org/obo/RO_0002091,starts during,
+http://purl.obolibrary.org/obo/RO_0002092,happens during,
+http://purl.obolibrary.org/obo/RO_0002093,ends during,
+http://purl.obolibrary.org/obo/RO_0002100,has soma location,Relation between a neuron and a material anatomical entity that its soma is part of.
+http://purl.obolibrary.org/obo/RO_0002101,fasciculates with,"relationship between a neuron and a neuron projection bundle (e.g.- tract or nerve bundle) that one or more of its projections travels through.
+"
+http://purl.obolibrary.org/obo/RO_0002102,axon synapses in,Relation between a neuron and some structure its axon forms (chemical) synapses in.
+http://purl.obolibrary.org/obo/RO_0002103,synapsed by,Relation between an anatomical structure (including cells) and a neuron that chemically synapses to it. 
+http://purl.obolibrary.org/obo/RO_0002104,has plasma membrane part,"Holds between a cell c and a protein complex or protein p if and only if that cell has as part a plasma_membrane[GO:0005886], and that plasma membrane has p as part."
+http://purl.obolibrary.org/obo/RO_0002105,synapsed_via_type_Ib_bouton_to,A relation between a motor neuron and a muscle that it synapses to via a type Ib bouton.
+http://purl.obolibrary.org/obo/RO_0002106,synapsed_via_type_Is_bouton_to,A relation between a motor neuron and a muscle that it synapses to via a type Is bouton.
+http://purl.obolibrary.org/obo/RO_0002107,synapsed_via_type_II_bouton_to,A relation between a motor neuron and a muscle that it synapses to via a type II bouton.
+http://purl.obolibrary.org/obo/RO_0002108,synapsed_by_via_type_II_bouton,Relation between a muscle and a motor neuron that synapses to it via a type II bouton.
+http://purl.obolibrary.org/obo/RO_0002109,synapsed_by_via_type_Ib_bouton,Relation between a muscle and a motor neuron that synapses to it via a type Ib bouton.
+http://purl.obolibrary.org/obo/RO_0002110,has postsynaptic terminal in,Relation between a neuron and some structure (e.g.- a brain region) in which it receives (chemical) synaptic input. 
+http://purl.obolibrary.org/obo/RO_0002111,releases neurotransmitter,
+http://purl.obolibrary.org/obo/RO_0002112,synapsed_by_via_type_Is_bouton,Relation between a muscle and a motor neuron that synapses to it via a type Is bouton.
+http://purl.obolibrary.org/obo/RO_0002113,has presynaptic terminal in,Relation between a neuron and some structure (e.g.- a brain region) in which it receives (chemical) synaptic input.
+http://purl.obolibrary.org/obo/RO_0002114,synapsed_via_type_III_bouton_to,A relation between a motor neuron and a muscle that it synapses to via a type III bouton.
+http://purl.obolibrary.org/obo/RO_0002115,synapsed_by_via_type_III_bouton,"Relation between a muscle and a motor neuron that synapses to it via a type III bouton.
+"
+http://purl.obolibrary.org/obo/RO_0002120,synapsed to," Relation between a neuron and an anatomical structure (including cells) that it chemically synapses to.
+        "
+http://purl.obolibrary.org/obo/RO_0002121,dendrite synapsed in,"Relation between a neuron and some structure  (e.g.- a brain region) in which its dendrite receives synaptic input.
+
+	"
+http://purl.obolibrary.org/obo/RO_0002130,has synaptic terminal in,A general relation between a neuron and some structure in which it either chemically synapses to some target or in which it receives (chemical) synaptic input.
+http://purl.obolibrary.org/obo/RO_0002131,overlaps,x overlaps y if and only if there exists some z such that x has part z and z part of y
+http://purl.obolibrary.org/obo/RO_0002132,has fasciculating neuron projection,The relation between a neuron projection bundle and a neuron projection that is fasciculated with it.
+http://purl.obolibrary.org/obo/RO_0002134,innervates,"Relation between a 'neuron projection bundle' and a region in which one or more of its component neuron projections either synapses to targets or receives synaptic input.
+T innervates some R
+Expands_to: T has_fasciculating_neuron_projection that synapse_in some R."
+http://purl.obolibrary.org/obo/RO_0002150,continuous with,X continuous_with Y if and only if X and Y share a fiat boundary.
+http://purl.obolibrary.org/obo/RO_0002151,partially overlaps,"x partially overlaps y iff there exists some z such that z is part of x and z is part of y, and it is also the case that neither x is part of y or y is part of x"
+http://purl.obolibrary.org/obo/RO_0002156,derived by descent from,d derived_by_descent_from a if d is specified by some genetic program that is sequence-inherited-from a genetic program that specifies a.
+http://purl.obolibrary.org/obo/RO_0002157,has derived by descendant,inverse of derived by descent from
+http://purl.obolibrary.org/obo/RO_0002158,shares ancestor with,two individual entities d1 and d2 stand in a shares_ancestor_with relation if and only if there exists some a such that d1 derived_by_descent_from a and d2 derived_by_descent_from a.
+http://purl.obolibrary.org/obo/RO_0002159,serially homologous to,
+http://purl.obolibrary.org/obo/RO_0002160,only in taxon,"x only in taxon y if and only if x is in taxon y, and there is no other organism z such that y!=z a and x is in taxon z."
+http://purl.obolibrary.org/obo/RO_0002162,in taxon,"x is in taxon y if an only if y is an organism, and the relationship between x and y is one of: part of (reflexive), developmentally preceded by, derives from, secreted by, expressed."
+http://purl.obolibrary.org/obo/RO_0002163,spatially disjoint from,A is spatially_disjoint_from B if and only if they have no parts in common
+http://purl.obolibrary.org/obo/RO_0002170,connected to,"a is connected to b if and only if a and b are discrete structure, and there exists some connecting structure c, such that c connects a and b"
+http://purl.obolibrary.org/obo/RO_0002176,connects,"c connects a if and only if there exist some b such that a and b are similar parts of the same system, and c connects b, specifically, c connects a with b. When one structure connects two others it unites some aspect of the function or role they play within the system."
+http://purl.obolibrary.org/obo/RO_0002177,attached to part of,"a is attached to part of b if a is attached to b, or a is attached to some p, where p is part of b."
+http://purl.obolibrary.org/obo/RO_0002178,supplies,"Relation between an arterial structure and another structure, where the arterial structure acts as a conduit channeling fluid, substance or energy."
+http://purl.obolibrary.org/obo/RO_0002179,drains,"Relation between an collecting structure and another structure, where the collecting structure acts as a conduit channeling fluid, substance or energy away from the other structure."
+http://purl.obolibrary.org/obo/RO_0002180,has component,"w 'has component' p if w 'has part' p and w is such that it can be directly disassembled into into n parts p, p2, p3, ..., pn, where these parts are of similar type."
+http://purl.obolibrary.org/obo/RO_0002200,has phenotype,"A relationship that holds between a biological entity and a phenotype. Here a phenotype is construed broadly as any kind of quality of an organism part, a collection of these qualities, or a change in quality or qualities (e.g. abnormally increased temperature). The subject of this relationship can be an organism (where the organism has the phenotype, i.e. the qualities inhere in parts of this organism), a genomic entity such as a gene or genotype (if modifications of the gene or the genotype causes the phenotype), or a condition such as a disease (such that if the condition inheres in an organism, then the organism has the phenotype)."
+http://purl.obolibrary.org/obo/RO_0002201,phenotype of,inverse of has phenotype
+http://purl.obolibrary.org/obo/RO_0002202,develops from,x develops from y if and only if either (a) x directly develops from y or (b) there exists some z such that x directly develops from z and z develops from y
+http://purl.obolibrary.org/obo/RO_0002203,develops into,inverse of develops from
+http://purl.obolibrary.org/obo/RO_0002204,gene product of,"definition ""x has gene product of y if and only if y is a gene (SO:0000704) that participates in some gene expression process (GO:0010467) where the output of that process is either y or something that is ribosomally translated from x"""
+http://purl.obolibrary.org/obo/RO_0002205,has gene product,x has gene product y if and only if x is a gene (SO:0000704) that participates in some gene expression process (GO:0010467) where the output of that process is either y or something that is ribosomally translated from y
+http://purl.obolibrary.org/obo/RO_0002206,expressed in,"x expressed in y if and only if there is a gene expression process (GO:0010467) that occurs in y, and one of the following holds: (i) x is a gene, and x is transcribed into a transcript as part of the gene expression process (ii) x is a transcript, and the transcription of x is part of the gene expression process (iii) x is a mature gene product such as a protein, and x was translated or otherwise processes from a transcript that was transcribed as part of this gene expression process"
+http://purl.obolibrary.org/obo/RO_0002207,directly develops from,"Candidate definition: x directly_develops from y if and only if there exists some developmental process (GO:0032502) p such that x and y both participate in p, and x is the output of p and y is the input of p, and a substantial portion of the matter of x comes from y, and the start of x is coincident with or after the end of y."
+http://purl.obolibrary.org/obo/RO_0002208,parasitoid of,A parasite that kills or sterilizes its host
+http://purl.obolibrary.org/obo/RO_0002209,has parasitoid,inverse of parasitoid of
+http://purl.obolibrary.org/obo/RO_0002210,directly develops into,inverse of directly develops from
+http://purl.obolibrary.org/obo/RO_0002211,regulates,"p regulates q iff p is causally upstream of q, the execution of p is not constant and varies according to specific conditions, and p influences the rate or magnitude of execution of q due to an effect either on some enabler of q or some enabler of a part of q."
+http://purl.obolibrary.org/obo/RO_0002212,negatively regulates,"p negatively regulates q iff p regulates q, and p decreases the rate or magnitude of execution of q."
+http://purl.obolibrary.org/obo/RO_0002213,positively regulates,"p positively regulates q iff p regulates q, and p increases the rate or magnitude of execution of q."
+http://purl.obolibrary.org/obo/RO_0002214,has prototype,"x has prototype y if and only if x is an instance of C and y is a prototypical instance of C. For example, every instance of heart, both normal and abnormal is related by the has prototype relation to some instance of a ""canonical"" heart, which participates in blood circulation."
+http://purl.obolibrary.org/obo/RO_0002215,capable of,"A relation between a material entity (such as a cell) and a process, in which the material entity has the ability to carry out the process. "
+http://purl.obolibrary.org/obo/RO_0002216,capable of part of,"c stands in this relationship to p if and only if there exists some p' such that c is capable_of p', and p' is part_of p."
+http://purl.obolibrary.org/obo/RO_0002217,obsolete actively participates in,OBSOLETE x actively participates in y if and only if x participates in y and x realizes some active role
+http://purl.obolibrary.org/obo/RO_0002218,obsolete has active participant,OBSOLETE x has participant y if and only if x realizes some active role that inheres in y
+http://purl.obolibrary.org/obo/RO_0002219,surrounded by,"x surrounded_by y if and only if (1) x is adjacent to y and for every region r that is adjacent to x, r overlaps y (2) the shared boundary between x and y occupies the majority of the outermost boundary of x"
+http://purl.obolibrary.org/obo/RO_0002220,adjacent to,x adjacent to y if and only if x and y share a boundary.
+http://purl.obolibrary.org/obo/RO_0002221,surrounds,inverse of surrounded by
+http://purl.obolibrary.org/obo/RO_0002222,temporally related to,
+http://purl.obolibrary.org/obo/RO_0002223,starts,inverse of starts with
+http://purl.obolibrary.org/obo/RO_0002224,starts with,"x starts with y if and only if x has part y and the time point at which x starts is equivalent to the time point at which y starts. Formally: α(y) = α(x) ∧ ω(y) < ω(x), where α is a function that maps a process to a start point, and ω is a function that maps a process to an end point."
+http://purl.obolibrary.org/obo/RO_0002225,develops from part of,x develops from part of y if and only if there exists some z such that x develops from z and z is part of y
+http://purl.obolibrary.org/obo/RO_0002226,develops in,x develops_in y if x is located in y whilst x is developing
+http://purl.obolibrary.org/obo/RO_0002227,obligate parasite of,A sub-relation of parasite-of in which the parasite that cannot complete its life cycle without a host.
+http://purl.obolibrary.org/obo/RO_0002228,facultative parasite of,A sub-relations of parasite-of in which the parasite that can complete its life cycle independent of a host.
+http://purl.obolibrary.org/obo/RO_0002229,ends,inverse of ends with
+http://purl.obolibrary.org/obo/RO_0002230,ends with,"x ends with y if and only if x has part y and the time point at which x ends is equivalent to the time point at which y ends. Formally: α(y) > α(x) ∧ ω(y) = ω(x), where α is a function that maps a process to a start point, and ω is a function that maps a process to an end point."
+http://purl.obolibrary.org/obo/RO_0002231,has start location,x 'has starts location' y if and only if there exists some process z such that x 'starts with' z and z 'occurs in' y
+http://purl.obolibrary.org/obo/RO_0002232,has end location,x 'has end location' y if and only if there exists some process z such that x 'ends with' z and z 'occurs in' y
+http://purl.obolibrary.org/obo/RO_0002233,has input,"p has input c iff: p is a process, c is a material entity, c is a participant in p, c is present at the start of p, and the state of c is modified during p."
+http://purl.obolibrary.org/obo/RO_0002234,has output,"p has output c iff c is a participant in p, c is present at the end of p, and c is not present in the same state at the beginning of p."
+http://purl.obolibrary.org/obo/RO_0002235,stem parasite of,A parasite-of relationship in which the host is a plant and the parasite that attaches to the host stem (PO:0009047)
+http://purl.obolibrary.org/obo/RO_0002236,root parasite of,A parasite-of relationship in which the host is a plant and the parasite that attaches to the host root (PO:0009005)
+http://purl.obolibrary.org/obo/RO_0002237,hemiparasite of,"A sub-relation of parasite-of in which the parasite is a plant, and the parasite is parasitic under natural conditions and is also photosynthetic to some degree. Hemiparasites may just obtain water and mineral nutrients from the host plant. Many obtain at least part of their organic nutrients from the host as well."
+http://purl.obolibrary.org/obo/RO_0002238,has component participant,X 'has component participant' Y means X 'has participant' Y and there is a cardinality constraint that specifies the numbers of Ys.
+http://purl.obolibrary.org/obo/RO_0002240,has exposure receptor,"A broad relationship between an exposure event or process and any entity (e.g., an organism, organism population, or an organism part) that interacts with an exposure stimulus during the exposure event."
+http://purl.obolibrary.org/obo/RO_0002241,has exposure stressor,"A broad relationship between an exposure event or process and any agent, stimulus, activity, or event that causes stress or tension on an organism and interacts with an exposure receptor during an exposure event."
+http://purl.obolibrary.org/obo/RO_0002242,has exposure route,A broad relationship between an exposure event or process and a process by which the exposure stressor comes into contact with the exposure receptor
+http://purl.obolibrary.org/obo/RO_0002243,has exposure transport path,A broad relationship between an exposure event or process and the course takes from the source to the target.
+http://purl.obolibrary.org/obo/RO_0002244,related via exposure to,Any relationship between an exposure event or process and any other entity.
+http://purl.obolibrary.org/obo/RO_0002245,over-expressed in,"g is over-expressed in t iff g is expressed in t, and the expression level of g is increased relative to some background."
+http://purl.obolibrary.org/obo/RO_0002246,under-expressed in,"g is under-expressed in t iff g is expressed in t, and the expression level of g is decreased relative to some background."
+http://purl.obolibrary.org/obo/RO_0002248,has active ingredient,"A relationship that holds between a substance and a chemical entity, if the chemical entity is part of the substance, and the chemical entity forms the biologically active component of the substance."
+http://purl.obolibrary.org/obo/RO_0002249,active ingredient in,inverse of has active ingredient
+http://purl.obolibrary.org/obo/RO_0002252,connecting branch of,"b connecting-branch-of s iff b is connected to s, and there exists some tree-like structure t such that the mereological sum of b plus s is either the same as t or a branching-part-of t."
+http://purl.obolibrary.org/obo/RO_0002253,has connecting branch,inverse of connecting branch of
+http://purl.obolibrary.org/obo/RO_0002254,has developmental contribution from,x has developmental contribution from y iff x has some part z such that z develops from y
+http://purl.obolibrary.org/obo/RO_0002255,developmentally contributes to,inverse of has developmental contribution from
+http://purl.obolibrary.org/obo/RO_0002256,developmentally induced by,"t1 induced_by t2 if there is a process of developmental induction (GO:0031128) with t1 and t2 as interacting participants. t2 causes t1 to change its fate from a precursor material anatomical entity type T to T', where T' develops_from T"
+http://purl.obolibrary.org/obo/RO_0002257,developmentally induces,Inverse of developmentally induced by
+http://purl.obolibrary.org/obo/RO_0002258,developmentally preceded by,"Candidate definition: x developmentally related to y if and only if there exists some developmental process (GO:0032502) p such that x and y both participates in p, and x is the output of p and y is the input of p"
+http://purl.obolibrary.org/obo/RO_0002260,has biological role,c has-biological-role r iff c has-role r and r is a biological role (CHEBI:24432)
+http://purl.obolibrary.org/obo/RO_0002261,has application role,c has-application-role r iff c has-role r and r is an application role (CHEBI:33232)
+http://purl.obolibrary.org/obo/RO_0002262,has chemical role,c has-chemical-role r iff c has-role r and r is a chemical role (CHEBI:51086)
+http://purl.obolibrary.org/obo/RO_0002263,acts upstream of,"c acts upstream of p if and only if c enables some f that is involved in p' and p' occurs chronologically before p, is not part of p, and affects the execution of p. c is a material entity and f, p, p' are processes."
+http://purl.obolibrary.org/obo/RO_0002264,acts upstream of or within,"c acts upstream of or within p if c is enables f, and f is causally upstream of or within p. c is a material entity and p is an process."
+http://purl.obolibrary.org/obo/RO_0002285,developmentally replaces,"x developmentally replaces y if and only if there is some developmental process that causes x to move or to cease to exist, and for the site that was occupied by x to become occupied by y, where y either comes into existence in this site or moves to this site from somewhere else"
+http://purl.obolibrary.org/obo/RO_0002286,developmentally succeeded by,Inverse of developmentally preceded by
+http://purl.obolibrary.org/obo/RO_0002287,part of developmental precursor of,
+http://purl.obolibrary.org/obo/RO_0002291,ubiquitously expressed in,"x is ubiquitously expressed in y if and only if x is expressed in y, and the majority of cells in y express x"
+http://purl.obolibrary.org/obo/RO_0002292,expresses,"y expresses x if and only if there is a gene expression process (GO:0010467) that occurs in y, and one of the following holds: (i) x is a gene, and x is transcribed into a transcript as part of the gene expression process (ii) x is a transcript, and x was transcribed from a gene as part of the gene expression process (iii) x is a mature gene product (protein or RNA), and x was translated or otherwise processed from a transcript that was transcribed as part of the gene expression process."
+http://purl.obolibrary.org/obo/RO_0002293,ubiquitously expresses,inverse of ubiquiotously expressed in
+http://purl.obolibrary.org/obo/RO_0002295,results in developmental progression of,"p results in the developmental progression of s iff p is a developmental process and s is an anatomical entity and p causes s to undergo a change in state at some point along its natural developmental cycle (this cycle starts with its formation, through the mature structure, and ends with its loss)."
+http://purl.obolibrary.org/obo/RO_0002296,results in development of,p 'results in development of' c if and only if p is a developmental process and p results in the state of c changing from its initial state as a primordium or anlage through its mature state and to its final state.
+http://purl.obolibrary.org/obo/RO_0002297,results in formation of anatomical entity,
+http://purl.obolibrary.org/obo/RO_0002298,results in morphogenesis of,The relationship that links an entity with the process that results in the formation and shaping of that entity over time from an immature to a mature state.
+http://purl.obolibrary.org/obo/RO_0002299,results in maturation of,The relationship that links an entity with a process that results in the progression of the entity over time that is independent of changes in it's shape and results in an end point state of that entity.
+http://purl.obolibrary.org/obo/RO_0002300,results in disappearance of,
+http://purl.obolibrary.org/obo/RO_0002301,results in developmental regression of,
+http://purl.obolibrary.org/obo/RO_0002302,is treated by substance,Inverse of 'is substance that treats'
+http://purl.obolibrary.org/obo/RO_0002303,has habitat,"x 'has habitat' y if and only if: x is an organism, y is a habitat, and y can sustain and allow the growth of a population of xs."
+http://purl.obolibrary.org/obo/RO_0002304,"causally upstream of, positive effect","p is causally upstream of, positive effect q iff p is casually upstream of q, and the execution of p is required for the execution of q."
+http://purl.obolibrary.org/obo/RO_0002305,"causally upstream of, negative effect","p is causally upstream of, negative effect q iff p is casually upstream of q, and the execution of p decreases the execution of q."
+http://purl.obolibrary.org/obo/RO_0002309,has exposure stimulus,"A relationship between an exposure event or process and any agent, stimulus, activity, or event that causally effects an organism and interacts with an exposure receptor during an exposure event."
+http://purl.obolibrary.org/obo/RO_0002312,evolutionary variant of,
+http://purl.obolibrary.org/obo/RO_0002313,transports or maintains localization of,Holds between p and c when p is a localization process (localization covers maintenance of localization as well as its establishment)  and the outcome of this process is to regulate the localization of c.
+http://purl.obolibrary.org/obo/RO_0002314,characteristic of part of,q characteristic of part of w if and only if there exists some p such that q inheres in p and p part of w.
+http://purl.obolibrary.org/obo/RO_0002315,results in acquisition of features of,The relationship that links a specified entity with the process that results in an unspecified entity acquiring the features and characteristics of the specified entity
+http://purl.obolibrary.org/obo/RO_0002320,evolutionarily related to,A relationship that holds via some environmental process
+http://purl.obolibrary.org/obo/RO_0002321,ecologically related to,A relationship that is mediated in some way by the environment or environmental feature (ENVO:00002297)
+http://purl.obolibrary.org/obo/RO_0002322,confers advantage in,
+http://purl.obolibrary.org/obo/RO_0002323,mereotopologically related to,A mereological relationship or a topological relationship
+http://purl.obolibrary.org/obo/RO_0002324,developmentally related to,A relationship that holds between entities participating in some developmental process (GO:0032502)
+http://purl.obolibrary.org/obo/RO_0002325,colocalizes with,a colocalizes_with b if and only if  a is transiently or peripherally associated with b[GO].
+http://purl.obolibrary.org/obo/RO_0002326,contributes to,
+http://purl.obolibrary.org/obo/RO_0002327,enables,c enables p iff c is capable of p and c acts to execute p.
+http://purl.obolibrary.org/obo/RO_0002328,functionally related to,"A grouping relationship for any relationship directly involving a function, or that holds because of a function of one of the related entities."
+http://purl.obolibrary.org/obo/RO_0002329,part of structure that is capable of,"this relation holds between c and p when c is part of some c', and c' is capable of p."
+http://purl.obolibrary.org/obo/RO_0002330,genomically related to,"holds between two entities when some genome-level process such as gene expression is involved. This includes transcriptional, spliceosomal events. These relations can be used between either macromolecule entities (such as regions of nucleic acid) or between their abstract informational counterparts."
+http://purl.obolibrary.org/obo/RO_0002331,involved in,"c involved_in p if and only if c enables some process p', and p' is part of p"
+http://purl.obolibrary.org/obo/RO_0002332,regulates levels of,p regulates levels of c if p regulates some amount (PATO:0000070) of c
+http://purl.obolibrary.org/obo/RO_0002333,enabled by,inverse of enables
+http://purl.obolibrary.org/obo/RO_0002334,regulated by,inverse of regulates
+http://purl.obolibrary.org/obo/RO_0002335,negatively regulated by,inverse of negatively regulates
+http://purl.obolibrary.org/obo/RO_0002336,positively regulated by,inverse of positively regulates
+http://purl.obolibrary.org/obo/RO_0002337,related via localization to,A relationship that holds via some process of localization
+http://purl.obolibrary.org/obo/RO_0002338,has target start location,This relationship holds between p and l when p is a transport or localization process in which the outcome is to move some cargo c from some initial location l to some destination.
+http://purl.obolibrary.org/obo/RO_0002339,has target end location,This relationship holds between p and l when p is a transport or localization process in which the outcome is to move some cargo c from a an initial location to some destination l.
+http://purl.obolibrary.org/obo/RO_0002340,imports,"Holds between p and c when p is a transportation or localization process and the outcome of this process is to move c to a destination that is part of some s, where the start location of c is part of the region that surrounds s."
+http://purl.obolibrary.org/obo/RO_0002341,results in transport along,"Holds between p and l when p is a transportation or localization process and the outcome of this process is to move c from one location to another, and the route taken by c follows a path that is aligned_with l "
+http://purl.obolibrary.org/obo/RO_0002342,results in transport across,"Holds between p and m when p is a transportation or localization process and the outcome of this process is to move c from one location to another, and the route taken by c follows a path that crosses m."
+http://purl.obolibrary.org/obo/RO_0002343,results in growth of,
+http://purl.obolibrary.org/obo/RO_0002344,results in transport to from or in,
+http://purl.obolibrary.org/obo/RO_0002345,exports,"Holds between p and c when p is a transportation or localization process and the outcome of this process is to move c to a destination that is part of some s, where the end location of c is part of the region that surrounds s."
+http://purl.obolibrary.org/obo/RO_0002348,results in commitment to,p 'results in commitment to' c if and only if p is a developmental process and c is a cell and p results in the state of c changing such that is can only develop into a single cell type.
+http://purl.obolibrary.org/obo/RO_0002349,results in determination of,"p 'results in determination of' c if and only if p is a developmental process and c is a cell and p results in the state of c changing to be determined. Once a cell becomes determined, it becomes committed to differentiate down a particular pathway regardless of its environment."
+http://purl.obolibrary.org/obo/RO_0002350,member of,is member of is a mereological relation between a item and a collection.
+http://purl.obolibrary.org/obo/RO_0002351,has member,has member is a mereological relation between a collection and an item.
+http://purl.obolibrary.org/obo/RO_0002352,input of,inverse of has input
+http://purl.obolibrary.org/obo/RO_0002353,output of,inverse of has output
+http://purl.obolibrary.org/obo/RO_0002354,formed as result of,
+http://purl.obolibrary.org/obo/RO_0002355,results in structural organization of,A relationship between a process and an anatomical entity such that the process contributes to the act of creating the structural organization of the anatomical entity.
+http://purl.obolibrary.org/obo/RO_0002356,results in specification of,"The relationship linking a cell and its participation in a process that results in the fate of the cell being specified. Once specification has taken place, a cell will be committed to differentiate down a specific pathway if left in its normal environment. "
+http://purl.obolibrary.org/obo/RO_0002357,results in developmental induction of,"p results in developmental induction of c if and only if p is a collection of cell-cell signaling processes that signal to a neighbouring tissue that is the precursor of the mature c, where the signaling results in the commitment to cell types necessary for the formation of c."
+http://purl.obolibrary.org/obo/RO_0002360,has dendrite location,
+http://purl.obolibrary.org/obo/RO_0002371,attached to,"a is attached to b if and only if a and b are discrete objects or object parts, and there are physical connections between a and b such that a force pulling a will move b, or a force pulling b will move a"
+http://purl.obolibrary.org/obo/RO_0002372,has muscle origin,"m has_muscle_origin s iff m is attached_to s, and it is the case that when m contracts, s does not move. The site of the origin tends to be more proximal and have greater mass than what the other end attaches to."
+http://purl.obolibrary.org/obo/RO_0002373,has muscle insertion,"m has_muscle_insertion s iff m is attaches_to s, and it is the case that when m contracts, s moves. Insertions are usually connections of muscle via tendon to bone."
+http://purl.obolibrary.org/obo/RO_0002374,derived from ancestral fusion of,"x has_fused_element y iff: there exists some z : x has_part z, z homologous_to y, and y is a distinct element, the boundary between x and z is largely fiat"
+http://purl.obolibrary.org/obo/RO_0002375,in branching relationship with,"A relationship that holds between two material entities in a system of connected structures, where the branching relationship holds based on properties of the connecting network."
+http://purl.obolibrary.org/obo/RO_0002376,tributary of,"x tributary_of y if and only if x a channel for the flow of a substance into y, where y is larger than x. If x and y are hydrographic features, then y is the main stem of a river, or a lake or bay, but not the sea or ocean. If x and y are anatomical, then y is a vein."
+http://purl.obolibrary.org/obo/RO_0002377,distributary of,"x distributary_of y if and only if x is capable of channeling the flow of a substance to y, where y channels less of the substance than x"
+http://purl.obolibrary.org/obo/RO_0002378,anabranch of,x anabranch_of y if x is a distributary of y (i.e. it channels a from a larger flow from y) and x ultimately channels the flow back into y.
+http://purl.obolibrary.org/obo/RO_0002379,spatially coextensive with,x spatially_coextensive_with y if and inly if x and y have the same location
+http://purl.obolibrary.org/obo/RO_0002380,branching part of,x is a branching part of y if and only if x is part of y and x is connected directly or indirectly to the main stem of y
+http://purl.obolibrary.org/obo/RO_0002381,main stem of,"x main_stem_of y if y is a branching structure and x is a channel that traces a linear path through y, such that x has higher capacity than any other such path."
+http://purl.obolibrary.org/obo/RO_0002382,proper distributary of,x proper_distributary_of y iff x distributary_of y and x does not flow back into y
+http://purl.obolibrary.org/obo/RO_0002383,proper tributary of,x proper_tributary_of y iff x tributary_of y and x does not originate from y
+http://purl.obolibrary.org/obo/RO_0002384,has developmental potential involving,"x has developmental potential involving y iff x is capable of a developmental process with output y. y may be the successor of x, or may be a different structure in the vicinity (as for example in the case of developmental induction)."
+http://purl.obolibrary.org/obo/RO_0002385,has potential to developmentally contribute to,x has potential to developmentrally contribute to y iff x developmentally contributes to y or x is capable of developmentally contributing to y
+http://purl.obolibrary.org/obo/RO_0002386,has potential to developmentally induce,x has potential to developmentally induce y iff x developmentally induces y or x is capable of developmentally inducing y
+http://purl.obolibrary.org/obo/RO_0002387,has potential to develop into,x has the potential to develop into y iff x develops into y or if x is capable of developing into y
+http://purl.obolibrary.org/obo/RO_0002388,has potential to directly develop into,x has potential to directly develop into y iff x directly develops into y or x is capable of directly developing into y
+http://purl.obolibrary.org/obo/RO_0002400,has direct input,"p has direct input c iff c is a participant in p, c is present at the start of p, and the state of c is modified during p."
+http://purl.obolibrary.org/obo/RO_0002401,obsolete has indirect input,
+http://purl.obolibrary.org/obo/RO_0002402,obsolete has direct output,"p has direct input c iff c is a participanti n p, c is present at the end of p, and c is not present at the beginning of c. "
+http://purl.obolibrary.org/obo/RO_0002403,obsolete has indirect output,
+http://purl.obolibrary.org/obo/RO_0002404,causally downstream of,inverse of upstream of
+http://purl.obolibrary.org/obo/RO_0002405,immediately causally downstream of,
+http://purl.obolibrary.org/obo/RO_0002406,obsolete directly activates,
+http://purl.obolibrary.org/obo/RO_0002407,indirectly positively regulates,p indirectly positively regulates q iff p is indirectly causally upstream of q and p positively regulates q.
+http://purl.obolibrary.org/obo/RO_0002408,obsolete directly inhibits,
+http://purl.obolibrary.org/obo/RO_0002409,indirectly negatively regulates,p indirectly negatively regulates q iff p is indirectly causally upstream of q and p negatively regulates q.
+http://purl.obolibrary.org/obo/RO_0002410,causally related to,"relation that links two events, processes, states, or objects such that one event, process, state, or object (a cause) contributes to the production of another event, process, state, or object (an effect) where the cause is partly or wholly responsible for the effect, and the effect is partly or wholly dependent on the cause."
+http://purl.obolibrary.org/obo/RO_0002411,causally upstream of,"p is causally upstream of q iff p is causally related to q, the end of p precedes the end of q, and p is not an occurrent part of q."
+http://purl.obolibrary.org/obo/RO_0002412,immediately causally upstream of,"p is immediately causally upstream of q iff p is causally upstream of q, and the end of p is coincident with the beginning of q."
+http://purl.obolibrary.org/obo/RO_0002413,provides input for,"p provides input for q iff p is immediately causally upstream of q, and there exists some c such that p has_output c and q has_input c."
+http://purl.obolibrary.org/obo/RO_0002414,transitively provides input for,transitive form of directly_provides_input_for
+http://purl.obolibrary.org/obo/RO_0002418,causally upstream of or within,"p is 'causally upstream or within' q iff p is causally related to q, and the end of p precedes, or is coincident with, the end of q."
+http://purl.obolibrary.org/obo/RO_0002424,differs in,
+http://purl.obolibrary.org/obo/RO_0002425,differs in attribute of,
+http://purl.obolibrary.org/obo/RO_0002426,differs in attribute,
+http://purl.obolibrary.org/obo/RO_0002427,causally downstream of or within,inverse of causally upstream of or within
+http://purl.obolibrary.org/obo/RO_0002428,involved in regulation of,c involved in regulation of p if c is involved in some p' and p' regulates some p
+http://purl.obolibrary.org/obo/RO_0002429,involved in positive regulation of,c involved in regulation of p if c is involved in some p' and p' positively regulates some p
+http://purl.obolibrary.org/obo/RO_0002430,involved in negative regulation of,c involved in regulation of p if c is involved in some p' and p' negatively regulates some p
+http://purl.obolibrary.org/obo/RO_0002431,involved in or involved in regulation of,c involved in or regulates p if and only if either (i) c is involved in p or (ii) c is involved in regulation of p
+http://purl.obolibrary.org/obo/RO_0002432,is active in,"c executes activity in d if and only if c enables p and p occurs_in d.  Assuming no action at a distance by gene products, if a gene product enables (is capable of) a process that occurs in some structure, it must have at least some part in that structure."
+http://purl.obolibrary.org/obo/RO_0002433,contributes to morphology of,"p contributes to morphology of w if and only if a change in the morphology of p entails a change in the morphology of w. Examples: every skull contributes to morphology of the head which it is a part of. Counter-example: nuclei do not generally contribute to the morphology of the cell they are part of, as they are buffered by cytoplasm."
+http://purl.obolibrary.org/obo/RO_0002434,interacts with,A relationship that holds between two entities in which the processes executed by the two entities are causally connected.
+http://purl.obolibrary.org/obo/RO_0002435,genetically interacts with,
+http://purl.obolibrary.org/obo/RO_0002436,molecularly interacts with,An interaction relationship in which the two partners are molecular entities that directly physically interact with each other for example via a stable binding interaction or a brief interaction during which one modifies the other.
+http://purl.obolibrary.org/obo/RO_0002437,biotically interacts with,An interaction relationship in which at least one of the partners is an organism and the other is either an organism or an abiotic entity with which the organism interacts.
+http://purl.obolibrary.org/obo/RO_0002438,trophically interacts with,An interaction relationship in which the partners are related via a feeding relationship.
+http://purl.obolibrary.org/obo/RO_0002439,preys on,"An interaction relationship involving a predation process, where the subject kills the target in order to eat it or to feed to siblings, offspring or group members"
+http://purl.obolibrary.org/obo/RO_0002440,symbiotically interacts with,A biotic interaction in which the two organisms live together in more or less intimate association.
+http://purl.obolibrary.org/obo/RO_0002441,commensually interacts with,An interaction relationship between two organisms living together in more or less intimate association in a relationship in which one benefits and the other is unaffected (GO).
+http://purl.obolibrary.org/obo/RO_0002442,mutualistically interacts with,An interaction relationship between two organisms living together in more or less intimate association in a relationship in which both organisms benefit from each other (GO).
+http://purl.obolibrary.org/obo/RO_0002443,interacts with via parasite-host interaction,An interaction relationship between two organisms living together in more or less intimate association in a relationship in which association is disadvantageous or destructive to one of the organisms (GO).
+http://purl.obolibrary.org/obo/RO_0002444,parasite of,A parasite-host relationship where an organism benefits at the expense of another.
+http://purl.obolibrary.org/obo/RO_0002445,parasitized by,Inverse of parasite of
+http://purl.obolibrary.org/obo/RO_0002446,participates in a abiotic-biotic interaction with,"A biotic interaction relationship in which one partner is an organism and the other partner is inorganic. For example, the relationship between a sponge and the substrate to which is it anchored."
+http://purl.obolibrary.org/obo/RO_0002447,phosphorylates,
+http://purl.obolibrary.org/obo/RO_0002448,directly regulates activity of,"The entity A, immediately upstream of the entity B, has an activity that regulates an activity performed by B. For example, A and B may be gene products and binding of B by A regulates the kinase activity of B.
+
+A and B can be physically interacting but not necessarily. Immediately upstream means there are no intermediate entity between A and B."
+http://purl.obolibrary.org/obo/RO_0002449,directly negatively regulates activity of,"The entity A, immediately upstream of the entity B, has an activity that negatively regulates an activity performed by B. 
+For example, A and B may be gene products and binding of B by A negatively regulates the kinase activity of B."
+http://purl.obolibrary.org/obo/RO_0002450,directly positively regulates activity of,"The entity A, immediately upstream of the entity B, has an activity that positively regulates an activity performed by B. 
+For example, A and B may be gene products and binding of B by A positively regulates the kinase activity of B."
+http://purl.obolibrary.org/obo/RO_0002451,transmitted by,A relationship that holds between a disease and organism
+http://purl.obolibrary.org/obo/RO_0002452,has symptom,A relation that holds between a disease or an organism and a phenotype
+http://purl.obolibrary.org/obo/RO_0002453,host of,
+http://purl.obolibrary.org/obo/RO_0002454,has host,"X 'has host' y if and only if: x is an organism, y is an organism, and x can live on the surface of or within the body of y"
+http://purl.obolibrary.org/obo/RO_0002455,pollinates,
+http://purl.obolibrary.org/obo/RO_0002456,pollinated by,
+http://purl.obolibrary.org/obo/RO_0002457,acquires nutrients from,Inverse of provides nutrients for
+http://purl.obolibrary.org/obo/RO_0002458,preyed upon by,inverse of preys on
+http://purl.obolibrary.org/obo/RO_0002459,is vector for,
+http://purl.obolibrary.org/obo/RO_0002460,has vector,
+http://purl.obolibrary.org/obo/RO_0002461,partner in,
+http://purl.obolibrary.org/obo/RO_0002462,subject participant in,
+http://purl.obolibrary.org/obo/RO_0002463,target participant in,
+http://purl.obolibrary.org/obo/RO_0002464,helper property (not for use in curation),
+http://purl.obolibrary.org/obo/RO_0002465,is symbiosis,
+http://purl.obolibrary.org/obo/RO_0002466,is commensalism,
+http://purl.obolibrary.org/obo/RO_0002467,is mutualism,
+http://purl.obolibrary.org/obo/RO_0002468,is parasitism,
+http://purl.obolibrary.org/obo/RO_0002469,provides nutrients for,A biotic interaction where a material entity provides nutrition for an organism.
+http://purl.obolibrary.org/obo/RO_0002470,eats,A biotic interaction where one organism consumes a material entity through a type of mouth or other oral opening.
+http://purl.obolibrary.org/obo/RO_0002471,is eaten by,Inverse of eats
+http://purl.obolibrary.org/obo/RO_0002472,is evidence for,"A relationship between a piece of evidence a and some entity b, where b is  an information content entity, material entity or process, and 
+the a supports either the existence of b, or the truth value of b."
+http://purl.obolibrary.org/obo/RO_0002473,composed primarily of,x composed_primarily_of y if and only if more than half of the mass of x is made from y or units of the same type as y.
+http://purl.obolibrary.org/obo/RO_0002476,child nucleus of,"c is a child nucleus of d if and only if c and d are both nuclei and parts of cells c' and d', where c' is derived from d' by mitosis and the genetic material in c is a copy of the generic material in d"
+http://purl.obolibrary.org/obo/RO_0002477,child nucleus of in hermaphrodite,A child nucleus relationship in which the cells are part of a hermaphroditic organism
+http://purl.obolibrary.org/obo/RO_0002478,child nucleus of in male,A child nucleus relationship in which the cells are part of a male organism
+http://purl.obolibrary.org/obo/RO_0002479,has part that occurs in,"p has part that occurs in c if and only if there exists some p1, such that p has_part p1, and p1 occurs in c."
+http://purl.obolibrary.org/obo/RO_0002480,ubiquitinates,An interaction relation between x and y in which x catalyzes a reaction in which one or more ubiquitin groups are added to y
+http://purl.obolibrary.org/obo/RO_0002481,is kinase activity,
+http://purl.obolibrary.org/obo/RO_0002482,is ubiquitination,
+http://purl.obolibrary.org/obo/RO_0002485,receives input from,
+http://purl.obolibrary.org/obo/RO_0002486,sends output to,
+http://purl.obolibrary.org/obo/RO_0002487,relation between physical entity and a process or stage,
+http://purl.obolibrary.org/obo/RO_0002488,existence starts during,x existence starts during y if and only if the time point at which x starts is after or equivalent to the time point at which y starts and before or equivalent to the time point at which y ends. Formally: x existence starts during y iff α(x) >= α(y) & α(x) <= ω(y).
+http://purl.obolibrary.org/obo/RO_0002489,existence starts with,x starts ends with y if and only if the time point at which x starts is equivalent to the time point at which y starts. Formally: x existence starts with y iff α(x) = α(y).
+http://purl.obolibrary.org/obo/RO_0002490,existence overlaps,x existence overlaps y if and only if either (a) the start of x is part of y or (b) the end of x is part of y. Formally: x existence starts and ends during y iff (α(x) >= α(y) & α(x) <= ω(y)) OR (ω(x) <= ω(y) & ω(x) >= α(y))
+http://purl.obolibrary.org/obo/RO_0002491,existence starts and ends during,x exists during y if and only if: 1) the time point at which x begins to exist is after or equal to the time point at which y begins and 2) the time point at which x ceases to exist is before or equal to the point at which y ends. Formally: x existence starts and ends during y iff α(x) >= α(y) & α(x) <= ω(y) & ω(x) <= ω(y) & ω(x) >= α(y)
+http://purl.obolibrary.org/obo/RO_0002492,existence ends during,x existence ends during y if and only if the time point at which x ends is before or equivalent to the time point at which y ends and after or equivalent to the point at which y starts. Formally: x existence ends during y iff ω(x) <= ω(y) and ω(x) >= α(y).
+http://purl.obolibrary.org/obo/RO_0002493,existence ends with,x existence ends with y if and only if the time point at which x ends is equivalent to the time point at which y ends. Formally: x existence ends with y iff ω(x) = ω(y).
+http://purl.obolibrary.org/obo/RO_0002494,transformation of,"x transformation of y if x is the immediate transformation of y, or is linked to y through a chain of transformation relationships"
+http://purl.obolibrary.org/obo/RO_0002495,immediate transformation of,"x immediate transformation of y iff x immediately succeeds y temporally at a time boundary t, and all of the matter present in x at t is present in y at t, and all the matter in y at t is present in x at t"
+http://purl.obolibrary.org/obo/RO_0002496,existence starts during or after,x existence starts during or after y if and only if the time point at which x starts is after or equivalent to the time point at which y starts. Formally: x existence starts during or after y iff α (x) >= α (y).
+http://purl.obolibrary.org/obo/RO_0002497,existence ends during or before,x existence ends during or before y if and only if the time point at which x ends is before or equivalent to the time point at which y ends.
+http://purl.obolibrary.org/obo/RO_0002500,causal agent in process,A relationship between a material entity and a process where the material entity has some causal role that influences the process
+http://purl.obolibrary.org/obo/RO_0002501,causal relation between processes,"p is causally related to q if and only if p or any part of p and q or any part of q are linked by a chain of events where each event pair is one where the execution of p influences the execution of q. p may be upstream, downstream, part of, or a container of q."
+http://purl.obolibrary.org/obo/RO_0002502,depends on,
+http://purl.obolibrary.org/obo/RO_0002503,towards,"q towards e2 if and only if q is a relational quality such that q inheres-in some e, and e != e2 and q is dependent on e2"
+http://purl.obolibrary.org/obo/RO_0002505,has intermediate,"p has intermediate c if and only if p has parts p1, p2 and p1 has output c, and p2 has input c"
+http://purl.obolibrary.org/obo/RO_0002506,causal relation between entities,
+http://purl.obolibrary.org/obo/RO_0002507,determined by,"s determined by f if and only if s is a type of system, and f is a material entity that is part of s, such that f exerts a strong causal influence on the functioning of s, and the removal of f would cause the collapse of s."
+http://purl.obolibrary.org/obo/RO_0002508,determines,inverse of determined by
+http://purl.obolibrary.org/obo/RO_0002509,determined by part of,"s 'determined by part of' w if and only if there exists some f such that (1) s 'determined by' f and (2) f part_of w, or f=w."
+http://purl.obolibrary.org/obo/RO_0002510,transcribed from,x is transcribed from y if and only if x is synthesized from template y
+http://purl.obolibrary.org/obo/RO_0002511,transcribed to,inverse of transcribed from
+http://purl.obolibrary.org/obo/RO_0002512,ribosomal translation of,x is the ribosomal translation of y if and only if a ribosome reads x through a series of triplet codon-amino acid adaptor activities (GO:0030533) and produces y
+http://purl.obolibrary.org/obo/RO_0002513,ribosomally translates to,inverse of ribosomal translation of
+http://purl.obolibrary.org/obo/RO_0002514,sequentially related to,A relation that holds between two entities that have the property of being sequences or having sequences. 
+http://purl.obolibrary.org/obo/RO_0002515,sequentially adjacent to,x is sequentially adjacent to y iff x and y do not overlap and if there are no base units intervening between x and y
+http://purl.obolibrary.org/obo/RO_0002516,has start sequence,"x has start sequence y if the start of x is identical to the start of y, and x has y as a subsequence"
+http://purl.obolibrary.org/obo/RO_0002517,is start sequence of,inverse of has start sequence
+http://purl.obolibrary.org/obo/RO_0002518,has end sequence,"x has end sequence y if the end of x is identical to the end of y, and x has y as a subsequence"
+http://purl.obolibrary.org/obo/RO_0002519,is end sequence of,inverse of has end sequence
+http://purl.obolibrary.org/obo/RO_0002520,is consecutive sequence of,"x is a consecutive sequence of y iff x has subsequence y, and all the parts of x are made of zero or more repetitions of y or sequences as the same type as y."
+http://purl.obolibrary.org/obo/RO_0002521,is sequentially aligned with,x is sequentially aligned with if a significant portion bases of x and y correspond in terms of their base type and their relative ordering
+http://purl.obolibrary.org/obo/RO_0002522,bounds sequence of,"x bounds the sequence of y iff the upstream-most part of x is upstream of or coincident with the upstream-most part of y, and the downstream-most part of x is downstream of or coincident with the downstream-most part of y"
+http://purl.obolibrary.org/obo/RO_0002523,is bound by sequence of,inverse of bounds sequence of
+http://purl.obolibrary.org/obo/RO_0002524,has subsequence,x has subsequence y iff all of the sequence parts of y are sequence parts of x
+http://purl.obolibrary.org/obo/RO_0002525,is subsequence of,inverse of has subsequence
+http://purl.obolibrary.org/obo/RO_0002526,overlaps sequence of,x overlaps the sequence of y if and only if x has a subsequence z and z is a subsequence of y.
+http://purl.obolibrary.org/obo/RO_0002527,does not overlap sequence of,x does not overlap the sequence of y if and only if there is no z such that x has a subsequence z and z is a subsequence of y.
+http://purl.obolibrary.org/obo/RO_0002528,is upstream of sequence of,inverse of downstream of sequence of
+http://purl.obolibrary.org/obo/RO_0002529,is downstream of sequence of,"x is downstream of the sequence of y iff either (1) x and y have sequence units, and all units of x are downstream of all units of y, or (2) x and y are sequence units, and x is either immediately downstream of y, or transitively downstream of y."
+http://purl.obolibrary.org/obo/RO_0002530,is immediately downstream of sequence of,"x is immediately downstream of the sequence of y iff either (1) x and y have sequence units, and all units of x are downstream of all units of y, and x is sequentially adjacent to y, or (2) x and y are sequence units, in which case the immediately downstream relation is primitive and defined by context: for DNA bases, y would be adjacent and 5' to y"
+http://purl.obolibrary.org/obo/RO_0002531,is immediately upstream of sequence of,inverse of immediately downstream of
+http://purl.obolibrary.org/obo/RO_0002551,has skeleton,A relation between a segment or subdivision of an organism and the maximal subdivision of material entities that provides structural support for that segment or subdivision.
+http://purl.obolibrary.org/obo/RO_0002552,results in ending of,"p results in the end of s if p results in a change of state in s whereby s either ceases to exist, or s becomes functionally impaired or s has its fate committed such that it is put on a path to be degraded."
+http://purl.obolibrary.org/obo/RO_0002553,hyperparasite of,x is a hyperparasite of y iff x is a parasite of a parasite of the target organism y
+http://purl.obolibrary.org/obo/RO_0002554,hyperparasitized by,inverse of hyperparasite of
+http://purl.obolibrary.org/obo/RO_0002555,allelopath of,
+http://purl.obolibrary.org/obo/RO_0002556,pathogen of,Inverse of has pathogen
+http://purl.obolibrary.org/obo/RO_0002557,has pathogen,A host interaction where the smaller of the two members of a symbiosis causes a disease in the larger member
+http://purl.obolibrary.org/obo/RO_0002558,has evidence,inverse of is evidence for
+http://purl.obolibrary.org/obo/RO_0002559,causally influenced by,
+http://purl.obolibrary.org/obo/RO_0002563,interaction relation helper property,
+http://purl.obolibrary.org/obo/RO_0002564,molecular interaction relation helper property,
+http://purl.obolibrary.org/obo/RO_0002565,results in movement of,Holds between p and c when p is locomotion process and the outcome of this process is the change of location of c
+http://purl.obolibrary.org/obo/RO_0002566,causally influences,"The entity or characteristic A is causally upstream of the entity or characteristic B, A having an effect on B. An entity corresponds to any biological type of entity as long as a mass is measurable. A characteristic corresponds to a particular specificity of an entity (e.g., phenotype, shape, size)."
+http://purl.obolibrary.org/obo/RO_0002567,biomechanically related to,A relation that holds between elements of a musculoskeletal system or its analogs.
+http://purl.obolibrary.org/obo/RO_0002568,has muscle antagonist,"m1 has_muscle_antagonist m2 iff m1 has_muscle_insertion s, m2 has_muscle_insection s, m1 acts in opposition to m2, and m2 is responsible for returning the structure to its initial position."
+http://purl.obolibrary.org/obo/RO_0002569,has branching part,inverse of branching part of
+http://purl.obolibrary.org/obo/RO_0002570,conduit for,"x is a conduit for y iff y overlaps through the lumen_of of x, and y has parts on either side of the lumen of x."
+http://purl.obolibrary.org/obo/RO_0002571,lumen of,x lumen_of y iff x is the space or substance that is part of y and does not cross any of the inner membranes or boundaries of y that is maximal with respect to the volume of the convex hull.
+http://purl.obolibrary.org/obo/RO_0002572,luminal space of,s is luminal space of x iff s is lumen_of x and s is an immaterial entity
+http://purl.obolibrary.org/obo/RO_0002573,has modifier,A relation that holds between an attribute or a qualifier and another attribute.
+http://purl.obolibrary.org/obo/RO_0002574,participates in a biotic-biotic interaction with,
+http://purl.obolibrary.org/obo/RO_0002576,skeleton of,inverse of has skeleton
+http://purl.obolibrary.org/obo/RO_0002578,directly regulates,p directly regulates q iff p is immediately causally upstream of q and p regulates q.
+http://purl.obolibrary.org/obo/RO_0002583,existence starts at end of,holds between x and y if and only if the time point at which x starts is equivalent to the time point at which y ends. Formally: iff α(x) = ω(y).
+http://purl.obolibrary.org/obo/RO_0002584,has part structure that is capable of,s 'has part structure that is capable of' p if and only if there exists some part x such that s 'has part' x and x 'capable of' p
+http://purl.obolibrary.org/obo/RO_0002585,results in closure of,
+http://purl.obolibrary.org/obo/RO_0002586,results in breakdown of,p results in breakdown of c if and only if the execution of p leads to c no longer being present at the end of p
+http://purl.obolibrary.org/obo/RO_0002587,results in synthesis of,
+http://purl.obolibrary.org/obo/RO_0002588,results in assembly of,
+http://purl.obolibrary.org/obo/RO_0002589,results in catabolism of,"p results in catabolism of c if and only if p is a catabolic process, and the execution of p results in c being broken into smaller parts with energy being released."
+http://purl.obolibrary.org/obo/RO_0002590,results in disassembly of,
+http://purl.obolibrary.org/obo/RO_0002591,results in remodeling of,
+http://purl.obolibrary.org/obo/RO_0002592,results in organization of,"p results in organization of c iff p results in the assembly, arrangement of constituent parts, or disassembly of c"
+http://purl.obolibrary.org/obo/RO_0002593,existence ends at start of,holds between x and y if and only if the time point at which x ends is equivalent to the time point at which y starts. Formally: iff ω(x) = α(y).
+http://purl.obolibrary.org/obo/RO_0002595,causal relation between material entity and a process,"A relationship that holds between a material entity and a process in which causality is involved, with either the material entity or some part of the material entity exerting some influence over the process, or the process influencing some aspect of the material entity."
+http://purl.obolibrary.org/obo/RO_0002596,capable of regulating,"Holds between c and p if and only if c is capable of some activity a, and a regulates p."
+http://purl.obolibrary.org/obo/RO_0002597,capable of negatively regulating,"Holds between c and p if and only if c is capable of some activity a, and a negatively regulates p."
+http://purl.obolibrary.org/obo/RO_0002598,capable of positively regulating,"Holds between c and p if and only if c is capable of some activity a, and a positively regulates p."
+http://purl.obolibrary.org/obo/RO_0002599,capable of inhibiting or preventing pathological process,"Holds between a material entity c and a pathological process p if and only if c is capable of some activity a, where a inhibits p."
+http://purl.obolibrary.org/obo/RO_0002600,capable of upregulating or causing pathological process,"Holds between a material entity c and a pathological process p if and only if c is capable of some activity a, where a negatively regulates p."
+http://purl.obolibrary.org/obo/RO_0002606,is substance that treats,"c is a substance that treats d if c is a material entity (such as a small molecule or compound) and d is a pathological process, phenotype or disease, and c is capable of some activity that negative regulates or decreases the magnitude of d."
+http://purl.obolibrary.org/obo/RO_0002607,is marker for,"c is marker for d iff the presence or occurrence of d is correlated with the presence of occurrence of c, and the observation of c is used to infer the presence or occurrence of d. Note that this does not imply that c and d are in a direct causal relationship, as it may be the case that there is a third entity e that stands in a direct causal relationship with c and d."
+http://purl.obolibrary.org/obo/RO_0002608,process has causal agent,Inverse of 'causal agent in process'
+http://purl.obolibrary.org/obo/RO_0002609,obsolete related via dependence to,"A relationship that holds between two entities, where the relationship holds based on the presence or absence of statistical dependence relationship. The entities may be statistical variables, or they may be other kinds of entities such as diseases, chemical entities or processes."
+http://purl.obolibrary.org/obo/RO_0002610,correlated with,"A relationship that holds between two entities, where the entities exhibit a statistical dependence relationship. The entities may be statistical variables, or they may be other kinds of entities such as diseases, chemical entities or processes."
+http://purl.obolibrary.org/obo/RO_0002614,is evidence with support from,A relationship between a piece of evidence and an entity that plays a role in supporting that evidence.
+http://purl.obolibrary.org/obo/RO_0002615,has model,Inverse of is-model-of
+http://purl.obolibrary.org/obo/RO_0002616,related via evidence or inference to,
+http://purl.obolibrary.org/obo/RO_0002618,visits,
+http://purl.obolibrary.org/obo/RO_0002619,visited by,
+http://purl.obolibrary.org/obo/RO_0002622,visits flowers of,
+http://purl.obolibrary.org/obo/RO_0002623,has flowers visited by,
+http://purl.obolibrary.org/obo/RO_0002624,lays eggs in,
+http://purl.obolibrary.org/obo/RO_0002625,has eggs laid in by,
+http://purl.obolibrary.org/obo/RO_0002626,kills,
+http://purl.obolibrary.org/obo/RO_0002627,is killed by,
+http://purl.obolibrary.org/obo/RO_0002629,directly positively regulates,"p directly positively regulates q iff p is immediately causally upstream of q, and p positively regulates q."
+http://purl.obolibrary.org/obo/RO_0002630,directly negatively regulates,"p directly negatively regulates q iff p is immediately causally upstream of q, and p negatively regulates q."
+http://purl.obolibrary.org/obo/RO_0002632,ectoparasite of,A sub-relation of parasite-of in which the parasite lives on or in the integumental system of the host
+http://purl.obolibrary.org/obo/RO_0002633,has ectoparasite,inverse of ectoparasite of
+http://purl.obolibrary.org/obo/RO_0002634,endoparasite of,
+http://purl.obolibrary.org/obo/RO_0002635,has endoparasite,
+http://purl.obolibrary.org/obo/RO_0002636,mesoparasite of,A sub-relation of parasite-of in which the parasite is partially an endoparasite and partially an ectoparasite
+http://purl.obolibrary.org/obo/RO_0002637,has mesoparasite,inverse of mesoparasite of
+http://purl.obolibrary.org/obo/RO_0002638,intercellular endoparasite of,A sub-relation of endoparasite-of in which the parasite inhabits the spaces between host cells.
+http://purl.obolibrary.org/obo/RO_0002639,has intercellular endoparasite,inverse of intercellular endoparasite of
+http://purl.obolibrary.org/obo/RO_0002640,intracellular endoparasite of,A sub-relation of endoparasite-of in which the parasite inhabits host cells.
+http://purl.obolibrary.org/obo/RO_0002641,has intracellular endoparasite,inverse of intracellular endoparasite of
+http://purl.obolibrary.org/obo/RO_0002801,co-roosts with,"Two or more individuals sharing the same roost site (cave, mine, tree or tree hollow, animal burrow, leaf tent, rock crack, space in man-made structure, etc.). Individuals that are sharing a communal roost may be said to be co-roosting. The roost may be either a day roost where the individuals rest during daytime hours, or a night roost where individuals roost to feed, groom, or rest in between flights and/or foraging bouts.  Communal roosting as thus defined is an umbrella term within which different specialized types -- which are not mutually exclusive -- may be recognized based on taxonomy and the temporal and spatial relationships of the individuals that are co-roosting."
+http://purl.obolibrary.org/obo/RO_0002802,reservoir host of,A relation between a host organism and a hosted organism in which the hosted organism naturally occurs in an indefinitely maintained reservoir provided by the host.
+http://purl.obolibrary.org/obo/RO_0002803,has reservoir host,inverse of reservoir host of
+http://purl.obolibrary.org/obo/RO_0003000,produces,"a produces b if some process that occurs_in a has_output b, where a and b are material entities. Examples: hybridoma cell line produces monoclonal antibody reagent; chondroblast produces avascular GAG-rich matrix."
+http://purl.obolibrary.org/obo/RO_0003001,produced by,a produced_by b iff some process that occurs_in b has_output a.
+http://purl.obolibrary.org/obo/RO_0003002,represses expression of,Holds between entity A (a transcription factor) and a nucleic acid B if and only if A down-regulates the expression of B. The nucleic acid can be a gene or an mRNA.
+http://purl.obolibrary.org/obo/RO_0003003,increases expression of,Holds between entity A (a transcription factor) and nucleic acid B if and only if A up-regulates the expression of B. The nucleic acid can be a gene or mRNA.
+http://purl.obolibrary.org/obo/RO_0003301,has role in modeling,"A relation between a biological, experimental, or computational artifact and an entity it is used to study, in virtue of its replicating or approximating features of the studied entity."
+http://purl.obolibrary.org/obo/RO_0003302,causes or contributes to condition,"A relationship between an entity (e.g. a genotype, genetic variation, chemical, or environmental exposure) and a condition (a phenotype or disease), where the entity has some causal or contributing role that influences the condition."
+http://purl.obolibrary.org/obo/RO_0003303,causes condition,"A relationship between an entity (e.g. a genotype, genetic variation, chemical, or environmental exposure) and a condition (a phenotype or disease), where the entity has some causal role for the condition."
+http://purl.obolibrary.org/obo/RO_0003304,contributes to condition,"A relationship between an entity (e.g. a genotype, genetic variation, chemical, or environmental exposure) and a condition (a phenotype or disease), where the entity has some contributing role that influences the condition."
+http://purl.obolibrary.org/obo/RO_0003305,contributes to severity of condition,"A relationship between an entity (e.g. a genotype, genetic variation, chemical, or environmental exposure) and a condition (a phenotype or disease), where the entity influences the severity with which a condition manifests in an individual."
+http://purl.obolibrary.org/obo/RO_0003306,contributes to frequency of condition,"A relationship between an entity (e.g. a genotype, genetic variation, chemical, or environmental exposure) and a condition (a phenotype or disease), where the entity influences the frequency of the condition in a population."
+http://purl.obolibrary.org/obo/RO_0003307,ameliorates condition,"A relationship between an entity (e.g. a genotype, genetic variation, chemical, or environmental exposure) and a condition (a phenotype or disease), where the presence of the entity reduces or eliminates some or all aspects of the condition."
+http://purl.obolibrary.org/obo/RO_0003308,correlated with condition,A relationship between an entity and a condition (phenotype or disease) with which it exhibits a statistical dependence relationship.
+http://purl.obolibrary.org/obo/RO_0003309,exacerbates condition,"A relationship between an entity (e.g. a chemical, environmental exposure, or some form of genetic variation) and a condition (a phenotype or disease), where the presence of the entity worsens some or all aspects of the condition."
+http://purl.obolibrary.org/obo/RO_0003310,condition ameliorated by,"A relationship between a condition (a phenotype or disease) and an entity (e.g. a chemical, environmental exposure, or some form of genetic variation) where some or all aspects of the condition are reduced or eliminated by the presence of the entity."
+http://purl.obolibrary.org/obo/RO_0003311,condition exacerbated by,"A relationship between a condition (a phenotype or disease) and an entity (e.g. a chemical, environmental exposure, or some form of genetic variation) where some or all aspects of the condition are worsened by the presence of the entity."
+http://purl.obolibrary.org/obo/RO_0004000,condition has genetic basis in,
+http://purl.obolibrary.org/obo/RO_0004001,has material basis in gain of function germline mutation in,
+http://purl.obolibrary.org/obo/RO_0004002,has material basis in loss of function germline mutation in,
+http://purl.obolibrary.org/obo/RO_0004003,has material basis in germline mutation in,
+http://purl.obolibrary.org/obo/RO_0004004,has material basis in somatic mutation in,
+http://purl.obolibrary.org/obo/RO_0004005,has major susceptibility factor,
+http://purl.obolibrary.org/obo/RO_0004006,has partial material basis in germline mutation in,
+http://purl.obolibrary.org/obo/RO_0004007,has primary input or output,p 'has primary input ot output' c iff either (a) p 'has primary input' c or (b) p 'has primary output' c.
+http://purl.obolibrary.org/obo/RO_0004008,has primary output,"p has primary output c if (a) p has output c and (b) the goal of process is to modify, produce, or transform c."
+http://purl.obolibrary.org/obo/RO_0004009,has primary input,"p has primary input c if (a) p has input c and (b) the goal of process is to modify, consume, or transform c."
+http://purl.obolibrary.org/obo/RO_0004010,is genetic basis for condition,
+http://purl.obolibrary.org/obo/RO_0004011,is causal gain of function germline mutation of in,"Relates a gene to condition, such that a mutation in this gene in a germ cell provides a new function of the corresponding product and that is sufficient to produce the condition and that can be passed on to offspring[modified from orphanet]."
+http://purl.obolibrary.org/obo/RO_0004012,is causal loss of function germline mutation of in,"Relates a gene to condition, such that a mutation in this gene in a germ cell impairs the function of the corresponding product and that is sufficient to produce the condition and that can be passed on to offspring[modified from orphanet]."
+http://purl.obolibrary.org/obo/RO_0004013,is causal germline mutation in,"Relates a gene to condition, such that a mutation in this gene is sufficient to produce the condition and that can be passed on to offspring[modified from orphanet]."
+http://purl.obolibrary.org/obo/RO_0004014,is causal somatic mutation in,"Relates a gene to condition, such that a mutation in this gene is sufficient to produce the condition but that cannot be passed on to offspring[modified from orphanet]."
+http://purl.obolibrary.org/obo/RO_0004015,is causal susceptibility factor for,"Relates a gene to condition, such that a mutation in this gene predisposes to the development of a condition  and that is necessary but not sufficient to develop the condition[modified from orphanet]."
+http://purl.obolibrary.org/obo/RO_0004016,is causal germline mutation partially giving rise to,"Relates a gene to condition, such that a mutation in this gene partially contributes to the presentation of this condition[modified from orphanet]."
+http://purl.obolibrary.org/obo/RO_0004017,realizable has basis in,
+http://purl.obolibrary.org/obo/RO_0004018,is basis for realizable,
+http://purl.obolibrary.org/obo/RO_0004019,disease has basis in,
+http://purl.obolibrary.org/obo/RO_0004020,disease has basis in dysfunction of,A relation that holds between the disease and a material entity where the physical basis of the disease is a disorder of that material entity that affects its function.
+http://purl.obolibrary.org/obo/RO_0004021,disease has basis in disruption of,A relation that holds between the disease and a process where the physical basis of the disease disrupts execution of a key biological process.
+http://purl.obolibrary.org/obo/RO_0004022,disease has basis in feature,A relation that holds between the disease and a feature (a phenotype or other disease) where the physical basis of the disease is the feature.
+http://purl.obolibrary.org/obo/RO_0004023,causal relationship with disease as subject,
+http://purl.obolibrary.org/obo/RO_0004024,disease causes disruption of,A relationship between a disease and a process where the disease process disrupts the execution of the process.
+http://purl.obolibrary.org/obo/RO_0004025,disease causes dysfunction of,
+http://purl.obolibrary.org/obo/RO_0004026,disease has location,A relationship between a disease and an anatomical entity where the disease has one or more features that are located in that entity.
+http://purl.obolibrary.org/obo/RO_0004027,disease has inflammation site,A relationship between a disease and an anatomical entity where the disease is triggered by an inflammatory response to stimuli occurring in the anatomical entity
+http://purl.obolibrary.org/obo/RO_0004028,realized in response to stimulus,A relationship between a realizable entity R (e.g. function or disposition) and a material entity M where R is realized in response to a process that has an input stimulus of M.
+http://purl.obolibrary.org/obo/RO_0004029,disease has feature,"A relationship between a disease and some feature of that disease, where the feature is either a phenotype or an isolated disease."
+http://purl.obolibrary.org/obo/RO_0004030,disease arises from alteration in structure,"A relationship between a disease and an anatomical structure where the material basis of the disease is some pathological change in the structure. Anatomical structure includes cellular and sub-cellular entities, such as chromosome and organelles."
+http://purl.obolibrary.org/obo/RO_0004031,enables subfunction,"Holds between an entity and an process P where the entity enables some larger compound process, and that larger process has-part P."
+http://purl.obolibrary.org/obo/RO_0004032,"acts upstream of or within, positive effect",
+http://purl.obolibrary.org/obo/RO_0004033,"acts upstream of or within, negative effect",
+http://purl.obolibrary.org/obo/RO_0004034,"acts upstream of, positive effect","c 'acts upstream of, positive effect' p if c is enables f, and f is causally upstream of p, and the direction of f is positive"
+http://purl.obolibrary.org/obo/RO_0004035,"acts upstream of, negative effect","c 'acts upstream of, negative effect' p if c is enables f, and f is causally upstream of p, and the direction of f is negative"
+http://purl.obolibrary.org/obo/RO_0004046,"causally upstream of or within, negative effect",
+http://purl.obolibrary.org/obo/RO_0004047,"causally upstream of or within, positive effect",
+http://purl.obolibrary.org/obo/RO_0004096,DEPRECATED inheres in,
+http://purl.obolibrary.org/obo/RO_0004097,DEPRECATED bearer of,
+http://purl.obolibrary.org/obo/RO_0007000,has driver,"A relation between two entities, in which one of the entities is any natural or human-influenced factor that directly or indirectly causes a change in the other entity."
+http://purl.obolibrary.org/obo/RO_0007001,has disease driver,"A relation between an entity and a disease of a host, in which the entity is not part of the host itself, and the condition results in pathological processes."
+http://purl.obolibrary.org/obo/RO_0008501,epiphyte of,An interaction relationship wherein a plant or algae is living on the outside surface of another plant.
+http://purl.obolibrary.org/obo/RO_0008502,has epiphyte,inverse of epiphyte of
+http://purl.obolibrary.org/obo/RO_0008503,kleptoparasite of,"A sub-relation of parasite of in which a parasite steals resources from another organism, usually food or nest material"
+http://purl.obolibrary.org/obo/RO_0008504,kleptoparasitized by,inverse of kleptoparasite of
+http://purl.obolibrary.org/obo/RO_0008505,creates habitat for,An interaction relationship wherein one organism creates a structure or environment that is lived in by another organism.
+http://purl.obolibrary.org/obo/RO_0008506,ecologically co-occurs with,An interaction relationship describing organisms that often occur together at the same time and space or in the same environment.
+http://purl.obolibrary.org/obo/RO_0008507,lays eggs on,An interaction relationship in which organism a lays eggs on the outside surface of organism b. Organism b is neither helped nor harmed in the process of egg laying or incubation.
+http://purl.obolibrary.org/obo/RO_0008508,has eggs laid on by,inverse of lays eggs on
+http://purl.obolibrary.org/obo/RO_0008509,has roost,"x 'has roost' y if and only if: x is an organism, y is a habitat, and y can support rest behaviors x."
+http://purl.obolibrary.org/obo/RO_0009001,has substance added,"""has substance added"" is a relation existing between a (physical) entity and a substance in which the entity has had the substance added to it at some point in time."
+http://purl.obolibrary.org/obo/RO_0009002,has substance removed,"""has substance removed"" is a relation existing between two physical entities in which the first entity has had the second entity (a substance) removed from it at some point in time."
+http://purl.obolibrary.org/obo/RO_0009003,immersed in,"""immersed in"" is a relation between a (physical) entity and a fluid substance in which the entity is wholely or substantially surrounded by the substance."
+http://purl.obolibrary.org/obo/RO_0009004,has consumer,'has consumer' is a relation between a material entity and an organism in which the former can normally be digested or otherwise absorbed by the latter without immediate or persistent ill effect.
+http://purl.obolibrary.org/obo/RO_0009005,has primary substance added,'has primary substance added' indicates that an entity has had the given substance added to it in a proportion greater than any other added substance.
+http://purl.obolibrary.org/obo/RO_0009006,assay measures characteristic,"A relation between an assay and a characteristic, in which the assay generates a data item which is a measure of a characteristic."
+http://purl.obolibrary.org/obo/RO_0009007,characteristic measured by assay,Inverse of 'assay measures characteristic'
+http://purl.obolibrary.org/obo/RO_0009501,realized in response to,"r 'realized in response to' s iff, r is a realizable (e.g. a plant trait such as responsivity to drought), s is an environmental stimulus (a process), and s directly causes the realization of r."
+http://purl.obolibrary.org/obo/RO_0010001,generically depends on,A generically dependent continuant *b* generically depends on an independent continuant *c* at time *t* means: there inheres in *c* a specifically deendent continuant which concretizes *b* at *t*.
+http://purl.obolibrary.org/obo/RO_0010002,is carrier of,*b* is carrier of *c* at time *t* if and only if *c* *g-depends on* *b* at *t*
+http://purl.obolibrary.org/obo/RO_0011002,regulates activity of,"The entity A has an activity that regulates an activity of the entity B. For example, A and B are gene products where the catalytic activity of A regulates the kinase activity of B."
+http://purl.obolibrary.org/obo/RO_0011003,regulates quantity of,The entity A has an activity that regulates the quantity or abundance or concentration of the entity B.
+http://purl.obolibrary.org/obo/RO_0011004,indirectly regulates activity of,The entity A is not immediately upstream of the entity B but A has an activity that regulates an activity performed by B.
+http://purl.obolibrary.org/obo/RO_0011007,decreases by repression quantity of,"The entity A has an activity that down-regulates by repression the quantity of B. The down-regulation is due to A having an effect on an intermediate entity (typically a DNA or mRNA element) which can produce B.
+
+For example, protein A (transcription factor) indirectly decreases by repression the quantity of protein B (gene product) if and only if A negatively regulates the process of transcription or translation of a nucleic acid element that produces B."
+http://purl.obolibrary.org/obo/RO_0011008,increases by expression quantity of,"The entity A has an activity that up-regulates by expression the quantity of B. The up-regulation is due to A having an effect on an intermediate entity (typically a DNA or mRNA element) which can produce B.
+
+For example, protein A (transcription factor) indirectly increases by expression the quantity of protein B (gene product) if and only if A positively regulates the process of transcription or translation of a nucleic acid element that produces B."
+http://purl.obolibrary.org/obo/RO_0011009,directly positively regulates quantity of,The entity A has an activity that directly positively regulates the quantity of B.
+http://purl.obolibrary.org/obo/RO_0011010,directly negatively regulates quantity of,The entity A has an activity that directly negatively regulates the quantity of B.
+http://purl.obolibrary.org/obo/RO_0011013,indirectly positively regulates activity of,The entity A is not immediately upstream of the entity B and has an activity that up-regulates an activity performed by B.
+http://purl.obolibrary.org/obo/RO_0011014,destabilizes quantity of,An entity A directly interacts with B and A has an activity that decreases the amount of an entity B by degradating it.
+http://purl.obolibrary.org/obo/RO_0011015,stabilizes quantity of,An entity A physically interacts with B and A has an activity that increases the amount of an entity B by stabilizing it.
+http://purl.obolibrary.org/obo/RO_0011016,indirectly negatively regulates activity of,The entity A is not immediately upstream of the entity B and has an activity that down-regulates an activity performed by B.
+http://purl.obolibrary.org/obo/RO_0011021,directly regulates quantity of,"The entity A, immediately upstream of B, has an activity that directly regulates the quantity of B."
+http://purl.obolibrary.org/obo/RO_0011022,indirectly regulates quantity of,"The entity A is not immediately upstream of the entity B, but A has an activity that regulates the quantity or abundance or concentration of B."
+http://purl.obolibrary.org/obo/RO_0011023,indirectly negatively regulates quantity of,"The entity A does not physically interact with the entity B, and A has an activity that down-regulates the quantity or abundance or concentration of B."
+http://purl.obolibrary.org/obo/RO_0011024,indirectly positively regulates quantity of,"The entity A does not physically interact with the entity B, and A has an activity that up-regulates the quantity or abundance or concentration of B."
+http://purl.obolibrary.org/obo/RO_0012000,has small molecule regulator,"a relation between a process and a continuant, in which the process is regulated by the small molecule continuant"
+http://purl.obolibrary.org/obo/RO_0012001,has small molecule activator,"a relation between a process and a continuant, in which the process is activated by the small molecule continuant"
+http://purl.obolibrary.org/obo/RO_0012002,has small molecule inhibitor,"a relation between a process and a continuant, in which the process is inhibited by the small molecule continuant"
+http://purl.obolibrary.org/obo/RO_0012003,acts on population of,"p acts on population of c iff c' is a collection, has members of type c, and p has participant c"
+http://purl.obolibrary.org/obo/RO_0012004,is small molecule regulator of,"a relation between a continuant and a process, in which the continuant is a small molecule that regulates the process"
+http://purl.obolibrary.org/obo/RO_0012005,is small molecule activator of,"a relation between a continuant and a process, in which the continuant is a small molecule that activates the process"
+http://purl.obolibrary.org/obo/RO_0012006,is small molecule inhibitor of,"a relation between a continuant and a process, in which the continuant is a small molecule that inhibits the process"
+http://purl.obolibrary.org/obo/RO_0012007,results in adhesion of,"The relationship that links anatomical entities with a process that results in the adhesion of two or more entities via the non-covalent interaction of molecules expressed in, located in, and/or adjacent to, those entities."
+http://purl.obolibrary.org/obo/RO_0012008,results in fusion of,
+http://purl.obolibrary.org/obo/RO_0012009,constitutively upstream of,"p is constitutively upstream of q iff p is causally upstream of q, p is required for execution of q or a part of q, and the execution of p is approximately constant."
+http://purl.obolibrary.org/obo/RO_0012010,removes input for,"p removes input for q iff p is causally upstream of q, there exists some c such that p has_input c and q has_input c, p reduces the levels of c, and c is rate limiting for execution of q."
+http://purl.obolibrary.org/obo/RO_0012011,indirectly causally upstream of,p is indirectly causally upstream of q iff p is causally upstream of q and there exists some process r such that p is causally upstream of r and r is causally upstream of q.
+http://purl.obolibrary.org/obo/RO_0012012,indirectly regulates,p indirectly regulates q iff p is indirectly causally upstream of q and p regulates q.
+http://purl.obolibrary.org/obo/RO_0012013,positively regulates in another organism,"x 'positively regulates in other organism' y if and only if: (x is the realization of a function to increase the frequency, rate or extent of y) AND (the agents of x are produced by organism o1 and the agents of y are produced by organism o2)."
+http://purl.obolibrary.org/obo/RO_0012014,negatively regulates in another organism,"x 'negatively regulates in other organism' y if and only if: (x is the realization of a function to reduce the frequency, rate or extent of y) AND (the agents of x are produced by organism o1 and the agents of y are produced by organism o2)."
+http://purl.obolibrary.org/obo/RO_0013001,has synaptic IO in region,"A relationship between a neuron and a region, where the neuron has a functionally relevant number of input and/or output synapses in that region."
+http://purl.obolibrary.org/obo/RO_0013002,receives synaptic input in region,"A relationship between a neuron and a region, where the neuron has a functionally relevant number of input synapses in that region."
+http://purl.obolibrary.org/obo/RO_0013003,sends synaptic output to region,"A relationship between a neuron and a region, where the neuron has a functionally relevant number of output synapses in that region."
+http://purl.obolibrary.org/obo/RO_0013004,has synaptic IO throughout,"A relationship between a neuron and a region, where the neuron has a functionally relevant number of input and/or output synapses distributed throughout that region (rather than confined to a subregion)."
+http://purl.obolibrary.org/obo/RO_0013005,receives synaptic input throughout,"A relationship between a neuron and a region, where the neuron has a functionally relevant number of input synapses distributed throughout that region (rather than confined to a subregion)."
+http://purl.obolibrary.org/obo/RO_0013006,sends synaptic output throughout,"A relationship between a neuron and a region, where the neuron has a functionally relevant number output synapses distributed throughout that region (rather than confined to a subregion)."
+http://purl.obolibrary.org/obo/RO_0013007,has sensory dendrite in,Relation between a sensory neuron and some structure in which it receives sensory input via a sensory dendrite.
+http://purl.obolibrary.org/obo/RO_0013008,receives synaptic input from neuron,A relationship between an anatomical structure (including cells) and a neuron that has a functionally relevant number of chemical synapses to it.
+http://purl.obolibrary.org/obo/RO_0013009,sends synaptic output to cell,A relationship between a neuron and a cell that it has a functionally relevant number of chemical synapses to.
+http://purl.obolibrary.org/obo/RO_0014001,disease has infectious agent,A relationship between a disease and an infectious agent where the material basis of the disease is an infection with some infectious agent.
+http://purl.obolibrary.org/obo/RO_0015001,has exemplar data,A relation between a material entity and some data in which the data is taken as exemplifying the material entity.
+http://purl.obolibrary.org/obo/RO_0015002,exemplar data of,
+http://purl.obolibrary.org/obo/RO_0015003,subcluster of,A relation between a group and another group it is part of but does not fully constitute.
+http://purl.obolibrary.org/obo/RO_0015004,has characterizing marker set,A relation that applies between a cell type and a set of markers that can be used to uniquely identify that cell type.
+http://purl.obolibrary.org/obo/RO_0015006,different in magnitude relative to,"q1 different_in_magnitude_relative_to q2 if and only if magnitude(q1) NOT =~ magnitude(q2). Here, magnitude(q) is a function that maps a quality to a unit-invariant scale."
+http://purl.obolibrary.org/obo/RO_0015007,increased in magnitude relative to,"q1 increased_in_magnitude_relative_to q2 if and only if magnitude(q1) > magnitude(q2). Here, magnitude(q) is a function that maps a quality to a unit-invariant scale."
+http://purl.obolibrary.org/obo/RO_0015008,decreased in magnitude relative to,"q1 decreased_in_magnitude_relative_to q2 if and only if magnitude(q1) < magnitude(q2). Here, magnitude(q) is a function that maps a quality to a unit-invariant scale."
+http://purl.obolibrary.org/obo/RO_0015009,similar in magnitude relative to,"q1 similar_in_magnitude_relative_to q2 if and only if magnitude(q1) =~ magnitude(q2). Here, magnitude(q) is a function that maps a quality to a unit-invariant scale."
+http://purl.obolibrary.org/obo/RO_0015010,has relative magnitude,
+http://purl.obolibrary.org/obo/RO_0015011,has cross section,"s3 has_cross_section s3 if and only if : there exists some 2d plane that intersects the bearer of s3, and the impression of s3 upon that plane has shape quality s2."
+http://purl.obolibrary.org/obo/RO_0015012,reciprocal of,q1 reciprocal_of q2 if and only if : q1 and q2 are relational qualities and a phenotype e q1 e2 mutually implies a phenotype e2 q2 e.
+http://purl.obolibrary.org/obo/RO_0015015,has high plasma membrane amount,A relation between a cell and molecule or complex such that every instance of the cell has a high number of instances of that molecule expressed on the cell surface.
+http://purl.obolibrary.org/obo/RO_0015016,has low plasma membrane amount,A relation between a cell and molecule or complex such that every instance of the cell has a low number of instances of that molecule expressed on the cell surface.
+http://purl.obolibrary.org/obo/RO_0016001,has phenotype or disease,
+http://purl.obolibrary.org/obo/RO_0016002,has disease,A relationship that holds between an organism and a disease. Here a disease is construed broadly as a disposition to undergo pathological processes that exists in an organism because of one or more disorders in that organism.
+http://purl.obolibrary.org/obo/RO_0016004,has exposure medium,"X has exposure medium Y if X is an exposure event (process), Y is a material entity, and the stimulus for X is transmitted or carried in Y."
+http://purl.obolibrary.org/obo/RO_0017001,device utilizes material,"X device utilizes material Y means X and Y are material entities, and X is capable of some process P that has input Y."
+http://purl.obolibrary.org/obo/RO_0017003,positively correlated with,A relation between entities in which one increases or decreases as the other does the same.
+http://purl.obolibrary.org/obo/RO_0017004,negatively correlated with,A relation between entities in which one increases as the other decreases.
+http://purl.obolibrary.org/obo/RO_0017005,contains measured amount,A relation between a container and measurement datum that specifies the actual amount of material in the container.
+http://purl.obolibrary.org/obo/RO_0017006,has maximum capacity,A relation that relates a container to a measurement datum that specifies the maximum capacity of the container. Capacity can refer to either weight or volume.
+http://purl.obolibrary.org/obo/RO_0017008,owns,A primitive relation that holds between entities x and y in which y is at x's full disposal.
+http://purl.obolibrary.org/obo/RO_0017009,is owned by,Inverse of the owns relation.
+http://purl.obolibrary.org/obo/RO_0018001,is myristoyltransferase activity,Helper relation for OWL definition of RO:0018002 myristoylates
+http://purl.obolibrary.org/obo/RO_0018002,myristoylates,"A molecularly-interacts-with relationship between two entities, where the subject catalyzes a myristoylation activity that takes the object as input"
+http://purl.obolibrary.org/obo/RO_0018003,myristoylated by,inverse of myristoylates
+http://purl.obolibrary.org/obo/RO_0018027,is agonist of,a relation between a ligand (material entity) and a receptor (material entity) that implies the binding of the ligand to the receptor activates some activity of the receptor
+http://purl.obolibrary.org/obo/RO_0018028,is inverse agonist of,a relation between a ligand (material entity) and a receptor (material entity) that implies the binding of the ligand to the receptor inhibits some activity of the receptor to below basal level
+http://purl.obolibrary.org/obo/RO_0018029,is antagonist of,a relation between a ligand (material entity) and a receptor (material entity) that implies the binding of the ligand to the receptor reduces some activity of the receptor to basal level
+http://purl.obolibrary.org/obo/RO_0018030,chemical relationship,
+http://purl.obolibrary.org/obo/RO_0018031,is direct conjugate base of,"A is a direct conjugate base of B if and only if A is chemical entity that is a Brønsted–Lowry Base (i.e., can receive a proton) and by receiving a particular proton transforms it into B."
+http://purl.obolibrary.org/obo/RO_0018032,is direct conjugate acid of,"A is a direct conjugate acid of B if and only if A is chemical entity that is a Brønsted–Lowry Acid (i.e., can give up a proton) and by removing a particular proton transforms it into B."
+http://purl.obolibrary.org/obo/RO_0018033,is deprotonated form of,"A is a deprotonated form of B if and only if A is chemical entity that is a Brønsted–Lowry Base (i.e., can receive a proton) and by adding some nonzero number of protons transforms it into B.
+
+This is a transitive relationship and follows this design pattern: https://oborel.github.io/obo-relations/direct-and-indirect-relations."
+http://purl.obolibrary.org/obo/RO_0018034,is protonated form of,"A is a protonated form of B if and only if A is chemical entity that is a Brønsted–Lowry Acid (i.e., can give up a proton) and by removing some nonzero number of protons transforms it into B.
+
+This is a transitive relationship and follows this design pattern: https://oborel.github.io/obo-relations/direct-and-indirect-relations."
+http://purl.obolibrary.org/obo/RO_0018035,is matched small molecular pair with,"A and B are a matched small molecular pair (MMP) if their chemical structures define by a single, relatively small, well-defined structural modification.
+
+While this is normally called ""matched molecular pair"" in the cheminformatics literaturel, it is labeled as ""matched small molecular pair"" so as to reduce confusion with peptides and other macromolecules, which are also referenced as ""molecules"" in some contexts.
+
+This relationship is symmetric, meaning if A is a MMP with B iff B is a MMP with A.
+
+This relationship is not transitive, meaning that A is a MMP with B and B is a MMP with C, then A is not necessarily an MMP with C."
+http://purl.obolibrary.org/obo/RO_0018036,is tautomer of,"Two chemicals are tautomers if they can be readily interconverted.
+
+This commonly refers to prototropy in which a hydrogen's position is changed, such as between ketones and enols. This is also often observed in heterocyclic rings, e.g., ones containing nitrogens and/or have aryl functional groups containing heteroatoms."
+http://purl.obolibrary.org/obo/RO_0018037,is substitutent group from,"Group A is a substituent group from Chemical B if A represents the functional part of A and includes information about where it is connected. A is not itself a chemical with a fully formed chemical graph, but is rather a partial graph with one or more connection points that can be used to attach to another chemical graph, typically as a functionalization."
+http://purl.obolibrary.org/obo/RO_0018038,has functional parent,"Chemical A has functional parent Chemical B if there is chemical transformation through which chemical B can be produced from chemical A. 
+
+For example, the relationship between a salt and a freebased compound is a ""has functional parent"" relationship."
+http://purl.obolibrary.org/obo/RO_0018039,is enantiomer of,"Chemicals A and B are enantiomers if they share the same molecular graph except the change of the configuration of substituents around exactly one chiral center.
+
+A chemical with no chiral centers can not have an enantiomer. A chemical with multiple chiral centers can have multiple enantiomers, but its enantiomers are not themselves enantiomers (they are diastereomers)."
+http://purl.obolibrary.org/obo/RO_0018040,has parent hydride,Chemical A has parent hydride Chemical B if there exists a molecular graphical transformation where functional groups on A are replaced with hydrogens in order to yield B.
+http://purl.obolibrary.org/obo/RO_0019000,regulates characteristic,A relationship that holds between a process and a characteristic in which process (P) regulates characteristic (C) iff: P results in the existence of C OR affects the intensity or magnitude of C.
+http://purl.obolibrary.org/obo/RO_0019001,positively regulates characteristic,A relationship that holds between a process and a characteristic in which process (P) positively regulates characteristic (C) iff: P results in an increase in the intensity or magnitude of C.
+http://purl.obolibrary.org/obo/RO_0019002,negatively regulates characteristic,A relationship that holds between a process and a characteristic in which process (P) negatively regulates characteristic (C) iff: P results in a decrease in the intensity or magnitude of C.
+http://purl.obolibrary.org/obo/RO_0019501,confers susceptibility to condition,"Relates a gene to condition, such that a variation in this gene predisposes to the development of a condition."
+http://purl.obolibrary.org/obo/RO_0020101,vessel supplies blood to,x vessel supplies blood to y if and only if x is a vessel that supplies blood directly or indirectly to an anatomical structure y.
+http://purl.obolibrary.org/obo/RO_0020102,vessel drains blood from,x vessel drains blood from y if and only if x is a vessel that drains blood directly or indirectly from an anatomical structure y.
+http://purl.obolibrary.org/obo/RO_0020103,directly supplies and drains,"x directly supplies and drains y if and only if x is a capillary, y is an anatomical entity, and x directly supplies and drains y."
+http://purl.obolibrary.org/obo/RO_0020202,has numerator,A relationship between a ratio or proportion and its dividend.
+http://purl.obolibrary.org/obo/RO_0020203,has denominator,A relationship between a ratio or proportion and its divisor.
+http://purl.obolibrary.org/obo/RO_0040035,disease relationship,This relation groups  relations between diseases and any other kind of entity.
+http://purl.obolibrary.org/obo/RO_0040036,results in changes to anatomical or cellular structure,"p has anatomical participant c iff p has participant c, and c is an anatomical entity"
+http://purl.obolibrary.org/obo/RO_HOM0000000,in similarity relationship with,Relation between biological objects that resemble or are related to each other sufficiently to warrant a comparison.
+http://purl.obolibrary.org/obo/RO_HOM0000001,in homology relationship with,Similarity that results from common evolutionary origin.
+http://purl.obolibrary.org/obo/RO_HOM0000002,in homoplasy relationship with,Similarity that results from independent evolution.
+http://purl.obolibrary.org/obo/RO_HOM0000003,in homocracy relationship with,Similarity that is characterized by the organization of anatomical structures through the expression of homologous or identical patterning genes.
+http://purl.obolibrary.org/obo/RO_HOM0000004,in convergence relationship with,Homoplasy that involves different underlying mechanisms or structures.
+http://purl.obolibrary.org/obo/RO_HOM0000005,in parallelism relationship with,Homoplasy that involves homologous underlying mechanisms or structures.
+http://purl.obolibrary.org/obo/RO_HOM0000006,in structural homology relationship with,Homology that is defined by similarity with regard to selected structural parameters.
+http://purl.obolibrary.org/obo/RO_HOM0000007,in historical homology relationship with,Homology that is defined by common descent.
+http://purl.obolibrary.org/obo/RO_HOM0000008,in biological homology relationship with,"Homology that is defined by sharing of a set of developmental constraints, caused by locally acting self-regulatory mechanisms of differentiation, between individualized parts of the phenotype."
+http://purl.obolibrary.org/obo/RO_HOM0000009,in reversal relationship with,Homoplasy that involves phenotypes similar to those seen in ancestors within the lineage.
+http://purl.obolibrary.org/obo/RO_HOM0000010,in syntenic homology relationship with,Structural homology that is detected by similarity in content and organization between chromosomes.
+http://purl.obolibrary.org/obo/RO_HOM0000011,in paralogy relationship with,Historical homology that involves genes that diverged after a duplication event.
+http://purl.obolibrary.org/obo/RO_HOM0000012,in syntenic paralogy relationship with,Paralogy that involves sets of syntenic blocks.
+http://purl.obolibrary.org/obo/RO_HOM0000013,in syntenic orthology relationship with,Syntenic homology that involves chromosomes of different species.
+http://purl.obolibrary.org/obo/RO_HOM0000014,in partial homology relationship with,Structural homology that involves complex structures from which only a fraction of the elements that can be isolated are separately homologous.
+http://purl.obolibrary.org/obo/RO_HOM0000015,in protein structural homology relationship with,"Structural homology that is detected at the level of the 3D protein structure, but maybe not at the level of the amino acid sequence."
+http://purl.obolibrary.org/obo/RO_HOM0000016,in non functional homology relationship with,Structural homology that involves a pseudogenic feature and its functional ancestor.
+http://purl.obolibrary.org/obo/RO_HOM0000017,in orthology relationship with,Historical homology that involves genes that diverged after a speciation event.
+http://purl.obolibrary.org/obo/RO_HOM0000018,in xenology relationship with,Historical homology that is characterized by an interspecies (horizontal) transfer since the common ancestor.
+http://purl.obolibrary.org/obo/RO_HOM0000019,in 1 to 1 homology relationship with,Historical homology that involves two members sharing no other homologs in the lineages considered.
+http://purl.obolibrary.org/obo/RO_HOM0000020,in 1 to 1 orthology relationship with,Orthology that involves two genes that did not experience any duplication after the speciation event that created them.
+http://purl.obolibrary.org/obo/RO_HOM0000022,in ohnology relationship with,Paralogy that results from a whole genome duplication event.
+http://purl.obolibrary.org/obo/RO_HOM0000023,in in-paralogy relationship with,Paralogy that results from a lineage-specific duplication subsequent to a given speciation event.
+http://purl.obolibrary.org/obo/RO_HOM0000024,in out-paralogy relationship with,Paralogy that results from a duplication preceding a given speciation event.
+http://purl.obolibrary.org/obo/RO_HOM0000025,in pro-orthology relationship with,"1:many orthology that involves a gene in species A and one of its ortholog in species B, when duplications more recent than the species split have occurred in species B but not in species A."
+http://purl.obolibrary.org/obo/RO_HOM0000026,in semi-orthology relationship with,"1:many orthology that involves a gene in species A and its ortholog in species B, when duplications more recent than the species split have occurred in species A but not in species B."
+http://purl.obolibrary.org/obo/RO_HOM0000027,in serial homology relationship with,Iterative homology that involves structures arranged along the main body axis.
+http://purl.obolibrary.org/obo/RO_HOM0000028,in heterochronous homology relationship with,"Biological homology that is characterized by changes, over evolutionary time, in the rate or timing of developmental events of homologous structures."
+http://purl.obolibrary.org/obo/RO_HOM0000029,in paedomorphorsis relationship with,Heterochronous homology that is produced by a retention in adults of a species of traits previously seen only in juveniles.
+http://purl.obolibrary.org/obo/RO_HOM0000030,in peramorphosis relationship with,"Heterochronous homology that is produced by a maturation of individuals of a species past adulthood, which take on hitherto unseen traits."
+http://purl.obolibrary.org/obo/RO_HOM0000031,in progenesis relationship with,Paedomorphosis that is produced by precocious sexual maturation of an organism still in a morphologically juvenile stage.
+http://purl.obolibrary.org/obo/RO_HOM0000032,in neoteny relationship with,Paedomorphosis that is produced by a retardation of somatic development.
+http://purl.obolibrary.org/obo/RO_HOM0000033,in mimicry relationship with,Convergence that results from co-evolution usually involving an evolutionary arms race.
+http://purl.obolibrary.org/obo/RO_HOM0000034,in 1 to many orthology relationship with,Orthology that involves two genes when duplications more recent than the species split have occurred in one species but not the other.
+http://purl.obolibrary.org/obo/RO_HOM0000036,in many to many homology relationship with,Historical homology that involves two members of a larger set of homologs.
+http://purl.obolibrary.org/obo/RO_HOM0000037,in 1 to many homology relationship with,"Historical homology that involves a structure that has no other homologs in the species in which it is defined, and several homologous structures in another species."
+http://purl.obolibrary.org/obo/RO_HOM0000042,in apomorphy relationship with,"Historical homology that is based on recent shared ancestry, characterizing a monophyletic group."
+http://purl.obolibrary.org/obo/RO_HOM0000043,in plesiomorphy relationship with,Historical homology that is based on distant shared ancestry.
+http://purl.obolibrary.org/obo/RO_HOM0000044,in deep homology relationship with,Homocracy that involves morphologically and phylogenetically disparate structures that are the result of parallel evolution.
+http://purl.obolibrary.org/obo/RO_HOM0000045,in hemiplasy relationship with,Historical homology that is characterized by topological discordance between a gene tree and a species tree attributable to the phylogenetic sorting of genetic polymorphisms across successive nodes in a species tree.
+http://purl.obolibrary.org/obo/RO_HOM0000046,in gametology relationship with,Historical homology that involves not recombining and subsequently differentiated sex chromosomes.
+http://purl.obolibrary.org/obo/RO_HOM0000047,in chromosomal homology relationship with,Historical homology that involves the chromosomes able to pair (synapse) during meiosis.
+http://purl.obolibrary.org/obo/RO_HOM0000048,in many to many orthology relationship with,Orthology that involves two genes that experienced duplications more recent than the species split that created them.
+http://purl.obolibrary.org/obo/RO_HOM0000049,in within-species paralogy relationship with,Paralogy that involves genes from the same species.
+http://purl.obolibrary.org/obo/RO_HOM0000050,in between-species paralogy relationship with,Paralogy that involves genes from different species.
+http://purl.obolibrary.org/obo/RO_HOM0000051,in postdisplacement relationship with,Paedomorphosis that is produced by delayed growth of immature structures into the adult form.
+http://purl.obolibrary.org/obo/RO_HOM0000052,in hypermorphosis relationship with,Peramorphosis that is produced by a delay in the offset of development.
+http://purl.obolibrary.org/obo/RO_HOM0000053,in synology relationship with,"Xenology that results, not from the transfer of a gene between two species, but from a hybridization of two species."
+http://purl.obolibrary.org/obo/RO_HOM0000054,in isoorthology relationship with,Orthology that involves functional equivalent genes with retention of the ancestral function.
+http://purl.obolibrary.org/obo/RO_HOM0000055,in tandem paralogy relationship with,Paralogy that is characterized by duplication of adjacent sequences on a chromosome segment.
+http://purl.obolibrary.org/obo/RO_HOM0000057,in latent homology relationship with,"Parallelism that involves morphologically very similar structures, occurring only within some members of a taxon and absent in the common ancestor (which possessed the developmental basis to develop this character)."
+http://purl.obolibrary.org/obo/RO_HOM0000058,in syngeny relationship with,"Homocracy that involves recognizably corresponding characters that occurs in two or more taxa, or as a repeated unit within an individual."
+http://purl.obolibrary.org/obo/RO_HOM0000060,in apparent orthology relationship with,Between-species paralogy that involves single copy paralogs resulting from reciprocal gene loss.
+http://purl.obolibrary.org/obo/RO_HOM0000061,in pseudoparalogy relationship with,Xenology that involves genes that ended up in a given genome as a result of a combination of vertical inheritance and horizontal gene transfer.
+http://purl.obolibrary.org/obo/RO_HOM0000062,in equivalogy relationship with,Historical homology that involves functional equivalent genes with retention of the ancestral function.
+http://purl.obolibrary.org/obo/RO_HOM0000063,in interology relationship with,Historical homology that involves orthologous pairs of interacting molecules in different organisms.
+http://purl.obolibrary.org/obo/RO_HOM0000065,in functional equivalence relationship with,Similarity that is characterized by interchangeability in function.
+http://purl.obolibrary.org/obo/RO_HOM0000066,in iterative homology relationship with,Biological homology that involves parts of the same organism.
+http://purl.obolibrary.org/obo/RO_HOM0000068,in paraxenology relationship with,"Xenology that is characterized by multiple horizontal transfer events, resulting in the presence of two or more copies of the foreign gene in the host genome."
+http://purl.obolibrary.org/obo/RO_HOM0000069,in plerology relationship with,Paralogy that is characterized by extra similarity between paralogous sequences resulting from concerted evolution.
+http://purl.obolibrary.org/obo/RO_HOM0000071,in homotopy relationship with,Structural homology that involves structures with the same or similar relative positions.
+http://purl.obolibrary.org/obo/RO_HOM0000072,in homeosis relationship with,Biological homology that involves an ectopic structure and the normally positioned structure.
+http://purl.obolibrary.org/obo/RO_HOM0000073,in homoeology relationship with,Synology that results from allopolyploidy.
+http://purl.obolibrary.org/obo/RO_HOM0000074,in paramorphism relationship with,"Iterative homology that involves two structures, one of which originated as a duplicate of the other and co-opted the expression of patterning genes of the ancestral structure."
+http://purl.obolibrary.org/obo/RO_HOM0000075,in regulogy relationship with,Historical homology that involves orthologous pairs of transcription factors and downstream regulated genes in different organisms.
+http://purl.obolibrary.org/obo/envo#has_increased_levels_of,,

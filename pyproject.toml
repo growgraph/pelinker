@@ -1,0 +1,22 @@
+[tool.poetry]
+name = "pelinker"
+version = "0.1.0"
+description = "bio / sci property entity linker"
+authors = ["Alexander Belikov <abelikov@gmail.com>"]
+license = "BSD 3"
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.10"
+rdflib = "^7.0.0"
+transformers = "^4.41.2"
+pandas = "^2.2.2"
+
+
+[tool.poetry.group.dev.dependencies]
+jupyter = "^1.0.0"
+pylint = "^3.2.3"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
