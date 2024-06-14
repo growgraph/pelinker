@@ -1,0 +1,45 @@
+property,label,description
+BFO.0000050,part of,a core relation that holds between a part and its whole
+BFO.0000051,has part,a core relation that holds between a whole and its part
+BFO.0000066,occurs in,b occurs_in c =def b is a process and c is a material entity or immaterial entity& there exists a spatiotemporal region r and b occupies_spatiotemporal_region r.& forall(t) if b exists_at t then c exists_at t & there exist spatial regions s and s’ where & b spatially_projects_onto s at t& c is occupies_spatial_region s’ at t& s is a proper_continuant_part_of s’ at t
+RO.0001025,located in,"a relation between two independent continuants, the target and the location, in which the target is entirely within the location"
+RO.0002092,happens during,X happens_during Y iff: (start(Y) before_or_simultaneous_with start(X)) AND (end(X) before_or_simultaneous_with end(Y))
+RO.0002162,in taxon,"x is in taxon y if an only if y is an organism, and the relationship between x and y is one of: part of (reflexive), developmentally preceded by, derives from, secreted by, expressed."
+RO.0002211,regulates,"p regulates q iff p is causally upstream of q, the execution of p is not constant and varies according to specific conditions, and p influences the rate or magnitude of execution of q due to an effect either on some enabler of q or some enabler of a part of q."
+RO.0002212,negatively regulates,"p negatively regulates q iff p regulates q, and p decreases the rate or magnitude of execution of q."
+RO.0002213,positively regulates,"p positively regulates q iff p regulates q, and p increases the rate or magnitude of execution of q."
+RO.0002220,adjacent to,x adjacent to y if and only if x and y share a boundary.
+RO.0002224,starts with,"x starts with y if and only if x has part y and the time point at which x starts is equivalent to the time point at which y starts. Formally: α(y) = α(x) ∧ ω(y) < ω(x), where α is a function that maps a process to a start point, and ω is a function that maps a process to an end point."
+RO.0002230,ends with,"x ends with y if and only if x has part y and the time point at which x ends is equivalent to the time point at which y ends. Formally: α(y) > α(x) ∧ ω(y) = ω(x), where α is a function that maps a process to a start point, and ω is a function that maps a process to an end point."
+RO.0002232,has end location,x 'has end location' y if and only if there exists some process z such that x 'ends with' z and z 'occurs in' y
+RO.0002233,has input,"p has input c iff: p is a process, c is a material entity, c is a participant in p, c is present at the start of p, and the state of c is modified during p."
+RO.0002234,has output,"p has output c iff c is a participant in p, c is present at the end of p, and c is not present in the same state at the beginning of p."
+RO.0002264,acts upstream of or within,"c acts upstream of or within p if c is enables f, and f is causally upstream of or within p. c is a material entity and p is an process."
+RO.0002295,results in developmental progression of,"p results in the developmental progression of s iff p is a developmental process and s is an anatomical entity and p causes s to undergo a change in state at some point along its natural developmental cycle (this cycle starts with its formation, through the mature structure, and ends with its loss)."
+RO.0002296,results in development of,p 'results in development of' c if and only if p is a developmental process and p results in the state of c changing from its initial state as a primordium or anlage through its mature state and to its final state.
+RO.0002298,results in morphogenesis of,The relationship that links an entity with the process that results in the formation and shaping of that entity over time from an immature to a mature state.
+RO.0002299,results in maturation of,The relationship that links an entity with a process that results in the progression of the entity over time that is independent of changes in it's shape and results in an end point state of that entity.
+RO.0002304,"causally upstream of, positive effect","p is causally upstream of, positive effect q iff p is casually upstream of q, and the execution of p is required for the execution of q."
+RO.0002305,"causally upstream of, negative effect","p is causally upstream of, negative effect q iff p is casually upstream of q, and the execution of p decreases the execution of q."
+RO.0002313,transports or maintains localization of,Holds between p and c when p is a localization process (localization covers maintenance of localization as well as its establishment)  and the outcome of this process is to regulate the localization of c.
+RO.0002315,results in acquisition of features of,The relationship that links a specified entity with the process that results in an unspecified entity acquiring the features and characteristics of the specified entity
+RO.0002325,colocalizes with,a colocalizes_with b if and only if  a is transiently or peripherally associated with b[GO].
+RO.0002326,contributes to,
+RO.0002331,involved in,"c involved_in p if and only if c enables some process p', and p' is part of p"
+RO.0002333,enabled by,inverse of enables
+RO.0002338,has target start location,This relationship holds between p and l when p is a transport or localization process in which the outcome is to move some cargo c from some initial location l to some destination.
+RO.0002339,has target end location,This relationship holds between p and l when p is a transport or localization process in which the outcome is to move some cargo c from a an initial location to some destination l.
+RO.0002400,has direct input,"p has direct input c iff c is a participant in p, c is present at the start of p, and the state of c is modified during p."
+RO.0002406,obsolete directly activates,This term was obsoleted because it has the same meaning as 'directly positively regulates'.
+RO.0002408,obsolete directly inhibits,This term was obsoleted because it has the same meaning as 'directly negatively regulates'.
+RO.0002411,causally upstream of,"p is causally upstream of q iff p is causally related to q, the end of p precedes the end of q, and p is not an occurrent part of q."
+RO.0002413,provides input for,"p provides input for q iff p is immediately causally upstream of q, and there exists some c such that p has_output c and q has_input c."
+RO.0002418,causally upstream of or within,"p is 'causally upstream or within' q iff p is causally related to q, and the end of p precedes, or is coincident with, the end of q."
+RO.0002490,existence overlaps,x existence overlaps y if and only if either (a) the start of x is part of y or (b) the end of x is part of y. Formally: x existence starts and ends during y iff (α(x) >= α(y) & α(x) <= ω(y)) OR (ω(x) <= ω(y) & ω(x) >= α(y))
+RO.0002502,depends on,
+RO.0002565,results in movement of,Holds between p and c when p is locomotion process and the outcome of this process is the change of location of c
+RO.0002592,results in organization of,"p results in organization of c iff p results in the assembly, arrangement of constituent parts, or disassembly of c"
+RO.0002629,directly positively regulates,"p directly positively regulates q iff p is immediately causally upstream of q, and p positively regulates q."
+RO.0002630,directly negatively regulates,"p directly negatively regulates q iff p is immediately causally upstream of q, and p negatively regulates q."
+RO.0004046,"causally upstream of or within, negative effect",
+RO.0004047,"causally upstream of or within, positive effect",

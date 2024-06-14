@@ -55,8 +55,8 @@ def main():
 
     df_go = pd.DataFrame(go_data2, columns=["property", "label", "description"])
 
-    pd.Series(errors).to_csv("./data/derived/properties.go.failed")
-    df_go.to_csv("./data/derived/properties.go.csv")
+    pd.Series(errors).to_csv("./data/derived/properties.go.failed.csv.csv")
+    df_go.to_csv("./data/derived/properties.go.csv", index=False)
 
 
 if __name__ == "__main__":

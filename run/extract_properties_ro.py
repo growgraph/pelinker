@@ -19,7 +19,7 @@ def main():
     }
     """
     r = g.query(query)
-    relations = [x.subject for x in r]
+    properties = [x.subject for x in r]
 
     query = """
     SELECT ?subject ?label
@@ -40,13 +40,18 @@ def main():
 
     descs = [x for x in r]
 
-    props_df = pd.DataFrame(relations, columns=["property"])
-    labels_df = pd.DataFrame(labels, columns=["property", "label"])
-    desc_df = pd.DataFrame(descs, columns=["property", "description"])
+    ids = [x.split("/")[-1] for x in properties]
+    ids = [".".join(x.split("_")) for x in ids]
 
-    ro_df = props_df.merge(labels_df, how="left", on="property").merge(
-        desc_df, how="left", on="property"
+    props_df = pd.DataFrame(list(zip(properties, ids)), columns=["iri", "property"])
+    labels_df = pd.DataFrame(labels, columns=["iri", "label"])
+    desc_df = pd.DataFrame(descs, columns=["iri", "description"])
+
+    ro_df = props_df.merge(labels_df, how="left", on="iri").merge(
+        desc_df, how="left", on="iri"
     )
+
+    ro_df = ro_df.drop("iri", axis=1)
 
     ro_df.to_csv("./data/derived/properties.ro.csv", index=False)
 
