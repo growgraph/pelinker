@@ -11,7 +11,7 @@ import seaborn as sns
 from sklearn.metrics import accuracy_score
 from transformers import AutoModel, AutoTokenizer
 
-from pelinker.util import text_to_tokens_embeddings
+from pelinker.util import text_to_tokens_embeddings, tt_aggregate_normalize
 
 
 @click.command()
@@ -60,10 +60,8 @@ def run(text_path, model_type):
 
     metrics = []
     for ls in layers:
-        tt_labels = tt_labels_layered[ls].mean(0).mean(dim=1)
-        tt_labels = tt_labels / tt_labels.norm(dim=-1).unsqueeze(-1)
-        tt_descs = tt_descs_layered[ls].mean(0).mean(dim=1)
-        tt_descs = tt_descs / tt_descs.norm(dim=-1).unsqueeze(-1)
+        tt_labels = tt_aggregate_normalize(tt_labels_layered, ls)
+        tt_descs = tt_aggregate_normalize(tt_descs_layered, ls)
 
         index = faiss.IndexFlatIP(tt_labels.shape[1])
         index.add(tt_labels)

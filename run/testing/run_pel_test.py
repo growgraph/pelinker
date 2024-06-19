@@ -11,14 +11,17 @@ import spacy
 import torch
 from transformers import AutoModel, AutoTokenizer
 
-from pelinker.util import process_text, text_to_tokens_embeddings
+from pelinker.util import process_text, text_to_tokens_embeddings, MAX_LENGTH
 
 
 @click.command()
 @click.option("--text-path", type=click.Path())
 @click.option("--model-type", type=click.STRING, default="scibert")
-def run(text_path, model_type):
-    # fig_path = "./figs"
+@click.option("--extra-context", type=click.BOOL, default=False)
+def run(text_path, model_type, extra_context):
+    save_topk = 3
+    # roi = ["induce", "associa", "suppress"]
+    report_path = "./reports"
     with open(text_path) as json_file:
         json_data = json.load(json_file)
     text = json_data["text"]
@@ -48,7 +51,7 @@ def run(text_path, model_type):
     )
 
     layers = [[-5], [-4], [-3], [-2], [-1], [-3, -2, -1]]
-    layers = [[-1], [-5, -4, -3, -2, -1]]
+    layers = [[-1], [-6, -5, -4, -3, -2, -1]]
 
     for ls in layers:
         layers_str = "_".join([str(x) for x in ls])
@@ -61,12 +64,19 @@ def run(text_path, model_type):
 
         nb_nn = min([10, tt_labels.shape[0]])
         # spans list[spans]
-        sents, spans, tt_text = process_text(text, tokenizer, model, nlp)
+        sents, spans, tt_text = process_text(
+            text,
+            tokenizer,
+            model,
+            nlp,
+            max_length=MAX_LENGTH,
+            extra_context=extra_context,
+        )
         # tt_text = tt_text / tt_text.norm(dim=-1).unsqueeze(-1)
 
         tt_text = tt_text[ls].mean(0)
 
-        # roi = ["induce", "associa", "suppress"]
+        metrics = []
         for s, miti, tt_sent in zip(sents, spans, tt_text):
             tt_words_list = []
             for k, v in miti:
@@ -78,15 +88,36 @@ def run(text_path, model_type):
 
             distance_matrix, nearest_neighbors_matrix = index.search(tt_words, nb_nn)
 
-            for nn, d, miti_item in zip(
-                nearest_neighbors_matrix, distance_matrix, miti
+            for bj, (nn, d, miti_item) in enumerate(
+                zip(nearest_neighbors_matrix, distance_matrix, miti)
             ):
                 a, b = miti_item[0]
                 clabels = [id_label_dict[ixlabel_id_dict[nnx]] for nnx in nn]
 
                 dif = d[0] - d[1]
-                # if any([x in s[a:b] for x in roi]):
+                m0 = [bj, a, s[a:b]]
+                m0 += [round(dif, 4)]
+                for cl, cs in zip(clabels[:save_topk], d[:save_topk]):
+                    m0 += [cl, round(cs, 4)]
+
+                metrics += [tuple(m0)]
+
                 print(f"{a} | {s[a:b]} | {clabels[:2]} | {d[0]:.4f} | {dif:.4g}")
+        cols = [
+            item
+            for pair in zip(
+                [f"cand_{j}" for j in range(save_topk)],
+                [f"score_{j}" for j in range(save_topk)],
+            )
+            for item in pair
+        ]
+        metrics_df = pd.DataFrame(
+            metrics, columns=["nb", "ntoken", "target", "top2next_separation"] + cols
+        )
+        metrics_df.to_csv(
+            f"{report_path}/metrics_{layers_str}_ctx_{'extra' if extra_context else 'vb'}.csv"
+        )
+        print(metrics_df)
 
 
 if __name__ == "__main__":

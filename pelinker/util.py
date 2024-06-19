@@ -3,11 +3,13 @@ from string import punctuation, whitespace
 
 import torch
 
+MAX_LENGTH = 512
+
 
 def text_to_tokens_embeddings(texts: list[str], tokenizer, model):
     encoding = tokenizer.batch_encode_plus(
         texts,
-        max_length=512,
+        max_length=MAX_LENGTH,
         return_offsets_mapping=True,
         add_special_tokens=False,
         return_tensors="pt",
@@ -53,13 +55,13 @@ def map_word_indexes_to_token_indexes(
     return map_ix_words_jx_tokens
 
 
-def get_vb_spans(nlp, text):
+def get_vb_spans(nlp, text, extra_context=False):
     doc = nlp(text)
+    context_tags = ["VB", "IN", "JJ", "TO"] if extra_context else ["VB"]
     v_spans0 = [
         (token.idx, len(token.text), token.tag_[:2])
         for token in doc
-        if token.tag_[:2] in ["VB", "IN", "JJ", "TO"]
-        # if token.tag_[:2] in ["VB"]
+        if token.tag_[:2] in context_tags
     ]
 
     v_spans = [(a, a + s, t) for a, s, t in v_spans0]
@@ -91,17 +93,32 @@ def split_into_sentences(text):
     return phrases_
 
 
-def process_text(text, tokenizer, model, nlp):
-    sents = split_into_sentences(text)
-    tt, offsets = text_to_tokens_embeddings(sents, tokenizer, model)
+def process_text(text, tokenizer, model, nlp, max_length=None, extra_context=False):
+    sents_raw = split_into_sentences(text)
+
+    if max_length is not None:
+        sents_agg = []
+        for s in sents_raw:
+            if sents_agg:
+                if len(sents_agg[-1]) + len(s) < MAX_LENGTH - 2:
+                    sents_agg[-1] = sents_agg[-1] + f" {s}"
+                else:
+                    sents_agg += [s]
+            else:
+                sents_agg += [s]
+    else:
+        sents_agg = sents_raw
+
+    tt, offsets = text_to_tokens_embeddings(sents_agg, tokenizer, model)
     sent_spans = [
-        sentence_ix(s, nlp, offs) for j, (offs, s) in enumerate(zip(offsets, sents))
+        sentence_ix(s, nlp, offs, extra_context=extra_context)
+        for j, (offs, s) in enumerate(zip(offsets, sents_agg))
     ]
-    return sents, sent_spans, tt
+    return sents_agg, sent_spans, tt
 
 
-def sentence_ix(sent, nlp, token_offsets):
-    spans = get_vb_spans(nlp, sent)
+def sentence_ix(sent, nlp, token_offsets, extra_context=False):
+    spans = get_vb_spans(nlp, sent, extra_context=extra_context)
 
     ix_whitespaces = [0] + [
         i + 1
@@ -125,3 +142,25 @@ def sentence_ix(sent, nlp, token_offsets):
     ]
 
     return miti
+
+
+def tt_aggregate_normalize(tt: torch.Tensor, ls):
+    """
+
+    :param tt: incoming dims: n_layers x nb x n_tokens x n_emb
+    :param ls:
+    :return: nb x n_emb
+    """
+
+    # average over layers
+    tt_norm = tt[ls].mean(0)
+
+    n = tt_norm.norm(dim=-1)
+    n[n == 0] = 1
+
+    # normalize each tokens over embedding dim, then average over tokens
+    tt_norm = (tt_norm / n.unsqueeze(-1)).mean(dim=1)
+
+    # normalize each tokens over embedding dim, then average over tokens
+    tt_norm = tt_norm / tt_norm.norm(dim=-1).unsqueeze(-1)
+    return tt_norm
