@@ -51,6 +51,7 @@ def main():
     nb_nn = 3
     index.add(tt_labels)
     distance_matrix, nearest_neighbors_matrix = index.search(tt_descs, nb_nn)
+    nb_nn = 10
 
 
 if __name__ == "__main__":

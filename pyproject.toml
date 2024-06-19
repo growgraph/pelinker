@@ -1,24 +1,29 @@
+[build-system]
+build-backend = "poetry.core.masonry.api"
+requires = ["poetry-core"]
+
 [tool.poetry]
-name = "pelinker"
-version = "0.1.0"
-description = "bio / sci property entity linker"
 authors = ["Alexander Belikov <abelikov@gmail.com>"]
+description = "bio / sci property entity linker"
 license = "BSD 3"
+name = "pelinker"
 readme = "README.md"
+version = "0.1.0"
 
 [tool.poetry.dependencies]
+faiss-cpu = "^1.8.0"
+numpy = "^1.26.4"
+pandas = "^2.2.2"
 python = "^3.10"
 rdflib = "^7.0.0"
-transformers = "^4.41.2"
-pandas = "^2.2.2"
-faiss-cpu = "^1.8.0"
+spacy = {extras = ["cudaautodetect"], version = "^3.7.5"}
 torch = "^2.3.1"
-
+transformers = "^4.41.2"
 
 [tool.poetry.group.dev.dependencies]
 jupyter = "^1.0.0"
+networkx = "^3.3"
 pylint = "^3.2.3"
-
-[build-system]
-requires = ["poetry-core"]
-build-backend = "poetry.core.masonry.api"
+pytest = "^8.2.2"
+scikit-learn = "^1.5.0"
+seaborn = "^0.13.2"

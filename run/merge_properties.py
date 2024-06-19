@@ -5,6 +5,18 @@ def main():
     ro_df = pd.read_csv("./data/derived/properties.ro.csv")
     go_df = pd.read_csv("./data/derived/properties.go.csv")
     gw_df = pd.read_csv("./data/raw/properties.csv")
+
+    ro_df = ro_df[ro_df["label"].notnull()].copy()
+
+    patterns = ["not for use in curation", "obsolete"]
+    mask = go_df["label"].apply(lambda x: any(y in x for y in patterns))
+    go_df = go_df[~mask].copy()
+    print(f"number of dropped items in go_df : {sum(mask)}")
+
+    mask = ro_df["label"].apply(lambda x: any(y in x for y in patterns))
+    ro_df = ro_df[~mask].copy()
+    print(f"number of dropped items in ro_df : {sum(mask)}")
+
     df = pd.concat([ro_df, go_df, gw_df])
 
     # assign id to ad hoc properties
