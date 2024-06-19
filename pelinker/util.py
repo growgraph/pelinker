@@ -1,9 +1,24 @@
 import re
 from string import punctuation, whitespace
-
+from transformers import AutoModel, AutoTokenizer
 import torch
 
 MAX_LENGTH = 512
+
+
+def load_models(model_type):
+    if model_type == "scibert":
+        tokenizer = AutoTokenizer.from_pretrained("allenai/scibert_scivocab_cased")
+        model = AutoModel.from_pretrained("allenai/scibert_scivocab_cased")
+    elif model_type == "biobert":
+        tokenizer = AutoTokenizer.from_pretrained("dmis-lab/biobert-base-cased-v1.2")
+        model = AutoModel.from_pretrained("dmis-lab/biobert-base-cased-v1.2")
+    elif model_type == "pubmedbert":
+        tokenizer = AutoTokenizer.from_pretrained("neuml/pubmedbert-base-embeddings")
+        model = AutoModel.from_pretrained("neuml/pubmedbert-base-embeddings")
+    else:
+        raise ValueError(f"{model_type} unsupported")
+    return tokenizer, model
 
 
 def text_to_tokens_embeddings(texts: list[str], tokenizer, model):

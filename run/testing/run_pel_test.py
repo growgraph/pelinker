@@ -9,9 +9,13 @@ import faiss
 import pandas as pd
 import spacy
 import torch
-from transformers import AutoModel, AutoTokenizer
 
-from pelinker.util import process_text, text_to_tokens_embeddings, MAX_LENGTH
+from pelinker.util import (
+    process_text,
+    text_to_tokens_embeddings,
+    MAX_LENGTH,
+    load_models,
+)
 
 
 @click.command()
@@ -28,12 +32,7 @@ def run(text_path, model_type, extra_context):
 
     df0 = pd.read_csv("data/derived/properties.synthesis.csv")
 
-    if model_type == "scibert":
-        tokenizer = AutoTokenizer.from_pretrained("allenai/scibert_scivocab_cased")
-        model = AutoModel.from_pretrained("allenai/scibert_scivocab_cased")
-    else:
-        tokenizer = AutoTokenizer.from_pretrained("dmis-lab/biobert-base-cased-v1.2")
-        model = AutoModel.from_pretrained("dmis-lab/biobert-base-cased-v1.2")
+    tokenizer, model = load_models(model_type)
 
     nlp = spacy.load("en_core_web_sm")
 
@@ -115,7 +114,7 @@ def run(text_path, model_type, extra_context):
             metrics, columns=["nb", "ntoken", "target", "top2next_separation"] + cols
         )
         metrics_df.to_csv(
-            f"{report_path}/metrics_{layers_str}_ctx_{'extra' if extra_context else 'vb'}.csv"
+            f"{report_path}/metrics_{model_type}_{layers_str}_ctx_{'extra' if extra_context else 'vb'}.csv"
         )
         print(metrics_df)
 

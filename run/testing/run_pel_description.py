@@ -6,28 +6,20 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-# import torch
 import seaborn as sns
 from sklearn.metrics import accuracy_score
-from transformers import AutoModel, AutoTokenizer
 
-from pelinker.util import text_to_tokens_embeddings, tt_aggregate_normalize
+from pelinker.util import text_to_tokens_embeddings, tt_aggregate_normalize, load_models
 
 
 @click.command()
-@click.option("--text-path", type=click.Path())
 @click.option("--model-type", type=click.STRING, default="scibert")
-def run(text_path, model_type):
+def run(model_type):
     fig_path = "./figs"
 
     df0 = pd.read_csv("data/derived/properties.synthesis.csv")
 
-    if model_type == "scibert":
-        tokenizer = AutoTokenizer.from_pretrained("allenai/scibert_scivocab_cased")
-        model = AutoModel.from_pretrained("allenai/scibert_scivocab_cased")
-    else:
-        tokenizer = AutoTokenizer.from_pretrained("dmis-lab/biobert-base-cased-v1.2")
-        model = AutoModel.from_pretrained("dmis-lab/biobert-base-cased-v1.2")
+    tokenizer, model = load_models(model_type)
 
     df = df0.copy()
 
