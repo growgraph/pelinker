@@ -2,6 +2,9 @@ import re
 from string import punctuation, whitespace
 from transformers import AutoModel, AutoTokenizer
 import torch
+import pandas as pd
+
+from sklearn.metrics import accuracy_score
 
 MAX_LENGTH = 512
 
@@ -181,3 +184,28 @@ def tt_aggregate_normalize(tt: torch.Tensor, ls):
     # normalize each tokens over embedding dim, then average over tokens
     tt_norm = tt_norm / tt_norm.norm(dim=-1).unsqueeze(-1)
     return tt_norm
+
+
+def compute_distance_ref(
+    index,
+    tt_descs,
+    nb_nn,
+    gt_position,
+):
+    distance_matrix, nearest_neighbors_matrix = index.search(tt_descs, nb_nn)
+    dfd = pd.DataFrame(distance_matrix[:, 0], columns=["dist"])
+    dfd["position"] = "top"
+    dfd2 = pd.DataFrame(distance_matrix[:, 1:].flatten(), columns=["dist"])
+    dfd2["position"] = "1-9"
+    dfa = pd.concat([dfd, dfd2])
+    acc_score = accuracy_score(
+        nearest_neighbors_matrix[:, 0],
+        gt_position,
+    )
+
+    top_mean = distance_matrix[:, 0].mean()
+    below_mean = distance_matrix[:, 1:].flatten().mean()
+
+    top_cand_dist = top_mean - below_mean
+    m0 = (top_cand_dist, acc_score)
+    return m0, dfa

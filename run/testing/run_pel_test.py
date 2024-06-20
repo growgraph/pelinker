@@ -41,9 +41,11 @@ def run(text_path, model_type, extra_context):
 
     id_label_dict = dict(df[["property", "label"]].values)
     ixlabel_id_dict = df["property"].reset_index(drop=True).to_dict()
-    mask_desc_notnull = df["description"].notnull()
+    mask_desc_exclude = df["description"].isnull() | df["description"].apply(
+        lambda x: "inverse" in x.lower() if isinstance(x, str) else True
+    )
 
-    df.loc[mask_desc_notnull, "property"].reset_index(drop=True)
+    df.loc[~mask_desc_exclude, "property"].reset_index(drop=True)
 
     tt_labels_layered, labels_spans = text_to_tokens_embeddings(
         df["label"].values.tolist(), tokenizer, model
