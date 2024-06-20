@@ -15,6 +15,7 @@ from pelinker.util import (
     text_to_tokens_embeddings,
     MAX_LENGTH,
     load_models,
+    tt_aggregate_normalize,
 )
 
 
@@ -22,7 +23,14 @@ from pelinker.util import (
 @click.option("--text-path", type=click.Path())
 @click.option("--model-type", type=click.STRING, default="scibert")
 @click.option("--extra-context", type=click.BOOL, default=False)
-def run(text_path, model_type, extra_context):
+@click.option(
+    "--superposition",
+    type=click.BOOL,
+    default=False,
+    is_flag=True,
+    help="use a superposition of label and description embeddings, where available",
+)
+def run(text_path, model_type, superposition, extra_context):
     save_topk = 3
     # roi = ["induce", "associa", "suppress"]
     report_path = "./reports"
@@ -41,29 +49,55 @@ def run(text_path, model_type, extra_context):
 
     id_label_dict = dict(df[["property", "label"]].values)
     ixlabel_id_dict = df["property"].reset_index(drop=True).to_dict()
+
     mask_desc_exclude = df["description"].isnull() | df["description"].apply(
         lambda x: "inverse" in x.lower() if isinstance(x, str) else True
     )
 
-    df.loc[~mask_desc_exclude, "property"].reset_index(drop=True)
+    id_ixlabel_dict = {v: k for k, v in ixlabel_id_dict.items()}
+
+    ixdesc_id = list(
+        df.loc[~mask_desc_exclude, "property"].reset_index(drop=True).items()
+    )
+
+    ixlabel_ixdesc = {id_ixlabel_dict[label]: ixd for ixd, label in ixdesc_id}
 
     tt_labels_layered, labels_spans = text_to_tokens_embeddings(
         df["label"].values.tolist(), tokenizer, model
     )
 
-    layers = [[-5], [-4], [-3], [-2], [-1], [-3, -2, -1]]
-    layers = [[-1], [-3, -2, -1], [-6, -5, -4, -3, -2, -1]]
+    tt_descs_layered, desc_spans = text_to_tokens_embeddings(
+        df.loc[~mask_desc_exclude, "description"].values.tolist(),
+        tokenizer,
+        model,
+    )
+
+    layers = [[-1], [-3, -2, -1], [-6, -5, -4, -3, -2, -1], [-1, -2, -8, -9]]
 
     for ls in layers:
         layers_str = "_".join([str(x) for x in ls])
         print(f">>> {layers_str} <<<")
-        tt_labels = tt_labels_layered[ls].mean(0).mean(dim=1)
-        tt_labels = tt_labels / tt_labels.norm(dim=-1).unsqueeze(-1)
+        tt_labels = tt_aggregate_normalize(tt_labels_layered, ls)
+        tt_descs = tt_aggregate_normalize(tt_descs_layered, ls)
 
-        index = faiss.IndexFlatIP(tt_labels.shape[1])
-        index.add(tt_labels)
+        if superposition:
+            tt_basis = []
+            for j, tt in enumerate(tt_labels):
+                if j in ixlabel_ixdesc:
+                    tt_basis += [tt + tt_descs[ixlabel_ixdesc[j]]]
+                else:
+                    tt_basis += [tt]
+
+            tt_basis = torch.stack(tt_basis)
+            tt_basis = tt_basis / tt_basis.norm(dim=1).unsqueeze(1)
+        else:
+            tt_basis = tt_labels
+
+        index = faiss.IndexFlatIP(tt_basis.shape[1])
+        index.add(tt_basis)
 
         nb_nn = min([10, tt_labels.shape[0]])
+
         # spans list[spans]
         sents, spans, tt_text = process_text(
             text,
@@ -73,6 +107,7 @@ def run(text_path, model_type, extra_context):
             max_length=MAX_LENGTH,
             extra_context=extra_context,
         )
+
         # tt_text = tt_text / tt_text.norm(dim=-1).unsqueeze(-1)
 
         tt_text = tt_text[ls].mean(0)

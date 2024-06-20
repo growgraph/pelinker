@@ -5,7 +5,7 @@ import faiss
 import pandas as pd
 import torch
 
-
+from pelinker.model import LinkerModel
 from pelinker.util import (
     text_to_tokens_embeddings,
     tt_aggregate_normalize,
@@ -31,11 +31,12 @@ import joblib
 @click.option(
     "--layers",
     type=click.INT,
-    default=[-1],
+    default=[-6, -5, -4, -3, -2, -1],
     multiple=True,
     help="layers to consider",
 )
 def run(model_type, layers, superposition):
+    layers = list(layers)
     suffix = ".superposition" if superposition else ""
 
     df0 = pd.read_csv("data/derived/properties.synthesis.csv")
@@ -47,6 +48,8 @@ def run(model_type, layers, superposition):
     )
 
     ixlabel_id_dict = df["property"].reset_index(drop=True).to_dict()
+    ids = df["property"].values.tolist()
+
     id_ixlabel_dict = {v: k for k, v in ixlabel_id_dict.items()}
 
     ixdesc_id = list(
@@ -87,11 +90,12 @@ def run(model_type, layers, superposition):
 
     index = faiss.IndexFlatIP(tt_basis.shape[1])
     index.add(tt_basis)
+    lm = LinkerModel(index=index, vocabulary=ids, ls=layers)
 
-    file_path = files("task_manager.models.store").joinpath(
+    file_path = files("pelinker.store").joinpath(
         f"pelinker.model.{model_type}.{layers_str}{suffix}.gz"
     )
-    joblib.dump(index, file_path, compress=3)
+    joblib.dump(lm, file_path, compress=3)
 
 
 if __name__ == "__main__":

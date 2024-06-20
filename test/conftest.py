@@ -9,10 +9,15 @@ def nlp():
 
 
 @pytest.fixture(scope="module")
-def t_tokenizer():
-    return AutoTokenizer.from_pretrained("allenai/scibert_scivocab_cased")
+def pubmedbert():
+    return "neuml/pubmedbert-base-embeddings"
 
 
 @pytest.fixture(scope="module")
-def t_model():
-    return AutoModel.from_pretrained("allenai/scibert_scivocab_cased")
+def t_tokenizer(pubmedbert):
+    return AutoTokenizer.from_pretrained(pubmedbert)
+
+
+@pytest.fixture(scope="module")
+def t_model(pubmedbert):
+    return AutoModel.from_pretrained(pubmedbert)
