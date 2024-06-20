@@ -39,6 +39,7 @@ def text_to_tokens_embeddings(texts: list[str], tokenizer, model):
 
     with torch.no_grad():
         outputs = model(output_hidden_states=True, **inputs)
+
     # n_layers x nb x n_len x n_emb
     tt = torch.stack(outputs.hidden_states)
 
@@ -46,7 +47,9 @@ def text_to_tokens_embeddings(texts: list[str], tokenizer, model):
     offsets = encoding["offset_mapping"]
 
     # fill with zeros latent vectors for padded tokens
-    tt = tt.masked_fill((encoding["input_ids"] == 0).unsqueeze(-1), 0)
+    mask = encoding["attention_mask"]
+    mask = mask.unsqueeze(-1).unsqueeze(0)
+    tt = tt.masked_fill(mask.logical_not(), 0)
 
     return tt.cpu(), offsets
 
@@ -64,7 +67,6 @@ def map_word_indexes_to_token_indexes(
         map_ix_words_jx_tokens[ix_word] = []
         joff, (a, b) = enu_offsets[pnt_tokens]
         while enu_offsets[pnt_tokens][1][1] < wb:
-            # map_ix_words_jx_tokens[ix_word] += [(pnt_tokens, enu_offsets[pnt_tokens][1])]
             map_ix_words_jx_tokens[ix_word] += [pnt_tokens]
             pnt_tokens += 1
     return map_ix_words_jx_tokens

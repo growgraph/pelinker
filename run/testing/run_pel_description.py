@@ -16,6 +16,7 @@ from pelinker.util import text_to_tokens_embeddings, tt_aggregate_normalize, loa
 @click.option("--model-type", type=click.STRING, default="scibert")
 def run(model_type):
     fig_path = "./figs"
+    report_path = "./reports"
 
     df0 = pd.read_csv("data/derived/properties.synthesis.csv")
 
@@ -48,7 +49,12 @@ def run(model_type):
         model,
     )
 
-    layers = [[-x] for x in range(1, 8)] + [[-3, -2, -1]]
+    layers = (
+        [[-x] for x in range(1, 10)]
+        + [[-x for x in range(1, 4)]]
+        + [[-x for x in range(1, 8)]]
+        + [[-1, -2, -6, 7]]
+    )
 
     metrics = []
     for ls in layers:
@@ -77,7 +83,7 @@ def run(model_type):
             hue="position",
             stat="density",
             common_norm=False,
-            bins=np.arange(0.5, 1.01, 0.01),
+            bins=np.arange(0.2, 1.1, 0.01),
         )
         dp.fig.subplots_adjust(top=0.9)
         top_mean = distance_matrix[:, 0].mean()
@@ -95,6 +101,7 @@ def run(model_type):
         plt.close()
 
     metrics_df = pd.DataFrame(metrics, columns=["kind", "dist", "acc"])
+    metrics_df.to_csv(f"{report_path}/metrics_{model_type}_desc2label.csv")
     print(metrics_df)
 
 

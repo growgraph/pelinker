@@ -50,7 +50,7 @@ def run(text_path, model_type, extra_context):
     )
 
     layers = [[-5], [-4], [-3], [-2], [-1], [-3, -2, -1]]
-    layers = [[-1], [-6, -5, -4, -3, -2, -1]]
+    layers = [[-1], [-3, -2, -1], [-6, -5, -4, -3, -2, -1]]
 
     for ls in layers:
         layers_str = "_".join([str(x) for x in ls])
