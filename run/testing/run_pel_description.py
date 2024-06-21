@@ -15,6 +15,7 @@ from pelinker.util import (
     load_models,
     compute_distance_ref,
 )
+from pelinker.preprocess import pre_process_properties
 
 
 @click.command()
@@ -40,27 +41,12 @@ def run(model_type, superposition):
 
     df0 = pd.read_csv("data/derived/properties.synthesis.csv")
 
-    df = df0.copy()
-
-    # id_label_dict = dict(df[["property", "label"]].values)
-    mask_desc_exclude = df["description"].isnull() | df["description"].apply(
-        lambda x: "inverse" in x.lower() if isinstance(x, str) else True
-    )
-
-    # id_description_dict = dict(
-    #     df.loc[mask_desc_notnull, ["property", "description"]].values
-    # )
-
-    ixlabel_id_dict = df["property"].reset_index(drop=True).to_dict()
-    id_ixlabel_dict = {v: k for k, v in ixlabel_id_dict.items()}
-
-    ixdesc_id = list(
-        df.loc[~mask_desc_exclude, "property"].reset_index(drop=True).items()
-    )
-
-    ixlabel_ixdesc = {id_ixlabel_dict[label]: ixd for ixd, label in ixdesc_id}
-
-    df.loc[~mask_desc_exclude, "property"].reset_index(drop=True)
+    report = pre_process_properties(df0)
+    labels = report.pop("labels")
+    descriptions = report.pop("descriptions")
+    ixlabel_ixdesc = report.pop("ixlabel_ixdesc")
+    property_from_desc = report.pop("property_from_desc")
+    id_ixlabel_map = report.pop("id_ixlabel_map")
 
     layers = (
         [[-x] for x in range(1, 10)]
@@ -76,11 +62,11 @@ def run(model_type, superposition):
         tokenizer, model = load_models(mt)
 
         tt_labels_layered, labels_spans = text_to_tokens_embeddings(
-            df["label"].values.tolist(), tokenizer, model
+            labels, tokenizer, model
         )
 
         tt_descs_layered, desc_spans = text_to_tokens_embeddings(
-            df.loc[~mask_desc_exclude, "description"].values.tolist(),
+            descriptions,
             tokenizer,
             model,
         )
@@ -112,7 +98,7 @@ def run(model_type, superposition):
                 index,
                 tt_descs,
                 nb_nn,
-                np.array([id_ixlabel_dict[x[1]] for x in ixdesc_id]),
+                np.array([id_ixlabel_map[p] for p in property_from_desc]),
             )
             dfa["model_type"] = mt
             dfa["layers"] = layers_str

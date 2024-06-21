@@ -39,9 +39,11 @@ class LinkerModel:
                 zip(nearest_neighbors_matrix, distance_matrix, miti)
             ):
                 a, b = miti_item[0]
+                d = d.tolist()
+
                 clabels = [self.vocabulary[nnx] for nnx in nn]
 
-                dif = d[0] - d[1]
+                dif = float(d[0] - d[1])
 
                 report += [
                     {
@@ -49,7 +51,7 @@ class LinkerModel:
                         "a": a,
                         "b": b,
                         "ent": clabels[0],
-                        "conf": d[0],
+                        "conf": float(d[0]),
                         "mention": s[a:b],
                         "nei_dif": dif,
                     }

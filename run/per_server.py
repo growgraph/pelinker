@@ -34,12 +34,12 @@ logger = logging.getLogger(__name__)
 @click.option(
     "--layers",
     type=click.INT,
-    default=[-1],
+    default=[-6, -5, -4, -3, -2, -1],
     multiple=True,
     help="layers to consider",
 )
-@click.option("--port", type=click.INT)
-@click.option("--host", type=click.STRING)
+@click.option("--port", type=click.INT, default=8599)
+@click.option("--host", type=click.STRING, default="0.0.0.0")
 def main(model_type, layers, superposition, port, host):
     extra_context = False
     suffix = ".superposition" if superposition else ""
@@ -54,13 +54,13 @@ def main(model_type, layers, superposition, port, host):
         f"pelinker.model.{model_type}.{layers_str}{suffix}.gz"
     )
 
-    model = joblib.load(file_path)
+    pe_model = joblib.load(file_path)
 
     tokenizer, model = load_models(model_type)
 
     nlp = spacy.load("en_core_web_sm")
 
-    @app.route("/relinker", methods=["POST"])
+    @app.route("/pelinker", methods=["POST"])
     @cross_origin()
     def link():
         """
@@ -75,7 +75,9 @@ def main(model_type, layers, superposition, port, host):
             json_data = request.json
             try:
                 text = json_data["text"]
-                r = model.link(text, tokenizer, model, nlp, MAX_LENGTH, extra_context)
+                r = pe_model.link(
+                    text, tokenizer, model, nlp, MAX_LENGTH, extra_context
+                )
 
             except Exception as exc:
                 return {"error": str(exc)}, 202

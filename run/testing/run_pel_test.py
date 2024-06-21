@@ -18,11 +18,12 @@ from pelinker.util import (
     tt_aggregate_normalize,
 )
 
+from pelinker.model import LinkerModel
 
 @click.command()
 @click.option("--text-path", type=click.Path())
 @click.option("--model-type", type=click.STRING, default="scibert")
-@click.option("--extra-context", type=click.BOOL, default=False)
+@click.option("--extra-context", type=click.BOOL, is_flag=True, default=False)
 @click.option(
     "--superposition",
     type=click.BOOL,
@@ -31,6 +32,8 @@ from pelinker.util import (
     help="use a superposition of label and description embeddings, where available",
 )
 def run(text_path, model_type, superposition, extra_context):
+    superposition_sfx = "_superposition" if superposition else ""
+    suffix = f"ctx_{'extra' if extra_context else 'vb'}{superposition_sfx}"
     save_topk = 3
     # roi = ["induce", "associa", "suppress"]
     report_path = "./reports"
@@ -96,6 +99,8 @@ def run(text_path, model_type, superposition, extra_context):
         index = faiss.IndexFlatIP(tt_basis.shape[1])
         index.add(tt_basis)
 
+        lm = LinkerModel(index=index, vocabulary=ids, ls=layers)
+
         nb_nn = min([10, tt_labels.shape[0]])
 
         # spans list[spans]
@@ -130,6 +135,8 @@ def run(text_path, model_type, superposition, extra_context):
                 a, b = miti_item[0]
                 clabels = [id_label_dict[ixlabel_id_dict[nnx]] for nnx in nn]
 
+                d = d.tolist()
+
                 dif = d[0] - d[1]
                 m0 = [bj, a, s[a:b]]
                 m0 += [round(dif, 4)]
@@ -151,7 +158,7 @@ def run(text_path, model_type, superposition, extra_context):
             metrics, columns=["nb", "ntoken", "target", "top2next_separation"] + cols
         )
         metrics_df.to_csv(
-            f"{report_path}/metrics_{model_type}_{layers_str}_ctx_{'extra' if extra_context else 'vb'}.csv"
+            f"{report_path}/metrics_{model_type}_{layers_str}{suffix}.csv"
         )
         print(metrics_df)
 

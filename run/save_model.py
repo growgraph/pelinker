@@ -12,6 +12,7 @@ from pelinker.util import (
     load_models,
 )
 from importlib.resources import files
+from pelinker.preprocess import pre_process_properties
 import joblib
 
 
@@ -26,6 +27,7 @@ import joblib
     "--superposition",
     type=click.BOOL,
     default=False,
+    is_flag=True,
     help="use a superposition of label and description embeddings, where available",
 )
 @click.option(
@@ -41,33 +43,20 @@ def run(model_type, layers, superposition):
 
     df0 = pd.read_csv("data/derived/properties.synthesis.csv")
 
-    df = df0.copy()
-
-    mask_desc_exclude = df["description"].isnull() | df["description"].apply(
-        lambda x: "inverse" in x.lower() if isinstance(x, str) else True
-    )
-
-    ixlabel_id_dict = df["property"].reset_index(drop=True).to_dict()
-    ids = df["property"].values.tolist()
-
-    id_ixlabel_dict = {v: k for k, v in ixlabel_id_dict.items()}
-
-    ixdesc_id = list(
-        df.loc[~mask_desc_exclude, "property"].reset_index(drop=True).items()
-    )
-
-    ixlabel_ixdesc = {id_ixlabel_dict[label]: ixd for ixd, label in ixdesc_id}
-
-    df.loc[~mask_desc_exclude, "property"].reset_index(drop=True)
+    report = pre_process_properties(df0)
+    labels = report.pop("labels")
+    descriptions = report.pop("descriptions")
+    ixlabel_ixdesc = report.pop("ixlabel_ixdesc")
+    properties = report.pop("properties")
 
     tokenizer, model = load_models(model_type)
 
     tt_labels_layered, labels_spans = text_to_tokens_embeddings(
-        df["label"].values.tolist(), tokenizer, model
+        labels, tokenizer, model
     )
 
     tt_descs_layered, desc_spans = text_to_tokens_embeddings(
-        df.loc[~mask_desc_exclude, "description"].values.tolist(),
+        descriptions,
         tokenizer,
         model,
     )
@@ -84,13 +73,13 @@ def run(model_type, layers, superposition):
                 tt_basis += [tt]
 
         tt_basis = torch.stack(tt_basis)
-        tt_basis = tt_basis / tt_labels.norm(1).unsqueeze(1)
+        tt_basis = tt_basis / tt_basis.norm(dim=1).unsqueeze(1)
     else:
         tt_basis = tt_labels
 
     index = faiss.IndexFlatIP(tt_basis.shape[1])
     index.add(tt_basis)
-    lm = LinkerModel(index=index, vocabulary=ids, ls=layers)
+    lm = LinkerModel(index=index, vocabulary=properties, ls=layers)
 
     file_path = files("pelinker.store").joinpath(
         f"pelinker.model.{model_type}.{layers_str}{suffix}.gz"
