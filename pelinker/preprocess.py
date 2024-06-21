@@ -3,14 +3,27 @@ def pre_process_properties(df):
 
     df = df.sort_values("property")
 
-    mask_desc_exclude = df["description"].isnull() | df["description"].apply(
-        lambda x: "inverse" in x.lower() if isinstance(x, str) else True
+    exclude_label_list = [" low "]
+    mask_label_exclude = df["label"].apply(
+        lambda x: any(
+            c in x.lower() if isinstance(x, str) else True for c in exclude_label_list
+        )
     )
 
-    df_desc = df.loc[mask_desc_exclude].copy()
+    df = df[~mask_label_exclude].copy()
+
+    exclude_desc_list = ["inverse"]
+
+    mask_desc_exclude = df["description"].isnull() | df["description"].apply(
+        lambda x: any(
+            c in x.lower() if isinstance(x, str) else True for c in exclude_desc_list
+        )
+    )
+
+    df_desc = df.loc[~mask_desc_exclude].copy()
 
     # prop -> label
-    # id_label_dict = dict(df[["property", "label"]].values)
+    property_label_map = dict(df[["property", "label"]].values)
 
     # idesc -> description
     # id_description_dict = dict(
@@ -47,5 +60,6 @@ def pre_process_properties(df):
         "property_from_desc": property_from_desc,
         "id_ixlabel_map": id_ixlabel_map,
         "properties": properties,
+        "property_label_map": property_label_map,
     }
     return report

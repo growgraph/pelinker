@@ -9,6 +9,7 @@ from waitress import serve
 from importlib.resources import files
 import joblib
 from pelinker.util import load_models, MAX_LENGTH
+from pelinker.model import LinkerModel
 import spacy
 
 app = Flask(__name__)
@@ -43,7 +44,7 @@ logger = logging.getLogger(__name__)
 def main(model_type, layers, superposition, port, host):
     extra_context = False
     suffix = ".superposition" if superposition else ""
-    layers_str = "_".join([str(x) for x in layers])
+    layers_str = LinkerModel.encode_layers(layers)
 
     logger_conf = "logging.conf"
     logging.config.fileConfig(logger_conf, disable_existing_loggers=False)
@@ -54,7 +55,7 @@ def main(model_type, layers, superposition, port, host):
         f"pelinker.model.{model_type}.{layers_str}{suffix}.gz"
     )
 
-    pe_model = joblib.load(file_path)
+    pe_model: LinkerModel = joblib.load(file_path)
 
     tokenizer, model = load_models(model_type)
 

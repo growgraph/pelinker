@@ -48,6 +48,7 @@ def run(model_type, layers, superposition):
     descriptions = report.pop("descriptions")
     ixlabel_ixdesc = report.pop("ixlabel_ixdesc")
     properties = report.pop("properties")
+    property_label_map = report.pop("property_label_map")
 
     tokenizer, model = load_models(model_type)
 
@@ -60,7 +61,7 @@ def run(model_type, layers, superposition):
         tokenizer,
         model,
     )
-    layers_str = "_".join([str(x) for x in layers])
+    layers_str = LinkerModel.encode_layers(layers)
     tt_labels = tt_aggregate_normalize(tt_labels_layered, layers)
     tt_descs = tt_aggregate_normalize(tt_descs_layered, layers)
 
@@ -79,8 +80,9 @@ def run(model_type, layers, superposition):
 
     index = faiss.IndexFlatIP(tt_basis.shape[1])
     index.add(tt_basis)
-    lm = LinkerModel(index=index, vocabulary=properties, ls=layers)
-
+    lm = LinkerModel(
+        index=index, vocabulary=properties, layers=layers, labels_map=property_label_map
+    )
     file_path = files("pelinker.store").joinpath(
         f"pelinker.model.{model_type}.{layers_str}{suffix}.gz"
     )

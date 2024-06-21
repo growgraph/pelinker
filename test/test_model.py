@@ -1,6 +1,7 @@
 import pytest
 
 from pelinker.util import MAX_LENGTH
+from pelinker.model import LinkerModel
 from importlib.resources import files
 import joblib
 
@@ -18,7 +19,8 @@ def text():
 
 def test_load(text, t_model, t_tokenizer, nlp):
     layers = [-6, -5, -4, -3, -2, -1]
-    layers_str = "_".join([str(x) for x in layers])
+    layers_str = LinkerModel.encode_layers(layers)
+
     file_path = files("pelinker.store").joinpath(
         f"pelinker.model.pubmedbert.{layers_str}.gz"
     )
