@@ -6,13 +6,19 @@
 
 ### Merge properties/relations into a table
 
-Uniformize, trim data incoming from different sources
+Uniformize and trim data incoming from different sources
  
 - `merge_properites`
 
 
 ### Serialize model
+
+"Train" a model on a corpus
+
+`python -m spacy download en_core_web_sm`
+
 - `save_model`
 
 ### Run server
+
 - `serve`

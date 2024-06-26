@@ -14,14 +14,13 @@ ENV POETRY_NO_INTERACTION=1 \
 WORKDIR /app
 
 COPY pyproject.toml poetry.lock ./
-RUN touch README.md
 
-COPY pelinker ./pelinker
-
-RUN mkdir -p -m 0700 ~/.ssh && ssh-keyscan github.com >> ~/.ssh/known_hosts
-RUN --mount=type=ssh poetry install --no-interaction -vvv --without dev
-COPY run ./run
 COPY README.md logging.conf ./
-RUN python -m spacy download en_core_web_sm
+COPY pelinker ./pelinker
+COPY run ./run
+RUN poetry install --no-interaction -vvv --without dev
+RUN poetry run python -m spacy download en_core_web_sm
+RUN rm -rf /tmp/poetry_cache ./.venv/lib/python3.10/site-packages/nvidi*
 
-CMD ["poetry", "run", "python", "run/serve.py", "--model-type", "biobert-stsb"]
+CMD ["poetry", "run", "python", "run/serve.py", "--model-type", "biobert-stsb", "--port", "8599", "--thr-score", "0.5", "--thr-dif", "0.025"]
+

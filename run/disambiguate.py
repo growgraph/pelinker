@@ -4,10 +4,7 @@ import click
 import faiss
 import pandas as pd
 import pathlib
-from pelinker.util import (
-    load_models,
-    encode
-)
+from pelinker.util import load_models, encode
 from pelinker.preprocess import pre_process_properties
 
 
@@ -70,27 +67,7 @@ def run(rep_string, model_type, entities_path):
 
     edges = set(edges)
     nlabels = [(labels[a], labels[b]) for a, b in edges]
-    pass
-
-    # df0 = pd.concat(df_agg)
-    # _ = sns.displot(
-    #     data=df0,
-    #     x="dist",
-    #     hue="position",
-    #     stat="density",
-    #     common_norm=False,
-    #     col="layers",
-    #     row="model_type",
-    #     bins=np.arange(0.2, 1.1, 0.01),
-    # )
-    #
-    # path = f"{fig_path}/desc2label_dist.png"
-    # plt.savefig(path, bbox_inches="tight", dpi=300)
-    # plt.close()
-    #
-    # metrics_df = pd.DataFrame(metrics, columns=["kind", "dist", "acc"])
-    # metrics_df.to_csv(f"{report_path}/metrics_{model_type}_desc2label.csv")
-    # print(metrics_df)
+    print(nlabels)
 
 
 if __name__ == "__main__":

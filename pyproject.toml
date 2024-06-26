@@ -16,14 +16,13 @@ flask = "^3.0.3"
 flask-compress = "^1.15"
 flask-cors = "^4.0.1"
 flask-restful = "^0.3.10"
-gapstatistics = "^0.1.5"
 numpy = "^1.26.4"
 pandas = "^2.2.2"
 python = "^3.10"
 rdflib = "^7.0.0"
 sentence-transformers = "^3.0.1"
 spacy = {extras = ["cpu"], version = "^3.7.5"}
-torch = "^2.3.1"
+torch = {url = "https://download.pytorch.org/whl/cpu/torch-2.3.1%2Bcpu-cp310-cp310-linux_x86_64.whl"}
 transformers = "^4.41.2"
 waitress = "^3.0.0"
 
