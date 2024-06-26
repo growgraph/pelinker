@@ -20,7 +20,7 @@ def main():
     df_with_id = df[~df["property"].isnull()].sort_values("label").copy()
 
     df_no_id = df_no_id.reset_index().drop(["index"], axis=1).reset_index()
-    df_no_id["property"] = df_no_id["index"].apply(lambda x: f"GG.{x:04d}")
+    df_no_id["property"] = df_no_id["index"].apply(lambda x: f"GG.{x:06d}")
     df_no_id = df_no_id.drop(["index"], axis=1)
 
     df = pd.concat([df_with_id, df_no_id])
