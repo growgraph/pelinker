@@ -69,10 +69,13 @@ def main(
 
     logger.info(f"model path: {model_path}")
     pe_model: LinkerModel = joblib.load(model_path)
+    logger.info(f"pelinker model loaded : {pe_model}")
 
     tokenizer, model = load_models(model_type, sentence=sentence)
+    logger.info(f"tokenizer and model loaded : {model}")
 
     nlp = spacy.load("en_core_web_sm")
+    logger.info(f"spacy model loaded : {nlp}")
 
     @app.route("/pelinker", methods=["POST"])
     @cross_origin()
