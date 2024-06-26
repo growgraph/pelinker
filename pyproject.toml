@@ -26,6 +26,7 @@ spacy = {extras = ["cpu"], version = "^3.7.5"}
 torch = {url = "https://download.pytorch.org/whl/cpu/torch-2.3.1%2Bcpu-cp310-cp310-linux_x86_64.whl"}
 transformers = "^4.41.2"
 waitress = "^3.0.0"
+joblib = "^1.4.2"
 
 [tool.poetry.group.dev.dependencies]
 jupyter = "^1.0.0"
