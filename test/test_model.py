@@ -18,8 +18,10 @@ def text():
 
 
 def test_load(text, t_model, t_tokenizer, nlp):
-    layers = [-6, -5, -4, -3, -2, -1]
-    layers_str = LinkerModel.encode_layers(layers)
+    layer_spec = "1,2,3,4,5,6"
+    layers = LinkerModel.str2layers(layer_spec)
+
+    layers_str = LinkerModel.layers2str(layers)
 
     file_path = files("pelinker.store").joinpath(
         f"pelinker.model.pubmedbert.{layers_str}.gz"

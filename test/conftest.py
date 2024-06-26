@@ -3,6 +3,7 @@ import spacy
 import pandas as pd
 from importlib.resources import files
 from transformers import AutoModel, AutoTokenizer
+from sentence_transformers import SentenceTransformer
 
 
 @pytest.fixture(scope="module")
@@ -29,3 +30,8 @@ def t_tokenizer(pubmedbert):
 @pytest.fixture(scope="module")
 def t_model(pubmedbert):
     return AutoModel.from_pretrained(pubmedbert)
+
+
+@pytest.fixture(scope="module")
+def s_model(pubmedbert):
+    return SentenceTransformer.from_pretrained(pubmedbert)

@@ -20,6 +20,8 @@ logger = logging.getLogger(__name__)
 
 
 @click.command()
+@click.option("--port", type=click.INT, default=8599)
+@click.option("--host", type=click.STRING, default="0.0.0.0")
 @click.option(
     "--model-type",
     type=click.STRING,
@@ -32,32 +34,43 @@ logger = logging.getLogger(__name__)
     default=False,
     help="use a superposition of label and description embeddings, where available",
 )
+@click.option("--extra-context", type=click.BOOL, is_flag=True, default=False)
 @click.option(
-    "--layers",
-    type=click.INT,
-    default=[-6, -5, -4, -3, -2, -1],
-    multiple=True,
-    help="layers to consider",
+    "--layers-spec",
+    default="sent",
+    type=click.STRING,
+    help="`sent` or a string of layers, `1,2,3` would correspond to layers [-1, -2, -3]",
 )
-@click.option("--port", type=click.INT, default=8599)
-@click.option("--host", type=click.STRING, default="0.0.0.0")
-def main(model_type, layers, superposition, port, host):
-    extra_context = False
+@click.option("--thr-score", type=click.FLOAT, default=0.5)
+@click.option("--thr-dif", type=click.FLOAT, default=0.025)
+def main(
+    model_type,
+    layers_spec,
+    superposition,
+    port,
+    host,
+    extra_context,
+    thr_score,
+    thr_dif,
+):
+    layers = LinkerModel.str2layers(layers_spec)
+    sentence = True if layers == "sent" else False
     suffix = ".superposition" if superposition else ""
-    layers_str = LinkerModel.encode_layers(layers)
+    layers_str = LinkerModel.layers2str(layers)
 
     logger_conf = "logging.conf"
     logging.config.fileConfig(logger_conf, disable_existing_loggers=False)
     logger.debug("debug is on")
     app.logger.setLevel(logging.INFO)
 
-    file_path = files("pelinker.store").joinpath(
+    model_path = files("pelinker.store").joinpath(
         f"pelinker.model.{model_type}.{layers_str}{suffix}.gz"
     )
 
-    pe_model: LinkerModel = joblib.load(file_path)
+    logger.info(f"model path: {model_path}")
+    pe_model: LinkerModel = joblib.load(model_path)
 
-    tokenizer, model = load_models(model_type)
+    tokenizer, model = load_models(model_type, sentence=sentence)
 
     nlp = spacy.load("en_core_web_sm")
 
@@ -79,6 +92,7 @@ def main(model_type, layers, superposition, port, host):
                 r = pe_model.link(
                     text, tokenizer, model, nlp, MAX_LENGTH, extra_context
                 )
+                r = LinkerModel.filter_report(r, thr_score=thr_score, thr_dif=thr_dif)
 
             except Exception as exc:
                 return {"error": str(exc)}, 202

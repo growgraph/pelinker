@@ -1,6 +1,10 @@
+# pylint: disable=E1120
+
 import re
 from string import punctuation, whitespace
 from transformers import AutoModel, AutoTokenizer
+from sentence_transformers import SentenceTransformer
+import faiss
 import torch
 import pandas as pd
 
@@ -9,18 +13,24 @@ from sklearn.metrics import accuracy_score
 MAX_LENGTH = 512
 
 
-def load_models(model_type):
+def load_models(model_type, sentence=False):
     if model_type == "scibert":
-        tokenizer = AutoTokenizer.from_pretrained("allenai/scibert_scivocab_cased")
-        model = AutoModel.from_pretrained("allenai/scibert_scivocab_cased")
+        spec = "allenai/scibert_scivocab_cased"
     elif model_type == "biobert":
-        tokenizer = AutoTokenizer.from_pretrained("dmis-lab/biobert-base-cased-v1.2")
-        model = AutoModel.from_pretrained("dmis-lab/biobert-base-cased-v1.2")
+        spec = "dmis-lab/biobert-base-cased-v1.2"
     elif model_type == "pubmedbert":
-        tokenizer = AutoTokenizer.from_pretrained("neuml/pubmedbert-base-embeddings")
-        model = AutoModel.from_pretrained("neuml/pubmedbert-base-embeddings")
+        spec = "neuml/pubmedbert-base-embeddings"
+    elif model_type == "biobert-stsb":
+        spec = "pritamdeka/BioBERT-mnli-snli-scinli-scitail-mednli-stsb"
     else:
         raise ValueError(f"{model_type} unsupported")
+    if sentence:
+        tokenizer, model = None, SentenceTransformer(spec)
+    else:
+        tokenizer, model = (
+            AutoTokenizer.from_pretrained(spec),
+            AutoModel.from_pretrained(spec),
+        )
     return tokenizer, model
 
 
@@ -35,10 +45,7 @@ def text_to_tokens_embeddings(texts: list[str], tokenizer, model):
         truncation=True,
     )
 
-    inputs = {
-        k: encoding[k].to(model.device)
-        for k in ["input_ids", "token_type_ids", "attention_mask"]
-    }
+    inputs = {k: encoding[k] for k in ["input_ids", "token_type_ids", "attention_mask"]}
 
     with torch.no_grad():
         outputs = model(output_hidden_states=True, **inputs)
@@ -209,3 +216,35 @@ def compute_distance_ref(
     top_cand_dist = top_mean - below_mean
     m0 = (top_cand_dist, acc_score)
     return m0, dfa
+
+
+def embedding_to_dist(tt_x, tt_y):
+    index = faiss.IndexFlatIP(tt_x.shape[1])
+    nb_nn = min([100, tt_x.shape[0]])
+    index.add(tt_x)
+
+    distance_matrix, nearest_neighbors_matrix = index.search(tt_y, nb_nn)
+    ds = distance_matrix[:, 1:].flatten()
+    ds.sort()
+    k_links = 20
+    thr = ds[-k_links]
+
+    edges = []
+    for dd, nn in zip(distance_matrix, nearest_neighbors_matrix):
+        m = dd >= thr
+        equis = nn[m]
+        edges += [(equis[0], c) for c in equis[1:]]
+
+    dfa = pd.DataFrame(ds, columns=["dist"])
+    return dfa
+
+
+def encode(texts, tokenizer, model, ls):
+    if ls == "sent":
+        tt_labels = model.encode(texts, normalize_embeddings=True)
+    else:
+        tt_labels_layered, labels_spans = text_to_tokens_embeddings(
+            texts, tokenizer, model
+        )
+        tt_labels = tt_aggregate_normalize(tt_labels_layered, ls)
+    return tt_labels

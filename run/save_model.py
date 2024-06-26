@@ -6,11 +6,7 @@ import pandas as pd
 import torch
 
 from pelinker.model import LinkerModel
-from pelinker.util import (
-    text_to_tokens_embeddings,
-    tt_aggregate_normalize,
-    load_models,
-)
+from pelinker.util import load_models, encode
 from importlib.resources import files
 from pelinker.preprocess import pre_process_properties
 import joblib
@@ -31,14 +27,14 @@ import joblib
     help="use a superposition of label and description embeddings, where available",
 )
 @click.option(
-    "--layers",
-    type=click.INT,
-    default=[-6, -5, -4, -3, -2, -1],
-    multiple=True,
-    help="layers to consider",
+    "--layers-spec",
+    type=click.STRING,
+    help="`sent` or a string of layers, `1,2,3` would correspond to layers [-1, -2, -3]",
 )
-def run(model_type, layers, superposition):
-    layers = list(layers)
+def run(model_type, layers_spec, superposition):
+    layers = LinkerModel.str2layers(layers_spec)
+    sentence = True if layers == "sent" else False
+
     suffix = ".superposition" if superposition else ""
 
     df0 = pd.read_csv("data/derived/properties.synthesis.csv")
@@ -50,22 +46,13 @@ def run(model_type, layers, superposition):
     properties = report.pop("properties")
     property_label_map = report.pop("property_label_map")
 
-    tokenizer, model = load_models(model_type)
+    tokenizer, model = load_models(model_type, sentence)
 
-    tt_labels_layered, labels_spans = text_to_tokens_embeddings(
-        labels, tokenizer, model
-    )
-
-    tt_descs_layered, desc_spans = text_to_tokens_embeddings(
-        descriptions,
-        tokenizer,
-        model,
-    )
-    layers_str = LinkerModel.encode_layers(layers)
-    tt_labels = tt_aggregate_normalize(tt_labels_layered, layers)
-    tt_descs = tt_aggregate_normalize(tt_descs_layered, layers)
+    layers_str = LinkerModel.layers2str(layers)
+    tt_labels = encode(labels, tokenizer, model, layers)
 
     if superposition:
+        tt_descs = encode(descriptions, tokenizer, model, layers)
         tt_basis = []
         for j, tt in enumerate(tt_labels):
             if j in ixlabel_ixdesc:
