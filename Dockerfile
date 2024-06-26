@@ -1,7 +1,7 @@
 FROM python:3.10-slim-bullseye AS builder
 
 RUN apt update -y && apt upgrade -y && apt install curl git -y
-RUN curl -sSL https://install.python-poetry.org | python - --version 1.7.1
+RUN curl -sSL https://install.python-poetry.org | python - --version 1.8.3
 
 ENV PATH="${PATH}:/root/.local/bin"
 
@@ -21,6 +21,7 @@ COPY pelinker ./pelinker
 RUN mkdir -p -m 0700 ~/.ssh && ssh-keyscan github.com >> ~/.ssh/known_hosts
 RUN --mount=type=ssh poetry install --no-interaction -vvv --without dev
 COPY run ./run
-COPY README.md logging.conf logging.debug.conf ./
+COPY README.md logging.conf ./
+RUN python -m spacy download en_core_web_sm
 
 CMD ["poetry", "run", "python", "run/serve.py", "--model-type", "biobert-stsb"]
