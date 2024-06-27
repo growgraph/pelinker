@@ -24,5 +24,7 @@ RUN poetry run python -m spacy download en_core_web_sm
 
 RUN rm -rf /tmp/poetry_cache ./.venv/lib/python3.10/site-packages/nvidi*
 
-CMD ["poetry", "run", "python", "run/serve.py", "--model-type", "biobert-stsb", "--port", "8599", "--thr-score", "0.5", "--thr-dif", "0.025"]
+CMD ["tail", "-f", "/dev/null"]
+
+#CMD ["poetry", "run", "python", "run/serve.py", "--model-type", "biobert-stsb", "--port", "8599", "--thr-score", "0.5", "--thr-dif", "0.025"]
 

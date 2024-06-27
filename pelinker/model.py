@@ -1,24 +1,28 @@
 import faiss
 from pelinker.util import process_text, encode, get_vb_spans
 import torch
+import joblib
 
 
 class LinkerModel:
     def __init__(
         self,
-        index: faiss.IndexFlatIP,
         vocabulary: list[str],
         layers,
         nb_nn=10,
+        index: faiss.IndexFlatIP | None = None,
         **kwargs,
     ):
-        self.index = index
+        self.index: faiss.IndexFlatIP | None = index
         self.vocabulary: list[str] = vocabulary
         self.labels_map: dict[str, str] = kwargs.pop("labels_map", dict())
         self.ls = layers
         self.nb_nn = nb_nn
 
     def link(self, text, tokenizer, model, nlp, max_length, extra_context=False):
+        if self.index is None:
+            raise TypeError("index not set")
+
         if self.ls == "sent":
             return self._link_sent(
                 text, tokenizer, model, nlp, max_length, extra_context
@@ -156,3 +160,15 @@ class LinkerModel:
             if r["dif_to_next"] > thr_dif and r["score"] > thr_score
         ]
         return report
+
+    def dump(self, file_spec):
+        faiss.write_index(self.index, f"{file_spec}.index")
+        self.index = None
+        joblib.dump(self, f"{file_spec}.gz", compress=3)
+
+    @classmethod
+    def load(cls, file_spec):
+        index = faiss.read_index(f"{file_spec}.index")
+        pe_model = joblib.load(f"{file_spec}.gz")
+        pe_model.index = index
+        return pe_model

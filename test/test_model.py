@@ -3,7 +3,6 @@ import pytest
 from pelinker.util import MAX_LENGTH
 from pelinker.model import LinkerModel
 from importlib.resources import files
-import joblib
 
 
 @pytest.fixture()
@@ -24,8 +23,8 @@ def test_load(text, t_model, t_tokenizer, nlp):
     layers_str = LinkerModel.layers2str(layers)
 
     file_path = files("pelinker.store").joinpath(
-        f"pelinker.model.pubmedbert.{layers_str}.gz"
+        f"pelinker.model.pubmedbert.{layers_str}"
     )
-    model = joblib.load(file_path)
+    model = LinkerModel.load(file_path)
     r = model.link(text, t_tokenizer, t_model, nlp, MAX_LENGTH, False)
     assert r["entities"][-1]["mention"] == "decreased"

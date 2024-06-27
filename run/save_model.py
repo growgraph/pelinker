@@ -9,7 +9,6 @@ from pelinker.model import LinkerModel
 from pelinker.util import load_models, encode
 from importlib.resources import files
 from pelinker.preprocess import pre_process_properties
-import joblib
 
 
 @click.command()
@@ -70,10 +69,10 @@ def run(model_type, layers_spec, superposition):
     lm = LinkerModel(
         index=index, vocabulary=properties, layers=layers, labels_map=property_label_map
     )
-    file_path = files("pelinker.store").joinpath(
-        f"pelinker.model.{model_type}.{layers_str}{suffix}.gz"
+    file_spec = files("pelinker.store").joinpath(
+        f"pelinker.model.{model_type}.{layers_str}{suffix}"
     )
-    joblib.dump(lm, file_path, compress=3)
+    lm.dump(file_spec)
 
 
 if __name__ == "__main__":

@@ -7,7 +7,6 @@ from flask_cors import cross_origin
 from flask_restful import Api
 from waitress import serve
 from importlib.resources import files
-import joblib
 from pelinker.util import load_models, MAX_LENGTH
 from pelinker.model import LinkerModel
 import spacy
@@ -63,12 +62,13 @@ def main(
     logger.debug("debug is on")
     app.logger.setLevel(logging.INFO)
 
-    model_path = files("pelinker.store").joinpath(
-        f"pelinker.model.{model_type}.{layers_str}{suffix}.gz"
+    model_spec = files("pelinker.store").joinpath(
+        f"pelinker.model.{model_type}.{layers_str}{suffix}"
     )
 
-    logger.info(f"model path: {model_path}")
-    pe_model: LinkerModel = joblib.load(model_path)
+    logger.info(f"model path: {model_spec}")
+    pe_model = LinkerModel.load(model_spec)
+
     logger.info(f"pelinker model loaded : {pe_model}")
 
     tokenizer, model = load_models(model_type, sentence=sentence)
