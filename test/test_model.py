@@ -16,15 +16,17 @@ def text():
     deposition due to a decreased collagen type I production (78). """
 
 
-def test_load(text, t_model, t_tokenizer, nlp):
-    layer_spec = "1,2,3,4,5,6"
+def test_load(text, tokenizer_model_biobert_stsb, nlp):
+    layer_spec = "sent"
     layers = LinkerModel.str2layers(layer_spec)
 
     layers_str = LinkerModel.layers2str(layers)
 
     file_path = files("pelinker.store").joinpath(
-        f"pelinker.model.pubmedbert.{layers_str}"
+        f"pelinker.model.biobert-stsb.{layers_str}"
     )
     model = LinkerModel.load(file_path)
-    r = model.link(text, t_tokenizer, t_model, nlp, MAX_LENGTH, False)
+    t_tokenizer, t_model = tokenizer_model_biobert_stsb
+
+    r = model.link(text, t_tokenizer, t_model, nlp, MAX_LENGTH, True)
     assert r["entities"][-1]["mention"] == "decreased"
