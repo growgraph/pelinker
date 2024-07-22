@@ -11,9 +11,10 @@ def run(host, port):
         "Specifically, IL-6 is expressed at high levels in PDAC, "
         "and its increasing circulating level is associated with advanced disease and poor prognosis (77)."
     )
-    url = f"http://{host}:{port}/pelinker"
-    r = requests.post(url, json={"text": text}, verify=False).json()
-    pprint(r)
+    url = f"http://{host}:{port}/link"
+    r = requests.post(url, json={"text": text}, verify=False)
+    jr = r.json()
+    pprint(jr)
 
 
 if __name__ == "__main__":
