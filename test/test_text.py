@@ -14,7 +14,8 @@ def test_splitting(text):
     assert len(sents) == 2
 
 
-def test_pro_text(text, t_model, t_tokenizer, nlp):
+def test_pro_text(text, tokenizer_model_pubmedbert, nlp):
+    t_tokenizer, t_model = tokenizer_model_pubmedbert
     sents, spans, _ = process_text(text, t_tokenizer, t_model, nlp)
 
     a, b = spans[0][0][0]

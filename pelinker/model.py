@@ -24,9 +24,7 @@ class LinkerModel:
             raise TypeError("index not set")
 
         if self.ls == "sent":
-            return self._link_sent(
-                text, tokenizer, model, nlp, max_length, extra_context
-            )
+            return self._link_sent(text, tokenizer, model, nlp, extra_context)
         sents, spans, tt_text = process_text(
             text,
             tokenizer,
@@ -91,7 +89,7 @@ class LinkerModel:
         sall = " ".join(sents)
         return {"entities": report2, "normalized_text": sall}
 
-    def _link_sent(self, text, tokenizer, model, nlp, max_length, extra_context):
+    def _link_sent(self, text, tokenizer, model, nlp, extra_context):
         spans = get_vb_spans(nlp, text, extra_context=extra_context)
 
         vbs = [text[a:b] for a, b in spans]
@@ -157,7 +155,7 @@ class LinkerModel:
         report["entities"] = [
             r
             for r in report["entities"]
-            if r["dif_to_next"] > thr_dif and r["score"] > thr_score
+            if r["dif_to_next"] >= thr_dif and r["score"] >= thr_score
         ]
         return report
 

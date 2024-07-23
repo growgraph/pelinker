@@ -22,7 +22,7 @@ def vectorize_text(text, tokenizer, model):
 
 
 def main():
-    df = pd.read_csv("../data/derived/properties.synthesis.csv")
+    df = pd.read_csv("../../data/derived/properties.synthesis.csv")
 
     transformers_logger = logging.getLogger("transformers")
     transformers_logger.setLevel(logging.WARNING)

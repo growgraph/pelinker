@@ -3,7 +3,7 @@ import pandas as pd
 
 def main():
     ro_df = pd.read_csv("./data/derived/properties.ro.csv")
-    gw_df = pd.read_csv("./data/raw/properties.csv")
+    gg_df = pd.read_csv("./data/raw/properties.csv")
 
     ro_df = ro_df[ro_df["label"].notnull()].copy()
 
@@ -13,14 +13,14 @@ def main():
     ro_df = ro_df[~mask].copy()
     print(f"number of dropped items in ro_df : {sum(mask)}")
 
-    df = pd.concat([ro_df, gw_df])
+    df = pd.concat([ro_df, gg_df])
 
     # assign id to ad hoc properties
     df_no_id = df[df["property"].isnull()].sort_values("label").copy()
     df_with_id = df[~df["property"].isnull()].sort_values("label").copy()
 
     df_no_id = df_no_id.reset_index().drop(["index"], axis=1).reset_index()
-    df_no_id["property"] = df_no_id["index"].apply(lambda x: f"GG.{x:06d}")
+    df_no_id["property"] = df_no_id["index"].apply(lambda x: f"PEL.{x:06d}")
     df_no_id = df_no_id.drop(["index"], axis=1)
 
     df = pd.concat([df_with_id, df_no_id])
