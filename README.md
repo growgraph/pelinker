@@ -11,7 +11,7 @@ Add spacy LMs `python -m spacy download en_core_web_trf`.
 
 Uniformize and trim data incoming from different sources
  
-- `run/preprocessing/merge_properites`
+- `run/preprocessing/merge_properties`
 
 
 ## Serialize Model serialization
