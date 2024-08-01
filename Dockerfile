@@ -20,9 +20,13 @@ COPY pelinker ./pelinker
 COPY run ./run
 
 RUN poetry install --no-interaction -vvv --without dev
-RUN poetry run python -m spacy download en_core_web_sm
+RUN poetry run python -m spacy download en_core_web_trf
 
 RUN rm -rf /tmp/poetry_cache ./.venv/lib/python3.10/site-packages/nvidi*
 
-CMD ["poetry", "run", "python", "run/serve.py", "--model-type", "biobert-stsb", "--port", "8599", "--thr-score", "0.5", "--thr-dif", "0.025"]
+
+ENV THR_SCORE=0.5
+ENV THR_DIF=0.0
+
+CMD sh -c 'poetry run python run/serve.py --model-type biobert-stsb --port 8599 --thr-score ${THR_SCORE:-0.5} --thr-dif ${THR_DIF:-0.0}'
 

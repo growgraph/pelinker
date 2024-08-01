@@ -15,7 +15,7 @@ from pelinker.util import (
 )
 from pelinker.preprocess import pre_process_properties
 from pelinker.model import LinkerModel
-from pelinker.util import encode
+from pelinker.util import encode, split_into_sentences
 
 
 @click.command()
@@ -43,7 +43,7 @@ def run(text_path, model_type, superposition, extra_context, layers_spec):
         json_data = json.load(json_file)
     text = json_data["text"]
 
-    df0 = pd.read_csv("data/derived/properties.synthesis.v2.csv")
+    df0 = pd.read_csv("data/derived/properties.synthesis.csv")
 
     layers = LinkerModel.str2layers(layers_spec)
     sentence = True if layers == "sent" else False
@@ -53,7 +53,7 @@ def run(text_path, model_type, superposition, extra_context, layers_spec):
     properties = report.pop("properties")
     property_label_map = report.pop("property_label_map")
 
-    nlp = spacy.load("en_core_web_sm")
+    nlp = spacy.load("en_core_web_trf")
 
     tokenizer, model = load_models(model_type, sentence)
 
@@ -75,12 +75,22 @@ def run(text_path, model_type, superposition, extra_context, layers_spec):
         nb_nn=nb_nn,
     )
 
-    report = lm.link(
-        text, tokenizer, model, nlp, extra_context=extra_context, max_length=MAX_LENGTH
-    )
+    sents_raw = split_into_sentences(text)
+    entities = []
+    for ix, sent in enumerate(sents_raw):
+        report = lm.link(
+            sent,
+            tokenizer,
+            model,
+            nlp,
+            extra_context=extra_context,
+            max_length=MAX_LENGTH,
+        )
+        etmp = [{**{"iphrase": ix}, **item} for item in report["entities"]]
+        entities += etmp
 
-    metrics_df = pd.DataFrame(report["entities"])
-    metrics_df.to_csv(f"{report_path}/metrics_{model_type}_{layers_str}{suffix}.v2.csv")
+    metrics_df = pd.DataFrame(entities)
+    metrics_df.to_csv(f"{report_path}/metrics_{model_type}_{layers_str}{suffix}.csv")
 
 
 if __name__ == "__main__":

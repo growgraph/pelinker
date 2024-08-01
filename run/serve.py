@@ -41,7 +41,7 @@ logger = logging.getLogger(__name__)
     help="`sent` or a string of layers, `1,2,3` would correspond to layers [-1, -2, -3]",
 )
 @click.option("--thr-score", type=click.FLOAT, default=0.5)
-@click.option("--thr-dif", type=click.FLOAT, default=0.025)
+@click.option("--thr-dif", type=click.FLOAT, default=0.0)
 def main(
     model_type,
     layers_spec,
@@ -52,15 +52,16 @@ def main(
     thr_score,
     thr_dif,
 ):
+    logger_conf = "logging.conf"
+    logging.config.fileConfig(logger_conf, disable_existing_loggers=False)
+    app.logger.setLevel(logging.INFO)
+
+    logger.info(f"thr_score : {thr_score}, thr_dif: {thr_dif}")
+
     layers = LinkerModel.str2layers(layers_spec)
     sentence = True if layers == "sent" else False
     suffix = ".superposition" if superposition else ""
     layers_str = LinkerModel.layers2str(layers)
-
-    logger_conf = "logging.conf"
-    logging.config.fileConfig(logger_conf, disable_existing_loggers=False)
-    logger.debug("debug is on")
-    app.logger.setLevel(logging.INFO)
 
     model_spec = files("pelinker.store").joinpath(
         f"pelinker.model.{model_type}.{layers_str}{suffix}"
@@ -74,10 +75,10 @@ def main(
     tokenizer, model = load_models(model_type, sentence=sentence)
     logger.info(f"tokenizer and model loaded : {model}")
 
-    nlp = spacy.load("en_core_web_sm")
+    nlp = spacy.load("en_core_web_trf")
     logger.info(f"spacy model loaded : {nlp}")
 
-    @app.route("/pelinker", methods=["POST"])
+    @app.route("/link", methods=["POST"])
     @cross_origin()
     def link():
         """
@@ -92,10 +93,12 @@ def main(
             json_data = request.json
             try:
                 text = json_data["text"]
+                thr_score0 = json_data.pop("thr_score", thr_score)
+                thr_dif0 = json_data.pop("thr_score", thr_dif)
                 r = pe_model.link(
                     text, tokenizer, model, nlp, MAX_LENGTH, extra_context
                 )
-                r = LinkerModel.filter_report(r, thr_score=thr_score, thr_dif=thr_dif)
+                r = LinkerModel.filter_report(r, thr_score=thr_score0, thr_dif=thr_dif0)
 
             except Exception as exc:
                 return {"error": str(exc)}, 202

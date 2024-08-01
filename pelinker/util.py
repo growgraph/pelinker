@@ -82,30 +82,57 @@ def map_word_indexes_to_token_indexes(
     return map_ix_words_jx_tokens
 
 
-def get_vb_spans(nlp, text, extra_context=False):
+def aggregate_token_groups(nlp, text, extra_context=False):
     doc = nlp(text)
     context_tags = ["VB", "IN", "JJ", "TO"] if extra_context else ["VB"]
-    v_spans0 = [
-        (token.idx, len(token.text), token.tag_[:2])
-        for token in doc
-        if token.tag_[:2] in context_tags
-    ]
 
-    v_spans = [(a, a + s, t) for a, s, t in v_spans0]
-    acc = []
-    while v_spans:
-        ua, ub, utag = v_spans.pop()
-        if acc:
-            va, vb, vtag = acc.pop()
-            if va - ub == 1:
-                ctag = "VB" if utag == "VB" or vtag == "VB" else vtag
-                acc.append((ua, vb, ctag))
+    # tokens in reverse order
+    tokens = [token for token in doc if token.tag_[:2] in context_tags][::-1]
+
+    # group tokens
+    acc = [[]]
+    while tokens:
+        ctoken = tokens.pop()
+        group = acc[-1]
+        if group:
+            ixu, ixv = group[-1].i, ctoken.i
+            if ixv - ixu == 1:
+                group.append(ctoken)
             else:
-                acc += [(va, vb, vtag), (ua, ub, utag)]
+                acc.append([ctoken])
         else:
-            acc.append((ua, ub, utag))
-    acc_vbs = sorted([x[:2] for x in acc if x[-1] == "VB"])
-    return acc_vbs
+            acc[0].append(ctoken)
+
+    # remove outstanding adjectives
+    def remove_bnd_adj(group):
+        if group and group[0].tag_ == "JJ":
+            group = group[1:]
+        if group and group[-1].tag_ == "JJ":
+            group = group[:-1]
+        return group
+
+    for jx, group in enumerate(acc):
+        group_new = remove_bnd_adj(group)
+        while len(group_new) != len(group):
+            group = group_new
+            group_new = remove_bnd_adj(group)
+        acc[jx] = group_new
+
+    token_groups = [
+        group for group in acc if any(item.tag_[:2] == "VB" for item in group)
+    ]
+    return token_groups
+
+
+def get_vb_spans(nlp, text, extra_context=False):
+    token_groups = aggregate_token_groups(nlp, text, extra_context)
+    spans = transform_tokens2spans(token_groups)
+    return spans
+
+
+def transform_tokens2spans(token_groups):
+    spans = [(group[0].idx, group[-1].idx + len(group[-1])) for group in token_groups]
+    return spans
 
 
 def split_into_sentences(text):
