@@ -21,7 +21,6 @@ from pelinker.preprocess import pre_process_properties
 )
 def run(model_type):
     model_type = sorted(model_type)
-
     fig_path = "./figs"
 
     df0 = pd.read_csv("data/derived/properties.synthesis.csv")
@@ -32,7 +31,10 @@ def run(model_type):
     layers = (
         # [[-x] for x in range(1, 6)] +
         # [[-x for x in range(1, 4)]] +
-        [[-1], [-1, -2, -8, -9]] + ["sent"]
+        [[-1]]
+        +
+        # [[-1, -2, -8, -9]] +
+        ["sent"]
     )
 
     df_agg = []
@@ -49,37 +51,30 @@ def run(model_type):
             index.add(tt_labels)
 
             distance_matrix, nearest_neighbors_matrix = index.search(tt_labels, nb_nn)
-            ds = distance_matrix[:, 1:].flatten()
-            ds.sort()
-            k_links = 20
-            thr = ds[-k_links]
+            ds = 1.0 - distance_matrix[:, 1]
 
-            edges = []
-            for dd, nn in zip(distance_matrix, nearest_neighbors_matrix):
-                m = dd >= thr
-                equis = nn[m]
-                edges += [(equis[0], c) for c in equis[1:]]
-
-            dfa = pd.DataFrame(ds, columns=["dist"])
+            dfa = pd.DataFrame(ds, columns=["delta"])
             dfa["model_type"] = mt
             dfa["layers"] = layers_str
             df_agg += [dfa]
     df0 = pd.concat(df_agg)
-    path = f"{fig_path}/interdist.new.pdf"
+    path = f"{fig_path}/discrim.pdf"
     col_wrap = min([4, len(layers)])
 
     sns.set_style("whitegrid")
-    _ = sns.displot(
+    g = sns.displot(
         data=df0,
-        x="dist",
+        x="delta",
         hue="model_type",
         stat="density",
         common_norm=False,
         col="layers",
         col_wrap=col_wrap,
-        bins=np.arange(0.0, 1.1, 0.05),
+        bins=np.arange(0.0, 0.6, 0.05),
         alpha=0.5,
+        facet_kws=dict(legend_out=False),
     )
+    sns.move_legend(g, "upper right")
     plt.savefig(path, bbox_inches="tight", dpi=300)
 
 

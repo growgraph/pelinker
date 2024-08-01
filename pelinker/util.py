@@ -266,8 +266,25 @@ def embedding_to_dist(tt_x, tt_y):
     return dfa
 
 
+def mean_pooling(model_output, attention_mask):
+    token_embeddings = model_output[0]
+    input_mask_expanded = (
+        attention_mask.unsqueeze(-1).expand(token_embeddings.size()).float()
+    )
+    return torch.sum(token_embeddings * input_mask_expanded, 1) / torch.clamp(
+        input_mask_expanded.sum(1), min=1e-9
+    )
+
+
 def encode(texts, tokenizer, model, ls):
     if ls == "sent":
+        # encoded_input = tokenizer(texts, padding=True, truncation=True, return_tensors='pt')
+        #
+        # # Compute token embeddings
+        # with torch.no_grad():
+        #     model_output = model(**encoded_input)
+        # tt_labels = mean_pooling(model_output, encoded_input['attention_mask'])
+
         tt_labels = model.encode(texts, normalize_embeddings=True)
     else:
         tt_labels_layered, labels_spans = text_to_tokens_embeddings(
