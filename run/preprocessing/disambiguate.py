@@ -24,7 +24,7 @@ from pelinker.preprocess import pre_process_properties
 @click.option(
     "--entities-path",
     type=click.Path(path_type=pathlib.Path),
-    default="data/derived/properties.synthesis.v2.csv",
+    default="data/derived/properties.synthesis.2.csv",
     help="choose BERT flavours",
 )
 def run(rep_string, model_type, entities_path):

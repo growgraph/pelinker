@@ -43,7 +43,7 @@ def run(text_path, model_type, superposition, extra_context, layers_spec):
         json_data = json.load(json_file)
     text = json_data["text"]
 
-    df0 = pd.read_csv("data/derived/properties.synthesis.csv")
+    df0 = pd.read_csv("data/derived/properties.synthesis.0.csv")
 
     layers = LinkerModel.str2layers(layers_spec)
     sentence = True if layers == "sent" else False

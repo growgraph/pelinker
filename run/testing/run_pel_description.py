@@ -39,7 +39,7 @@ def run(model_type, superposition):
 
     suffix = "_superposition" if superposition else ""
 
-    df0 = pd.read_csv("data/derived/properties.synthesis.csv")
+    df0 = pd.read_csv("data/derived/properties.synthesis.0.csv")
 
     report = pre_process_properties(df0)
     labels = report.pop("labels")

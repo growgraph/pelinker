@@ -7,7 +7,7 @@ from pelinker.util import load_models
 
 @pytest.fixture(scope="module")
 def df_properties():
-    file_path = files("data.derived").joinpath("properties.synthesis.csv")
+    file_path = files("data.derived").joinpath("properties.synthesis.0.csv")
     return pd.read_csv(file_path)
 
 

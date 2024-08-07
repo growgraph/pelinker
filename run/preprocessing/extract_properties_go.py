@@ -8,7 +8,8 @@ import requests
 
 
 def fetch_url(ent_id):
-    url = f"https://www.ebi.ac.uk/ols4/api/ontologies/ro/properties/http%253A%252F%252Fpurl.obolibrary.org%252Fobo%252F{ent_id}"
+    url = (f"https://www.ebi.ac.uk/ols4/api/ontologies/ro/properties"
+           f"/http%253A%252F%252Fpurl.obolibrary.org%252Fobo%252F{ent_id}")
     response = requests.get(url)
     code = response.status_code
     if code == 200:
@@ -53,9 +54,9 @@ def main():
         for _id, jd in zip(ids, go_data)
     ]
 
-    df_go = pd.DataFrame(go_data2, columns=["property", "label", "description"])
+    df_go = pd.DataFrame(go_data2, columns=["entity_id", "label", "description"])
 
-    pd.Series(errors).to_csv("./data/derived/properties.go.failed.csv.csv")
+    pd.Series(errors).to_csv("./data/derived/properties.go.failed.csv")
     df_go.to_csv("./data/derived/properties.go.csv", index=False)
 
 

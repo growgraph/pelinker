@@ -1,4 +1,4 @@
-property,label,description,example
+entity_id,label,description,example
 BFO.0000050,part of,a core relation that holds between a part and its whole,
 BFO.0000051,has part,a core relation that holds between a whole and its part,
 BFO.0000054,realized in,,
@@ -39,12 +39,12 @@ PEL.000027,provokes,call forth an action,
 PEL.000028,reduces,"diminish in size, amount, extent, or number",
 PEL.000029,repress,inactivate (a gene or formation of a gene product),
 PEL.000030,reverts,return to previous state,
-PEL.000031,shuts,cause to cease or suspend an operation or activity,
-PEL.000032,stimulates,"excite to activity or growth or to greater activity
-transactivate",induce an increased rate of gene expression triggered either by biological processes
-PEL.000033,suppress,inhibit the genetic expression of,
-PEL.000034,triggers,initiate or set off,
-PEL.000035,upregulates,"increase the rate or level of (a process such as gene expression, or sensitivity to a physiologically active substance) by upregulation",
+PEL.000031,secretes,"(of a cell, gland, or organ) produce and discharge (a substance)",insulin is secreted in response to rising levels of glucose in the blood
+PEL.000032,shuts,cause to cease or suspend an operation or activity,
+PEL.000033,stimulates,excite to activity or growth or to greater activity transactivate,induce an increased rate of gene expression triggered either by biological processes
+PEL.000034,suppress,inhibit the genetic expression of,
+PEL.000035,triggers,initiate or set off,
+PEL.000036,upregulates,"increase the rate or level of (a process such as gene expression, or sensitivity to a physiologically active substance) by upregulation",
 RO.0000052,characteristic of,"a relation between a specifically dependent continuant (the characteristic) and any other entity (the bearer), in which the characteristic depends on the bearer for its existence.",
 RO.0000053,has characteristic,Inverse of characteristic_of,
 RO.0000056,participates in,"a relation between a continuant and a process, in which the continuant is somehow involved in the process",
@@ -72,7 +72,7 @@ RO.0002001,aligned with,,
 RO.0002002,has 2D boundary,"a relation between a material entity and a 2D immaterial entity (the boundary), in which the boundary delimits the material entity",
 RO.0002003,electrically_synapsed_to,A relation that holds between two neurons that are electrically coupled via gap junctions.,
 RO.0002004,tracheates,The relationship that holds between a trachea or tracheole and an antomical structure that is contained in (and so provides an oxygen supply to).,
-RO.0002005,innervated_by,aroused or stimulated (a nerve or an organ) to activity,
+RO.0002005,innervated_by,,
 RO.0002006,has synaptic terminal of,,
 RO.0002007,bounding layer of,"X outer_layer_of Y iff:
 . X :continuant that bearer_of some PATO:laminar
