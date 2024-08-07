@@ -1,7 +1,8 @@
 def pre_process_properties(df):
+    entity_id = "entity_id"
     df = df.copy()
 
-    df = df.sort_values("property")
+    df = df.sort_values(entity_id)
 
     exclude_label_list = [" low "]
     mask_label_exclude = df["label"].apply(
@@ -23,7 +24,7 @@ def pre_process_properties(df):
     df_desc = df.loc[~mask_desc_exclude].copy()
 
     # prop -> label
-    property_label_map = dict(df[["property", "label"]].values)
+    property_label_map = dict(df[[entity_id, "label"]].values)
 
     # idesc -> description
     # id_description_dict = dict(
@@ -31,9 +32,9 @@ def pre_process_properties(df):
     # )
 
     # (il) : property
-    property_from_label = df["property"].reset_index(drop=True).tolist()
+    property_from_label = df[entity_id].reset_index(drop=True).tolist()
     labels = df["label"].values.tolist()
-    properties = df["property"].values.tolist()
+    entity_ids = df[entity_id].values.tolist()
 
     # il -> property
     ixlabel_id_dict = dict(enumerate(property_from_label))
@@ -42,7 +43,7 @@ def pre_process_properties(df):
     id_ixlabel_map = {v: k for k, v in ixlabel_id_dict.items()}
 
     # (ip) : property
-    property_from_desc = df_desc["property"].reset_index(drop=True).tolist()
+    property_from_desc = df_desc[entity_id].reset_index(drop=True).tolist()
     descriptions = df_desc["description"].values.tolist()
 
     # il -> ip
@@ -50,16 +51,13 @@ def pre_process_properties(df):
         id_ixlabel_map[prop]: ixd for ixd, prop in enumerate(property_from_desc)
     }
 
-    # ip -> property
-    # df_desc["property"].reset_index(drop=True)
-
     report = {
         "labels": labels,
         "descriptions": descriptions,
         "ixlabel_ixdesc": ixlabel_ixdesc,
         "property_from_desc": property_from_desc,
         "id_ixlabel_map": id_ixlabel_map,
-        "properties": properties,
+        "entity_ids": entity_ids,
         "property_label_map": property_label_map,
     }
     return report

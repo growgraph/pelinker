@@ -60,7 +60,7 @@ def run(text_path, model_type, superposition, extra_context, layers_spec):
 
     report = pre_process_properties(df0)
     labels = report.pop("labels")
-    properties = report.pop("properties")
+    properties = report.pop("entity_ids")
     property_label_map = report.pop("property_label_map")
 
     nlp = spacy.load("en_core_web_trf")

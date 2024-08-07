@@ -52,7 +52,7 @@ def run(model_type, layers_spec, superposition):
     labels = report.pop("labels")
     descriptions = report.pop("descriptions")
     ixlabel_ixdesc = report.pop("ixlabel_ixdesc")
-    properties = report.pop("properties")
+    properties = report.pop("entity_ids")
     property_label_map = report.pop("property_label_map")
 
     tokenizer, model = load_models(model_type, sentence)

@@ -42,12 +42,12 @@ def main():
 
     labels = [
         (j, p, vectorize_text(x, tokenizer, model))
-        for j, (p, x) in enumerate(df[["property", "label"]].values)
+        for j, (p, x) in enumerate(df[["entity_ids", "label"]].values)
     ]
     descs = [
         (j, p, vectorize_text(x, tokenizer, model))
         for j, (p, x) in enumerate(
-            df.loc[df["description"].notnull(), ["property", "description"]].values
+            df.loc[df["description"].notnull(), ["entity_ids", "description"]].values
         )
     ]
 
