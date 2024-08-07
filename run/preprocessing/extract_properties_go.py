@@ -8,8 +8,10 @@ import requests
 
 
 def fetch_url(ent_id):
-    url = (f"https://www.ebi.ac.uk/ols4/api/ontologies/ro/properties"
-           f"/http%253A%252F%252Fpurl.obolibrary.org%252Fobo%252F{ent_id}")
+    url = (
+        f"https://www.ebi.ac.uk/ols4/api/ontologies/ro/properties"
+        f"/http%253A%252F%252Fpurl.obolibrary.org%252Fobo%252F{ent_id}"
+    )
     response = requests.get(url)
     code = response.status_code
     if code == 200:

@@ -292,3 +292,18 @@ def encode(texts, tokenizer, model, ls):
         )
         tt_labels = tt_aggregate_normalize(tt_labels_layered, ls)
     return tt_labels
+
+
+def fetch_latest_kb(path_derived) -> tuple[str | None, int]:
+    file_names = [
+        file.name
+        for file in path_derived.iterdir()
+        if file.is_file() and ".synthesis." in file.name
+    ]
+    filename_versions = sorted(
+        [(f, int(f.split(".")[-2])) for f in file_names], key=lambda x: x[1]
+    )
+    if filename_versions:
+        return filename_versions[-1]
+    else:
+        return None, -1

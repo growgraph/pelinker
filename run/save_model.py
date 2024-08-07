@@ -9,6 +9,8 @@ from pelinker.model import LinkerModel
 from pelinker.util import load_models, encode
 from importlib.resources import files
 from pelinker.preprocess import pre_process_properties
+from pelinker.util import fetch_latest_kb
+from pathlib import Path
 
 
 @click.command()
@@ -36,7 +38,15 @@ def run(model_type, layers_spec, superposition):
 
     suffix = ".superposition" if superposition else ""
 
-    df0 = pd.read_csv("data/derived/properties.synthesis.0.csv")
+    path_derived = Path("./data/derived/")
+
+    fname, version = fetch_latest_kb(path_derived)
+
+    try:
+        df0 = pd.read_csv(path_derived / fname)
+    except Exception as e:
+        print(f"kb not found at {path_derived}")
+        raise e
 
     report = pre_process_properties(df0)
     labels = report.pop("labels")

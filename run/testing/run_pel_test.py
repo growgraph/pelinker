@@ -16,6 +16,8 @@ from pelinker.util import (
 from pelinker.preprocess import pre_process_properties
 from pelinker.model import LinkerModel
 from pelinker.util import encode, split_into_sentences
+from pelinker.util import fetch_latest_kb
+from pathlib import Path
 
 
 @click.command()
@@ -43,7 +45,15 @@ def run(text_path, model_type, superposition, extra_context, layers_spec):
         json_data = json.load(json_file)
     text = json_data["text"]
 
-    df0 = pd.read_csv("data/derived/properties.synthesis.0.csv")
+    path_derived = Path("./data/derived/")
+
+    fname, version = fetch_latest_kb(path_derived)
+
+    try:
+        df0 = pd.read_csv(path_derived / fname)
+    except Exception as e:
+        print(f"kb not found at {path_derived}")
+        raise e
 
     layers = LinkerModel.str2layers(layers_spec)
     sentence = True if layers == "sent" else False

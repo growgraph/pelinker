@@ -6,6 +6,8 @@ import pandas as pd
 import pathlib
 from pelinker.util import load_models, encode
 from pelinker.preprocess import pre_process_properties
+from pelinker.util import fetch_latest_kb
+from pathlib import Path
 
 
 @click.command()
@@ -22,13 +24,21 @@ from pelinker.preprocess import pre_process_properties
     help="choose BERT flavours",
 )
 @click.option(
-    "--entities-path",
+    "--kb-path",
     type=click.Path(path_type=pathlib.Path),
-    default="data/derived/properties.synthesis.2.csv",
+    default="data/derived",
     help="choose BERT flavours",
 )
-def run(rep_string, model_type, entities_path):
-    df0 = pd.read_csv(entities_path)
+def run(rep_string, model_type, kb_path):
+    path_derived = Path(kb_path)
+
+    fname, version = fetch_latest_kb(path_derived)
+
+    try:
+        df0 = pd.read_csv(path_derived / fname)
+    except Exception as e:
+        print(f"kb not found at {path_derived}")
+        raise e
 
     report = pre_process_properties(df0)
     labels = report.pop("labels")

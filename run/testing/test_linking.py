@@ -6,6 +6,8 @@ import faiss
 import pandas as pd
 import torch
 from transformers import AutoModel, AutoTokenizer
+from pelinker.util import fetch_latest_kb
+from pathlib import Path
 
 
 def vectorize_text(text, tokenizer, model):
@@ -22,7 +24,15 @@ def vectorize_text(text, tokenizer, model):
 
 
 def main():
-    df = pd.read_csv("../../data/derived/properties.synthesis.0.csv")
+    path_derived = Path("./data/derived/")
+
+    fname, version = fetch_latest_kb(path_derived)
+
+    try:
+        df = pd.read_csv(path_derived / fname)
+    except Exception as e:
+        print(f"kb not found at {path_derived}")
+        raise e
 
     transformers_logger = logging.getLogger("transformers")
     transformers_logger.setLevel(logging.WARNING)

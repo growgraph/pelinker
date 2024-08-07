@@ -1,24 +1,7 @@
 import pandas as pd
 from pathlib import Path
 
-
-def fetch_latest_kb(path_derived) -> tuple[str | None, int]:
-    file_names = [
-        file.name
-        for file in path_derived.iterdir()
-        if file.is_file() and ".synthesis." in file.name
-    ]
-    filename_versions = sorted(
-        [(f, int(f.split(".")[-2])) for f in file_names], key=lambda x: x[1]
-    )
-    if filename_versions:
-        return filename_versions[-1]
-    else:
-        return None, -1
-
-
-# TODO merge should respect the following:
-# if there is a previous version of properties.synthesis.0.csv
+from pelinker.util import fetch_latest_kb
 
 
 def main():
