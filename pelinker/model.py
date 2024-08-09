@@ -19,12 +19,16 @@ class LinkerModel:
         self.ls = layers
         self.nb_nn = nb_nn
 
-    def link(self, text, tokenizer, model, nlp, max_length, extra_context=False):
+    def link(
+        self, text, tokenizer, model, nlp, max_length, extra_context=False, topk=None
+    ):
         if self.index is None:
             raise TypeError("index not set")
 
         if self.ls == "sent":
-            return self._link_sent(text, tokenizer, model, nlp, extra_context)
+            return self._link_sent(
+                text, tokenizer, model, nlp, extra_context, topk=topk
+            )
         sents, spans, tt_text = process_text(
             text,
             tokenizer,
@@ -53,26 +57,7 @@ class LinkerModel:
                 zip(nearest_neighbors_matrix, distance_matrix, miti)
             ):
                 a, b = miti_item[0]
-                d = d.tolist()
-
-                candidate_entity = [self.vocabulary[nnx] for nnx in nn]
-
-                dif = round(d[0] - d[1], 5)
-                item = {
-                    "js": js,
-                    "a": a,
-                    "b": b,
-                    "mention": s[a:b],
-                    "entity": candidate_entity[0],
-                    "score": round(d[0], 4),
-                    "dif_to_next": dif,
-                }
-                if self.labels_map:
-                    item["entity_label"] = (
-                        self.labels_map[candidate_entity[0]]
-                        if candidate_entity[0] in self.labels_map
-                        else "NA"
-                    )
+                item = self.prepare_candidate_item(js, s, a, b, nn, d, topk=topk)
                 report += [item]
 
         slens = [len(s) + 1 for s in sents[:-1]]
@@ -89,7 +74,7 @@ class LinkerModel:
         sall = " ".join(sents)
         return {"entities": report2, "normalized_text": sall}
 
-    def _link_sent(self, text, tokenizer, model, nlp, extra_context):
+    def _link_sent(self, text, tokenizer, model, nlp, extra_context, topk=None):
         spans = get_vb_spans(nlp, text, extra_context=extra_context)
 
         vbs = [text[a:b] for a, b in spans]
@@ -104,25 +89,7 @@ class LinkerModel:
             zip(nearest_neighbors_matrix, distance_matrix, spans)
         ):
             a, b = span
-            d = d.tolist()
-
-            candidate_entity = [self.vocabulary[nnx] for nnx in nn]
-
-            dif = round(d[0] - d[1], 5)
-            item = {
-                "a": a,
-                "b": b,
-                "mention": text[a:b],
-                "entity": candidate_entity[0],
-                "score": round(d[0], 4),
-                "dif_to_next": dif,
-            }
-            if self.labels_map:
-                item["entity_label"] = (
-                    self.labels_map[candidate_entity[0]]
-                    if candidate_entity[0] in self.labels_map
-                    else "NA"
-                )
+            item = self.prepare_candidate_item(bj, text, a, b, nn, d, topk=topk)
             report += [item]
         return {"entities": report, "normalized_text": text}
 
@@ -170,3 +137,38 @@ class LinkerModel:
         pe_model = joblib.load(f"{file_spec}.gz")
         pe_model.index = index
         return pe_model
+
+    def prepare_candidate_item(
+        self, ix_phrase, text, span_a, span_b, nearest_neighbors, distance, topk
+    ):
+        distance = distance.tolist()
+
+        candidate_entity = [self.vocabulary[nnx] for nnx in nearest_neighbors]
+
+        dif = round(distance[0] - distance[1], 5)
+        item = {
+            "js": ix_phrase,
+            "a": span_a,
+            "b": span_b,
+            "mention": text[span_a:span_b],
+            "entity_id_predicted": candidate_entity[0],
+            "score": round(distance[0], 4),
+            "dif_to_next": dif,
+        }
+        if topk is not None:
+            item["_leading_candidates"] = candidate_entity[1:topk]
+            item["_leading_scores"] = [round(x, 4) for x in distance[1:topk]]
+
+        if self.labels_map:
+            item["entity_label"] = (
+                self.labels_map[candidate_entity[0]]
+                if candidate_entity[0] in self.labels_map
+                else "NA"
+            )
+            if topk is not None:
+                item["_leading_candidates_labels"] = [
+                    self.labels_map[e] if e in self.labels_map else "NA"
+                    for e in candidate_entity[1:topk]
+                ]
+
+        return item

@@ -44,6 +44,7 @@ def run(text_path, model_type, superposition, extra_context, layers_spec):
     with open(text_path) as json_file:
         json_data = json.load(json_file)
     text = json_data["text"]
+    gt = json_data["ground_truth"]
 
     path_derived = Path("./data/derived/")
 
@@ -68,7 +69,6 @@ def run(text_path, model_type, superposition, extra_context, layers_spec):
     tokenizer, model = load_models(model_type, sentence)
 
     layers_str = LinkerModel.layers2str(layers)
-    print(f">>> {layers_str} <<<")
     tt_labels = encode(labels, tokenizer, model, layers)
 
     tt_basis = tt_labels
@@ -95,12 +95,27 @@ def run(text_path, model_type, superposition, extra_context, layers_spec):
             nlp,
             extra_context=extra_context,
             max_length=MAX_LENGTH,
+            topk=3,
         )
         etmp = [{**{"iphrase": ix}, **item} for item in report["entities"]]
         entities += etmp
 
-    metrics_df = pd.DataFrame(entities)
-    metrics_df.to_csv(f"{report_path}/metrics_{model_type}_{layers_str}{suffix}.csv")
+    df_gt = pd.DataFrame(gt)
+
+    df_pred = pd.DataFrame(entities)
+    df_gt.merge(df_pred, how="left", on=["iphrase", "a"], suffixes=("", "_gt"))
+    df_cmp = df_gt.merge(df_pred, how="left", on=["iphrase", "a"], suffixes=("", "_gt"))
+
+    accuracy = (
+        (df_cmp["entity_id"] == df_cmp["entity_id_predicted"]).astype(float).mean()
+    )
+    accuracy = round(accuracy, 5)
+    print(f"{model_type} | {layers_str} | {suffix} : accuracy >> {accuracy} <<")
+    report = {"accuracy": accuracy, "prediction": df_cmp.to_dict(orient="records")}
+    with open(
+        f"{report_path}/metrics_{model_type}_{layers_str}{suffix}.json", "w"
+    ) as file:
+        json.dump(report, file, indent=4)
 
 
 if __name__ == "__main__":

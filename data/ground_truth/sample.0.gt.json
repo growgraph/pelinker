@@ -1,0 +1,227 @@
+{
+  "text": "TAMs can also secrete in the TME a number of immunosuppressive cytokines, such as IL-6, TGF-β, and IL-10 that are able to suppress CD8+ T-cell function. Specifically, IL-6 is expressed at high levels in PDAC, and its increasing circulating level is associated with advanced disease and poor prognosis. The inhibition of IL-6 signaling along with CD40 blockade is able to revert the TME to support an antitumor immune response, by reducing TGF-β activation and fibrosis deposition due to a decreased collagen type I production. Moreover, chemokines such as CCL2, CCL17, CCL20, and CCL22 induce the recruitment of Tregs to the tumor sites, activating their regulatory function by IL10 and TGFβ signaling, leading to the accumulation of Tregs and impairing the migration and activation of T cytotoxic effector cells. TAMs can also express arginase I that is involved in reducing L-arginine in the TME impairing T-cell function. TAMs are also responsible for a reduced NK cell function, due to the secretion of the above-mentioned cytokines resulting in a limited production of IFN-γ, perforin, and IL-12 by NK cells, which determines a lower cytotoxicity and proliferation in the TME. TAMs are able to reduce NK cell functioning also by direct cell–cell interactions, since PDL-1 expressed on TAMs can bind to PD-1 on NK cells, avoiding the activation of their cytotoxic receptors. Two different subsets of CAFs with diverse functions have been identified in pancreatic cancer: myofibroblastic (myCAFs), which are located close to the tumor nests and likely suppress tumor cell growth, and inflammatory CAFs (iCAFs) which are located more distantly from the tumor nests and secrete inflammatory factors with pro-tumorigenic functions. The pro-tumorigenic factors can regulate the differentiation, migration, and function of myeloid cells such as myeloid-derived suppressor cells (MDSC), M2 macrophages, and dendritic cells (DC) which in turn inhibit T-cell migration, activation, proliferation, and differentiation. CAFs also disrupt T-cell functionality by promoting expression of immune checkpoint inhibitors (PD-1, TIM-3), restricting T-cell infiltration into the tumor nests, and promoting T regulatory cells (Tregs). CAFs can entrap T cells in the tumor stroma through the CXCL12–CXCR4 axis and recruit MDSCs, M2-type macrophages, and neutrophils through the CCL2–CCR2 axis and CXCR2 ligation. Other chemokines in the tumor microenvironment such as CXCL10 and CCL5 can have a dual role by promoting the infiltration of T cells but also of Tregs.",
+  "ground_truth": [
+    {
+      "iphrase": 0,
+      "a": 14,
+      "b": 24,
+      "entity_id": "PEL.000032"
+    },
+    {
+      "iphrase": 0,
+      "a": 110,
+      "b": 130,
+      "entity_id": "PEL.000035"
+    },
+    {
+      "iphrase": 1,
+      "a": 19,
+      "b": 34,
+      "entity_id": "RO.0002206"
+    },
+    {
+      "iphrase": 1,
+      "a": 64,
+      "b": 86,
+      "entity_id": "PEL.000016"
+    },
+    {
+      "iphrase": 1,
+      "a": 93,
+      "b": 111,
+      "entity_id": "RO.0002610"
+    },
+    {
+      "iphrase": 2,
+      "a": 58,
+      "b": 75,
+      "entity_id": "PEL.000031"
+    },
+    {
+      "iphrase": 2,
+      "a": 84,
+      "b": 94,
+      "entity_id": "PEL.000012"
+    },
+    {
+      "iphrase": 2,
+      "a": 125,
+      "b": 136,
+      "entity_id": "PEL.000029"
+    },
+    {
+      "iphrase": 2,
+      "a": 187,
+      "b": 196,
+      "entity_id": "RO.0015008"
+    },
+    {
+      "iphrase": 3,
+      "a": 59,
+      "b": 65,
+      "entity_id": "PEL.000017"
+    },
+    {
+      "iphrase": 3,
+      "a": 111,
+      "b": 121,
+      "entity_id": "PEL.000000"
+    },
+    {
+      "iphrase": 3,
+      "a": 176,
+      "b": 186,
+      "entity_id": "RO.0002411"
+    },
+    {
+      "iphrase": 3,
+      "a": 217,
+      "b": 226,
+      "entity_id": "PEL.000014"
+    },
+    {
+      "iphrase": 4,
+      "a": 14,
+      "b": 21,
+      "entity_id": "RO.0002292"
+    },
+    {
+      "iphrase": 4,
+      "a": 38,
+      "b": 61,
+      "entity_id": "PEL.000029"
+    },
+    {
+      "iphrase": 4,
+      "a": 84,
+      "b": 93,
+      "entity_id": "PEL.000014"
+    },
+    {
+      "iphrase": 5,
+      "a": 5,
+      "b": 8,
+      "entity_id": "PEL.000021"
+    },
+    {
+      "iphrase": 5,
+      "a": 32,
+      "b": 39,
+      "entity_id": "PEL.000029"
+    },
+    {
+      "iphrase": 5,
+      "a": 92,
+      "b": 101,
+      "entity_id": "PEL.000023"
+    },
+    {
+      "iphrase": 5,
+      "a": 112,
+      "b": 124,
+      "entity_id": "RO.0002296"
+    },
+    {
+      "iphrase": 5,
+      "a": 195,
+      "b": 205,
+      "entity_id": "RO.0002508"
+    },
+    {
+      "iphrase": 5,
+      "a": 262,
+      "b": 280,
+      "entity_id": "PEL.000029"
+    },
+    {
+      "iphrase": 5,
+      "a": 352,
+      "b": 364,
+      "entity_id": "RO.0002206"
+    },
+    {
+      "iphrase": 6,
+      "a": 53,
+      "b": 76,
+      "entity_id": "RO.0001025"
+    },
+    {
+      "iphrase": 6,
+      "a": 128,
+      "b": 139,
+      "entity_id": "RO.0001025"
+    },
+    {
+      "iphrase": 6,
+      "a": 176,
+      "b": 184,
+      "entity_id": "PEL.000035"
+    },
+    {
+      "iphrase": 6,
+      "a": 240,
+      "b": 251,
+      "entity_id": "RO.0001025"
+    },
+    {
+      "iphrase": 6,
+      "a": 292,
+      "b": 299,
+      "entity_id": "PEL.000032"
+    },
+    {
+      "iphrase": 7,
+      "a": 32,
+      "b": 40,
+      "entity_id": "RO.0002211"
+    },
+    {
+      "iphrase": 7,
+      "a": 119,
+      "b": 126,
+      "entity_id": "RO.0001000"
+    },
+    {
+      "iphrase": 7,
+      "a": 207,
+      "b": 214,
+      "entity_id": "PEL.000018"
+    },
+    {
+      "iphrase": 8,
+      "a": 10,
+      "b": 17,
+      "entity_id": "PEL.000008"
+    },
+    {
+      "iphrase": 8,
+      "a": 39,
+      "b": 51,
+      "entity_id": "PEL.000027"
+    },
+    {
+      "iphrase": 8,
+      "a": 110,
+      "b": 121,
+      "entity_id": "PEL.000022"
+    },
+    {
+      "iphrase": 8,
+      "a": 168,
+      "b": 177,
+      "entity_id": "PEL.000027"
+    },
+    {
+      "iphrase": 10,
+      "a": 75,
+      "b": 79,
+      "entity_id": "BFO.0000051"
+    },
+    {
+      "iphrase": 10,
+      "a": 92,
+      "b": 104,
+      "entity_id": "PEL.000027"
+    }
+  ]
+}
