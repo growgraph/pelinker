@@ -13,6 +13,13 @@ Uniformize and trim data incoming from different sources
  
 - `run/preprocessing/merge_properties`
 
+## Testing against ground truth
+
+Ground truth dataset is stored in `data/ground_truth`, so run the following to obtain the accuracy of the model in `./reports` 
+
+```commandline
+python run/testing/run_pel_test.py --text-path ./data/ground_truth/sample.0.gt.json --model-type biobert-stsb --layers-spec sent --extra-context
+```
 
 ## Serialize Model serialization
 
