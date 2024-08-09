@@ -3,9 +3,10 @@
 import re
 from string import punctuation, whitespace
 from transformers import AutoModel, AutoTokenizer
-from sentence_transformers import SentenceTransformer
+#from sentence_transformers import SentenceTransformer
 import faiss
 import torch
+import numpy as np
 import pandas as pd
 
 from sklearn.metrics import accuracy_score
@@ -25,7 +26,8 @@ def load_models(model_type, sentence=False):
     else:
         raise ValueError(f"{model_type} unsupported")
     if sentence:
-        tokenizer, model = None, SentenceTransformer(spec)
+        #tokenizer, model = None, SentenceTransformer(spec)
+        pass
     else:
         tokenizer, model = (
             AutoTokenizer.from_pretrained(spec),
@@ -169,6 +171,78 @@ def process_text(text, tokenizer, model, nlp, max_length=None, extra_context=Fal
         for j, (offs, s) in enumerate(zip(offsets, sents_agg))
     ]
     return sents_agg, sent_spans, tt
+
+
+
+def get_verbal_embedding(text_df, column, vb, tokenizer, model, nlp, layers):
+    '''The texts in `column` of `text_df` should be capitalized, otherwise the sentence-splitter
+       won't work. '''
+
+    
+    # split texts into sentences and only choose those sentences with 
+    # different tenses of the target verb (exceptions raise for up/downregular and overexpress)
+    if vb in ['upregulate', 'downregulate']:
+        vb_t = 'regulate'
+        vforms = np.unique([nlp(vb_t)[0]._.inflect(x) for x in ["VBZ", "VBG", "VBP", "VBD", "VBN"]])
+        vforms = np.array(['up'+x for x in vforms])
+    elif vb=='overexpress':
+        vb_t = 'express'
+        vforms = np.unique([nlp(vb_t)[0]._.inflect(x) for x in ["VBZ", "VBG", "VBP", "VBD", "VBN"]])
+        vforms = np.array(['over'+x for x in vforms])
+
+    else:
+        vforms = np.unique([nlp(vb)[0]._.inflect(x) for x in ["VBZ", "VBG", "VBP", "VBD", "VBN"]])
+    
+    
+    # splitting into sentences
+    sent_splitter = lambda x: split_into_sentences(x)  
+    split_df = text_df[column].apply(sent_splitter).explode()
+    # once split, we lower the sentences
+    split_df = split_df.str.lower()
+    contained_df = split_df[split_df.str.contains(fr"\b(?:{'|'.join(vforms)})\b")]
+    # removing too long texts
+    contained_df = contained_df[contained_df.str.len()<1500]
+    # removing texts with too many non-english characters
+    engmatch = re.compile(r'[^a-z0-9 .,-]') 
+    bad_char_cnts = contained_df.apply(lambda x: len(engmatch.findall(x))) / contained_df.str.len()
+    contained_df = contained_df[bad_char_cnts < 0.5]
+    
+    if len(contained_df)==0:
+        return np.nan
+        
+    # we capitalize back the texts so that they could be processed
+    text = contained_df.str.capitalize()
+    text = ' '.join(text.tolist())
+    
+    # getting the embeddings 
+    sagg, sspan, tt = process_text(text, tokenizer, model, nlp)
+    
+    
+    emb_inds = []
+    embs = []
+    word_inds = []
+    contexts = []
+    for i in range(len(sspan)):
+        for j in range(len(sspan[i])):
+            # structure of sspan[i]:  [(
+            #                           (string bounds of j-th verb in string sagg[i]),  
+            #                           [indices of embeddings of (sub)token(s) of the j-th verb]
+            #                          )]
+
+            # we only consider verbs that we are focusing
+            str_bounds = sspan[i][j][0]
+            sent_vb = sagg[i][str_bounds[0]:str_bounds[1]].lower()
+            split_vb = sent_vb.split(' ')
+            if np.any(np.isin(split_vb, vforms)):
+                emb_inds += [(i, sspan[i][j][1])]
+                # first averaging across layers, then averaging across (sub)token indices
+                # at the end, we will get 768-D vector with ndim=1
+                embs += [tt[layers, i, :, :][:,emb_inds[-1][1],:].mean(0).mean(0)]
+                
+                word_inds += [sspan[i][j][0]]
+                contexts += [sagg[i]]
+                
+    return word_inds, contexts, torch.stack(embs, axis=0)
 
 
 def sentence_ix(sent, nlp, token_offsets, extra_context=False):
