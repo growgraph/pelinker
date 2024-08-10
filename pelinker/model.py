@@ -77,20 +77,22 @@ class LinkerModel:
     def _link_sent(self, text, tokenizer, model, nlp, extra_context, topk=None):
         spans = get_vb_spans(nlp, text, extra_context=extra_context)
 
-        vbs = [text[a:b] for a, b in spans]
-        tt_relations = encode(vbs, tokenizer, model, self.ls)
-
-        distance_matrix, nearest_neighbors_matrix = self.index.search(
-            tt_relations, self.nb_nn
-        )
-
         report = []
-        for bj, (nn, d, span) in enumerate(
-            zip(nearest_neighbors_matrix, distance_matrix, spans)
-        ):
-            a, b = span
-            item = self.prepare_candidate_item(bj, text, a, b, nn, d, topk=topk)
-            report += [item]
+
+        if spans:
+            vbs = [text[a:b] for a, b in spans]
+            tt_relations = encode(vbs, tokenizer, model, self.ls)
+
+            distance_matrix, nearest_neighbors_matrix = self.index.search(
+                tt_relations, self.nb_nn
+            )
+
+            for bj, (nn, d, span) in enumerate(
+                zip(nearest_neighbors_matrix, distance_matrix, spans)
+            ):
+                a, b = span
+                item = self.prepare_candidate_item(bj, text, a, b, nn, d, topk=topk)
+                report += [item]
         return {"entities": report, "normalized_text": text}
 
     @classmethod
