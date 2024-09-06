@@ -7,7 +7,8 @@ from flask_cors import cross_origin
 from flask_restful import Api
 from waitress import serve
 from importlib.resources import files
-from pelinker.util import load_models, MAX_LENGTH
+from pelinker.util import load_models
+from pelinker.onto import MAX_LENGTH
 from pelinker.model import LinkerModel
 from pprint import pprint
 import pathlib

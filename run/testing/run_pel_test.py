@@ -5,18 +5,17 @@ import logging.config
 import sys
 
 import click
-import faiss
 import pandas as pd
 import spacy
 
 from pelinker.util import (
-    MAX_LENGTH,
     load_models,
 )
+from pelinker.onto import MAX_LENGTH
 from pelinker.preprocess import pre_process_properties
 from pelinker.model import LinkerModel
-from pelinker.util import encode, split_into_sentences
-from pelinker.util import fetch_latest_kb
+from pelinker.util import fetch_latest_kb, report2kb, texts_to_vrep
+from pelinker.onto import WordGrouping
 from pathlib import Path
 
 
@@ -69,14 +68,18 @@ def run(text_path, model_type, superposition, extra_context, layers_spec):
     tokenizer, model = load_models(model_type, sentence)
 
     layers_str = LinkerModel.layers2str(layers)
-    tt_labels = encode(labels, tokenizer, model, layers)
 
-    tt_basis = tt_labels
+    report = texts_to_vrep(
+        labels,
+        tokenizer,
+        model,
+        ls=layers,
+        word_mode=WordGrouping.SENTENCE,
+        nlp=nlp,
+    )
+    vocabulary, index = report2kb(report)
 
-    index = faiss.IndexFlatIP(tt_basis.shape[1])
-    index.add(tt_basis)
-
-    nb_nn = min([10, tt_labels.shape[0]])
+    nb_nn = min([10, report["tensor"].shape[0]])
     lm = LinkerModel(
         index=index,
         vocabulary=properties,
@@ -84,27 +87,20 @@ def run(text_path, model_type, superposition, extra_context, layers_spec):
         labels_map=property_label_map,
         nb_nn=nb_nn,
     )
-
-    sents_raw = split_into_sentences(text)
-    entities = []
-    for ix, sent in enumerate(sents_raw):
-        report = lm.link(
-            sent,
-            tokenizer,
-            model,
-            nlp,
-            extra_context=extra_context,
-            max_length=MAX_LENGTH,
-            topk=3,
-        )
-        etmp = [{**{"iphrase": ix}, **item} for item in report["entities"]]
-        entities += etmp
+    report = lm.link(
+        [text],
+        tokenizer,
+        model,
+        nlp,
+        max_length=MAX_LENGTH,
+        topk=3,
+    )
 
     df_gt = pd.DataFrame(gt)
 
-    df_pred = pd.DataFrame(entities)
-    df_gt.merge(df_pred, how="left", on=["iphrase", "a"], suffixes=("", "_gt"))
-    df_cmp = df_gt.merge(df_pred, how="left", on=["iphrase", "a"], suffixes=("", "_gt"))
+    df_pred = pd.DataFrame(report["entities"])
+    df_gt.merge(df_pred, how="left", on=["itext", "a"], suffixes=("", "_gt"))
+    df_cmp = df_gt.merge(df_pred, how="left", on=["itext", "a"], suffixes=("", "_gt"))
 
     accuracy = (
         (df_cmp["entity_id"] == df_cmp["entity_id_predicted"]).astype(float).mean()

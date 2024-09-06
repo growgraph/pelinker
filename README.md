@@ -35,3 +35,27 @@ python run/testing/run_pel_test.py --text-path ./data/ground_truth/sample.0.gt.j
 ## Container
 1. Build image: `docker buildx build -t gg/pelinker:<current_version> --ssh default=$SSH_AUTH_SOCK . 2>&1 | tee build.log`
 2. Run container: `docker run --name pelinker --env THR_SCORE=0.5 gg/pelinker:latest`
+
+
+
+### Algo flow
+
+```mermaid
+flowchart TD
+    A["[text]"] -->|"split_text_into_batches"| B["[[batched text]]"]
+    subgraph S1["elementary tensors and word bounds"]
+        direction LR
+        C ~~~ D
+    end
+
+    B -->|"get_word_boundaries"| C["[[word group bounds]]"]
+    B -->|"process_text"| D["token tensor"]
+    subgraph S2["tensors ~ words of interest"]
+        direction LR
+        E["ll_tt_stacked"] ~~~ F["mapping_table"]
+    end
+
+    S1 -->|"render_elementary_tensor_table"| S2
+```
+
+[![](https://mermaid.ink/img/pako:eNqNUj1vwyAU_CuIORnS0UOlJmmndmk6NY4QNs82CgYEz0qjJP7tfdjOx9ChTPi4O-6eOfHSKeAZr4w7lI0MyL7WuWW0XrY53yL84C7nOzafP59zHr3RKBIotEUnCollAzHnZ7ZM9O0IKDboknD0il1RB-kbtlkQDQy0YFGGI_FsdCEyaRU7uKBY4Tqr4k2YltIBStTOsvfPO7pifd-zKStYldtxu5yi1oAiOYrBUQY9xlwNMYer6uA6P134kPVq4IMrIcahbVKuSYluD3YK_Ue5p0SZGvVDn8hcxWhUECDiP1q9koMxAlFElOUeVJp9KvpGB630XttaoCwM3Mweum8WU_ZAIARxH7QYY12lZ8rKZ7yF0Eqt6PefkgGFb0iQ84y2CirZGcqc2wtRZYduc7QlzzB0MOOdVxJhrSVVb3lWSRMJ9dJ-O3f_BqXRhY_xiQ0vbcZp6nUzMS6_rEDWAA?type=png)](https://mermaid.live/edit#pako:eNqNUj1vwyAU_CuIORnS0UOlJmmndmk6NY4QNs82CgYEz0qjJP7tfdjOx9ChTPi4O-6eOfHSKeAZr4w7lI0MyL7WuWW0XrY53yL84C7nOzafP59zHr3RKBIotEUnCollAzHnZ7ZM9O0IKDboknD0il1RB-kbtlkQDQy0YFGGI_FsdCEyaRU7uKBY4Tqr4k2YltIBStTOsvfPO7pifd-zKStYldtxu5yi1oAiOYrBUQY9xlwNMYer6uA6P134kPVq4IMrIcahbVKuSYluD3YK_Ue5p0SZGvVDn8hcxWhUECDiP1q9koMxAlFElOUeVJp9KvpGB630XttaoCwM3Mweum8WU_ZAIARxH7QYY12lZ8rKZ7yF0Eqt6PefkgGFb0iQ84y2CirZGcqc2wtRZYduc7QlzzB0MOOdVxJhrSVVb3lWSRMJ9dJ-O3f_BqXRhY_xiQ0vbcZp6nUzMS6_rEDWAA)

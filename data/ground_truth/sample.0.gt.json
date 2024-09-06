@@ -2,225 +2,249 @@
     "text": "TAMs can also secrete in the TME a number of immunosuppressive cytokines, such as IL-6, TGF-\u03b2, and IL-10 that are able to suppress CD8+ T-cell function. Specifically, IL-6 is expressed at high levels in PDAC, and its increasing circulating level is associated with advanced disease and poor prognosis. The inhibition of IL-6 signaling along with CD40 blockade is able to revert the TME to support an antitumor immune response, by reducing TGF-\u03b2 activation and fibrosis deposition due to a decreased collagen type I production. Moreover, chemokines such as CCL2, CCL17, CCL20, and CCL22 induce the recruitment of Tregs to the tumor sites, activating their regulatory function by IL10 and TGF\u03b2 signaling, leading to the accumulation of Tregs and impairing the migration and activation of T cytotoxic effector cells. TAMs can also express arginase I that is involved in reducing L-arginine in the TME impairing T-cell function. TAMs are also responsible for a reduced NK cell function, due to the secretion of the above-mentioned cytokines resulting in a limited production of IFN-\u03b3, perforin, and IL-12 by NK cells, which determines a lower cytotoxicity and proliferation in the TME. TAMs are able to reduce NK cell functioning also by direct cell\u2013cell interactions, since PDL-1 expressed on TAMs can bind to PD-1 on NK cells, avoiding the activation of their cytotoxic receptors. Two different subsets of CAFs with diverse functions have been identified in pancreatic cancer: myofibroblastic (myCAFs), which are located close to the tumor nests and likely suppress tumor cell growth, and inflammatory CAFs (iCAFs) which are located more distantly from the tumor nests and secrete inflammatory factors with pro-tumorigenic functions. The pro-tumorigenic factors can regulate the differentiation, migration, and function of myeloid cells such as myeloid-derived suppressor cells (MDSC), M2 macrophages, and dendritic cells (DC) which in turn inhibit T-cell migration, activation, proliferation, and differentiation. CAFs also disrupt T-cell functionality by promoting expression of immune checkpoint inhibitors (PD-1, TIM-3), restricting T-cell infiltration into the tumor nests, and promoting T regulatory cells (Tregs). CAFs can entrap T cells in the tumor stroma through the CXCL12\u2013CXCR4 axis and recruit MDSCs, M2-type macrophages, and neutrophils through the CCL2\u2013CCR2 axis and CXCR2 ligation. Other chemokines in the tumor microenvironment such as CXCL10 and CCL5 can have a dual role by promoting the infiltration of T cells but also of Tregs.",
     "ground_truth": [
         {
-            "iphrase": 0,
+            "itext": 0,
             "a": 14,
             "b": 24,
             "entity_id": "PEL.000032"
         },
         {
-            "iphrase": 0,
+            "itext": 0,
             "a": 110,
             "b": 130,
             "entity_id": "PEL.000035"
         },
         {
-            "iphrase": 1,
-            "a": 19,
-            "b": 34,
+            "itext": 0,
+            "a": 172,
+            "b": 187,
             "entity_id": "RO.0002206"
         },
         {
-            "iphrase": 1,
-            "a": 64,
-            "b": 86,
+            "itext": 0,
+            "a": 217,
+            "b": 239,
             "entity_id": "PEL.000016"
         },
         {
-            "iphrase": 1,
-            "a": 93,
-            "b": 111,
+            "itext": 0,
+            "a": 246,
+            "b": 264,
             "entity_id": "RO.0002610"
         },
         {
-            "iphrase": 2,
-            "a": 58,
-            "b": 75,
+            "itext": 0,
+            "a": 360,
+            "b": 377,
             "entity_id": "PEL.000031"
         },
         {
-            "iphrase": 2,
-            "a": 84,
-            "b": 94,
+            "itext": 0,
+            "a": 386,
+            "b": 396,
             "entity_id": "PEL.000012"
         },
         {
-            "iphrase": 2,
-            "a": 125,
-            "b": 136,
+            "itext": 0,
+            "a": 427,
+            "b": 438,
             "entity_id": "PEL.000029"
         },
         {
-            "iphrase": 2,
-            "a": 187,
-            "b": 196,
+            "itext": 0,
+            "a": 489,
+            "b": 498,
             "entity_id": "RO.0015008"
         },
         {
-            "iphrase": 3,
-            "a": 59,
-            "b": 65,
+            "itext": 0,
+            "a": 586,
+            "b": 592,
             "entity_id": "PEL.000017"
         },
         {
-            "iphrase": 3,
-            "a": 111,
-            "b": 121,
+            "itext": 0,
+            "a": 638,
+            "b": 648,
             "entity_id": "PEL.000000"
         },
         {
-            "iphrase": 3,
-            "a": 176,
-            "b": 186,
+            "itext": 0,
+            "a": 703,
+            "b": 713,
             "entity_id": "RO.0002411"
         },
         {
-            "iphrase": 3,
-            "a": 217,
-            "b": 226,
+            "itext": 0,
+            "a": 744,
+            "b": 753,
             "entity_id": "PEL.000014"
         },
         {
-            "iphrase": 4,
-            "a": 14,
-            "b": 21,
+            "itext": 0,
+            "a": 828,
+            "b": 835,
             "entity_id": "RO.0002292"
         },
         {
-            "iphrase": 4,
-            "a": 38,
-            "b": 61,
+            "itext": 0,
+            "a": 852,
+            "b": 875,
             "entity_id": "PEL.000029"
         },
         {
-            "iphrase": 4,
-            "a": 84,
-            "b": 93,
+            "itext": 0,
+            "a": 898,
+            "b": 907,
             "entity_id": "PEL.000014"
         },
         {
-            "iphrase": 5,
-            "a": 5,
-            "b": 8,
+            "itext": 0,
+            "a": 930,
+            "b": 933,
             "entity_id": "PEL.000021"
         },
         {
-            "iphrase": 5,
-            "a": 32,
-            "b": 39,
+            "itext": 0,
+            "a": 957,
+            "b": 964,
             "entity_id": "PEL.000029"
         },
         {
-            "iphrase": 5,
-            "a": 92,
-            "b": 101,
+            "itext": 0,
+            "a": 1017,
+            "b": 1026,
             "entity_id": "PEL.000023"
         },
         {
-            "iphrase": 5,
-            "a": 112,
-            "b": 124,
+            "itext": 0,
+            "a": 1037,
+            "b": 1049,
             "entity_id": "RO.0002296"
         },
         {
-            "iphrase": 5,
-            "a": 195,
-            "b": 205,
+            "itext": 0,
+            "a": 1120,
+            "b": 1130,
             "entity_id": "RO.0002508"
         },
         {
-            "iphrase": 5,
-            "a": 262,
-            "b": 280,
+            "itext": 0,
+            "a": 1187,
+            "b": 1205,
             "entity_id": "PEL.000029"
         },
         {
-            "iphrase": 5,
-            "a": 352,
-            "b": 364,
+            "itext": 0,
+            "a": 1277,
+            "b": 1289,
             "entity_id": "RO.0002206"
         },
         {
-            "iphrase": 6,
-            "a": 53,
-            "b": 76,
+            "itext": 0,
+            "a": 1299,
+            "b": 1306,
+            "entity_id": "NEW"
+        },
+        {
+            "itext": 0,
+            "a": 1325,
+            "b": 1333,
+            "entity_id": "NEW"
+        },
+        {
+            "itext": 0,
+            "a": 1432,
+            "b": 1455,
             "entity_id": "RO.0001025"
         },
         {
-            "iphrase": 6,
-            "a": 128,
-            "b": 139,
+            "itext": 0,
+            "a": 1507,
+            "b": 1518,
             "entity_id": "RO.0001025"
         },
         {
-            "iphrase": 6,
-            "a": 176,
-            "b": 184,
+            "itext": 0,
+            "a": 1555,
+            "b": 1563,
             "entity_id": "PEL.000035"
         },
         {
-            "iphrase": 6,
-            "a": 240,
-            "b": 251,
+            "itext": 0,
+            "a": 1619,
+            "b": 1630,
             "entity_id": "RO.0001025"
         },
         {
-            "iphrase": 6,
-            "a": 292,
-            "b": 299,
+            "itext": 0,
+            "a": 1671,
+            "b": 1678,
             "entity_id": "PEL.000032"
         },
         {
-            "iphrase": 7,
-            "a": 32,
-            "b": 40,
+            "itext": 0,
+            "a": 1764,
+            "b": 1772,
             "entity_id": "RO.0002211"
         },
         {
-            "iphrase": 7,
-            "a": 119,
-            "b": 126,
+            "itext": 0,
+            "a": 1851,
+            "b": 1858,
             "entity_id": "RO.0001000"
         },
         {
-            "iphrase": 7,
-            "a": 207,
-            "b": 214,
+            "itext": 0,
+            "a": 1939,
+            "b": 1946,
             "entity_id": "PEL.000018"
         },
         {
-            "iphrase": 8,
-            "a": 10,
-            "b": 17,
+            "itext": 0,
+            "a": 2023,
+            "b": 2030,
             "entity_id": "PEL.000008"
         },
         {
-            "iphrase": 8,
-            "a": 39,
-            "b": 51,
+            "itext": 0,
+            "a": 2052,
+            "b": 2064,
             "entity_id": "PEL.000027"
         },
         {
-            "iphrase": 8,
-            "a": 110,
-            "b": 121,
+            "itext": 0,
+            "a": 2123,
+            "b": 2134,
             "entity_id": "PEL.000022"
         },
         {
-            "iphrase": 8,
-            "a": 168,
-            "b": 177,
+            "itext": 0,
+            "a": 2181,
+            "b": 2190,
             "entity_id": "PEL.000027"
         },
         {
-            "iphrase": 10,
-            "a": 75,
-            "b": 79,
+            "itext": 0,
+            "a": 2228,
+            "b": 2234,
+            "entity_id": "NEW"
+        },
+        {
+            "itext": 0,
+            "a": 2297,
+            "b": 2304,
+            "entity_id": "NEW"
+        },
+        {
+            "itext": 0,
+            "a": 2471,
+            "b": 2475,
             "entity_id": "BFO.0000051"
         },
         {
-            "iphrase": 10,
-            "a": 92,
-            "b": 104,
+            "itext": 0,
+            "a": 2488,
+            "b": 2500,
             "entity_id": "PEL.000027"
         }
     ]

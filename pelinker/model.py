@@ -1,6 +1,6 @@
 import faiss
-from pelinker.util import process_text, encode, get_vb_spans
-import torch
+from pelinker.util import texts_to_vrep
+from pelinker.onto import WordGrouping
 import joblib
 
 
@@ -18,82 +18,6 @@ class LinkerModel:
         self.labels_map: dict[str, str] = kwargs.pop("labels_map", dict())
         self.ls = layers
         self.nb_nn = nb_nn
-
-    def link(
-        self, text, tokenizer, model, nlp, max_length, extra_context=False, topk=None
-    ):
-        if self.index is None:
-            raise TypeError("index not set")
-
-        if self.ls == "sent":
-            return self._link_sent(
-                text, tokenizer, model, nlp, extra_context, topk=topk
-            )
-        sents, spans, tt_text = process_text(
-            text,
-            tokenizer,
-            model,
-            nlp,
-            max_length=max_length,
-            extra_context=extra_context,
-        )
-        tt_text = tt_text[self.ls].mean(0)
-
-        report = []
-        for js, (s, miti, tt_sent) in enumerate(zip(sents, spans, tt_text)):
-            tt_words_list = []
-            for k, v in miti:
-                rr = tt_sent[v].mean(0)
-                rr = rr / rr.norm(dim=-1).unsqueeze(-1)
-                tt_words_list += [rr]
-
-            tt_words = torch.stack(tt_words_list)
-
-            distance_matrix, nearest_neighbors_matrix = self.index.search(
-                tt_words, self.nb_nn
-            )
-
-            for bj, (nn, d, miti_item) in enumerate(
-                zip(nearest_neighbors_matrix, distance_matrix, miti)
-            ):
-                a, b = miti_item[0]
-                item = self.prepare_candidate_item(js, s, a, b, nn, d, topk=topk)
-                report += [item]
-
-        slens = [len(s) + 1 for s in sents[:-1]]
-        cumsum = [0]
-        for s in slens:
-            cumsum += [cumsum[-1] + s]
-
-        report2 = []
-        for r in report:
-            js = r.pop("js")
-            a = r.pop("a")
-            b = r.pop("b")
-            report2 += [{**{"a": a + cumsum[js], "b": b + cumsum[js]}, **r}]
-        sall = " ".join(sents)
-        return {"entities": report2, "normalized_text": sall}
-
-    def _link_sent(self, text, tokenizer, model, nlp, extra_context, topk=None):
-        spans = get_vb_spans(nlp, text, extra_context=extra_context)
-
-        report = []
-
-        if spans:
-            vbs = [text[a:b] for a, b in spans]
-            tt_relations = encode(vbs, tokenizer, model, self.ls)
-
-            distance_matrix, nearest_neighbors_matrix = self.index.search(
-                tt_relations, self.nb_nn
-            )
-
-            for bj, (nn, d, span) in enumerate(
-                zip(nearest_neighbors_matrix, distance_matrix, spans)
-            ):
-                a, b = span
-                item = self.prepare_candidate_item(bj, text, a, b, nn, d, topk=topk)
-                report += [item]
-        return {"entities": report, "normalized_text": text}
 
     @classmethod
     def layers2str(cls, layers):
@@ -140,22 +64,51 @@ class LinkerModel:
         pe_model.index = index
         return pe_model
 
-    def prepare_candidate_item(
-        self, ix_phrase, text, span_a, span_b, nearest_neighbors, distance, topk
-    ):
+    def link(self, texts, tokenizer, model, nlp, max_length, topk=None):
+        if self.index is None:
+            raise TypeError("index not set")
+
+        # if self.ls == "sent":
+        #     return self._link_sent(
+        #         texts, tokenizer, model, nlp, extra_context, topk=topk
+        #     )
+
+        report = texts_to_vrep(
+            texts,
+            tokenizer,
+            model,
+            ls=self.ls,
+            word_mode=WordGrouping.VERBAL,
+            nlp=nlp,
+            max_length=max_length,
+        )
+
+        tt = report.pop("tensor")
+        distance_matrix, nearest_neighbors_matrix = self.index.search(tt, self.nb_nn)
+
+        kb_items = []
+        for item, nn, d in zip(
+            report["entities"], nearest_neighbors_matrix, distance_matrix
+        ):
+            item = self.complement_with_kb_data(item, nn, d, topk=topk)
+            kb_items += [item]
+
+        report["entities"] = kb_items
+        return report
+
+    def complement_with_kb_data(self, item, nearest_neighbors, distance, topk):
         distance = distance.tolist()
 
         candidate_entity = [self.vocabulary[nnx] for nnx in nearest_neighbors]
 
         dif = round(distance[0] - distance[1], 5)
         item = {
-            "js": ix_phrase,
-            "a": span_a,
-            "b": span_b,
-            "mention": text[span_a:span_b],
-            "entity_id_predicted": candidate_entity[0],
-            "score": round(distance[0], 4),
-            "dif_to_next": dif,
+            **item,
+            **{
+                "entity_id_predicted": candidate_entity[0],
+                "score": round(distance[0], 4),
+                "dif_to_next": dif,
+            },
         }
         if topk is not None:
             item["_leading_candidates"] = candidate_entity[1:topk]
