@@ -15,9 +15,11 @@ from pathlib import Path
 def match_pattern(pattern, text, suffix_length=1, buffer_length=10):
     """
 
+        given the pattern, split it into words, match ordered groups of words truncating each of at size n-1
+            if its size > 5. Allow for pieces of text, spaces and dashes in between of size at most 10.
     :param pattern:
     :param text:
-    :param suffix_length: remove word ending (induces -> induce
+    :param suffix_length: remove word ending `induces` -> `induce`
     :param buffer_length: allow for words (and dashes) in between
     :return:
     """
@@ -33,6 +35,15 @@ def match_pattern(pattern, text, suffix_length=1, buffer_length=10):
 
 
 def match_pieces(pattern, text, suffix_length=1, matches=None):
+    """
+        given the pattern and the match of constituent words in the sense of match_pattern,
+        for each match find the boundaries of matching words
+    :param pattern:
+    :param text:
+    :param suffix_length:
+    :param matches:
+    :return:
+    """
     if matches is None:
         matches = []
     pattern_words = pattern.split()
