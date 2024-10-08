@@ -43,7 +43,7 @@ def main():
     ids = [x.split("/")[-1] for x in properties]
     ids = [".".join(x.split("_")) for x in ids]
 
-    props_df = pd.DataFrame(list(zip(properties, ids)), columns=["iri", "property"])
+    props_df = pd.DataFrame(list(zip(properties, ids)), columns=["iri", "entity_id"])
     labels_df = pd.DataFrame(labels, columns=["iri", "label"])
     desc_df = pd.DataFrame(descs, columns=["iri", "description"])
 

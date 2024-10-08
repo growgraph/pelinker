@@ -28,5 +28,5 @@ RUN rm -rf /tmp/poetry_cache ./.venv/lib/python3.10/site-packages/nvidi*
 ENV THR_SCORE=0.5
 ENV THR_DIF=0.0
 
-CMD sh -c 'poetry run python run/serve.py --model-type biobert-stsb --port 8599 --thr-score ${THR_SCORE:-0.5} --thr-dif ${THR_DIF:-0.0}'
+CMD sh -c 'poetry run python run/serve.py --model-type biobert-stsb --extra-context --port 8599 --thr-score ${THR_SCORE:-0.5} --thr-dif ${THR_DIF:-0.0}'
 
