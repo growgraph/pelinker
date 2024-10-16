@@ -77,7 +77,7 @@ class LinkerModel:
             texts,
             tokenizer,
             model,
-            ls=self.ls,
+            layers_spec=self.ls,
             word_mode=WordGrouping.VERBAL,
             nlp=nlp,
             max_length=max_length,

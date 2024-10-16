@@ -31,7 +31,7 @@ def test_mapping_table(texts, batched_texts, tokenizer_model_pubmedbert, nlp):
     word_bnds = [get_word_boundaries(s) for batch in batched_texts for s in batch]
 
     ll_tt_stacked, mapping_table = batched_texts_to_vrep(
-        batched_texts, t_tokenizer, t_model, word_spans=word_bnds, ls=layers
+        batched_texts, t_tokenizer, t_model, word_spans=word_bnds, layers_spec=layers
     )
 
     for itext, ichunk, (_a, _b), (a, b) in mapping_table:
@@ -46,7 +46,7 @@ def test_texts_to_vrep(texts, tokenizer_model_pubmedbert, nlp):
         texts,
         t_tokenizer,
         t_model,
-        ls=layers,
+        layers_spec=layers,
         word_mode=WordGrouping.VERBAL_STRICT,
         nlp=nlp,
     )
@@ -62,7 +62,7 @@ def test_texts_to_vrep_sentence(texts, tokenizer_model_pubmedbert, nlp):
         texts,
         t_tokenizer,
         t_model,
-        ls=layers,
+        layers_spec=layers,
         word_mode=WordGrouping.SENTENCE,
         nlp=nlp,
     )

@@ -59,7 +59,7 @@ def text_to_tokens_embeddings(texts: list[str], tokenizer, model):
     with torch.no_grad():
         outputs = model(output_hidden_states=True, **inputs)
 
-    # n_layers x nb x n_len x n_emb
+    # n_layers x n_batch x n_len x n_emb
     tt = torch.stack(outputs.hidden_states)
 
     # fill with zeros latent vectors for padded tokens
@@ -70,8 +70,7 @@ def text_to_tokens_embeddings(texts: list[str], tokenizer, model):
     # nb x n_len x 2
     offsets = encoding["offset_mapping"]
     enu_offsets = [
-        [(x, y) for (x, y) in sublist if x != y]
-        for sublist in offsets.squeeze().tolist()
+        [(x, y) for x, y in sublist if x != y] for sublist in offsets.tolist()
     ]
 
     return tt.cpu(), enu_offsets
@@ -88,6 +87,7 @@ def map_word_indexes_to_token_indexes(
                 key: (char_a, char_b) boundary of group of interest (words)
                 value: list of corresponding tokens
     """
+
     map_ix_words_jx_tokens = {}
 
     pnt_tokens = 0
@@ -98,7 +98,8 @@ def map_word_indexes_to_token_indexes(
         while (
             pnt_tokens < len(token_boundaries) and token_boundaries[pnt_tokens][1] <= wb
         ):
-            map_ix_words_jx_tokens[ix_word] += [pnt_tokens]
+            if token_boundaries[pnt_tokens][0] >= wa:
+                map_ix_words_jx_tokens[ix_word] += [pnt_tokens]
             pnt_tokens += 1
     return map_ix_words_jx_tokens
 
@@ -380,7 +381,7 @@ def split_long_text(text, max_length=MAX_LENGTH):
     return agg
 
 
-def split_text_into_batches(text, max_length):
+def split_text_into_batches(text: str, max_length) -> list[str]:
     pattern = (
         r"(.{1," + str(max_length - 1) + r"})(\s|$)|(.{1," + str(max_length) + r"})"
     )
@@ -427,7 +428,9 @@ def render_tensor_per_group(chunk_mapper: ChunkMapper, layers, token_spans):
     return ll_tt_stacked, mapping_table
 
 
-def render_elementary_tensor_table(chunk_mapper, word_int_bounds, layers):
+def render_elementary_tensor_table(
+    chunk_mapper, word_int_bounds: list[list[tuple[int, int]]], layers
+):
     token_spans, char_spans = compute_spans(chunk_mapper.token_bounds, word_int_bounds)
     chunk_mapper.token_spans = token_spans
     chunk_mapper.char_spans = char_spans
@@ -451,29 +454,50 @@ def render_elementary_tensor_table(chunk_mapper, word_int_bounds, layers):
     #     assert texts[itext][a:b] == chunk_mapper.flattened_chunks[ichunk][_a:_b]
 
 
-def batched_texts_to_vrep(batched_texts, tokenizer, model, word_spans, ls):
-    chunk_mapper = process_text(
+def batched_texts_to_vrep(
+    batched_texts: list[list[str]],
+    tokenizer,
+    model,
+    word_spans: list[list[tuple[int, int]]],
+    layers_spec,
+):
+    chunk_mapper: ChunkMapper = process_text(
         batched_texts,
         tokenizer,
         model,
     )
 
     ll_tt_stacked, mapping_table = render_elementary_tensor_table(
-        chunk_mapper, word_spans, ls
+        chunk_mapper, word_spans, layers_spec
     )
     return ll_tt_stacked, mapping_table
 
 
 def texts_to_vrep(
-    texts,
+    texts : list[str],
     tokenizer,
     model,
-    ls,
+    layers_spec,
     word_mode: WordGrouping,
     max_length=MAX_LENGTH,
     nlp=None,
 ):
-    batched_texts = [split_text_into_batches(s, max_length=max_length) for s in texts]
+    """
+        take a list of texts and provide embeddings based on `word_mode`
+
+    :param texts: list of strings
+    :param tokenizer: hf tokenizer
+    :param model: hf emb model
+    :param layers_spec:
+    :param word_mode: mode to render word boundaries: VERBAL or WORD moving window or SENTENCE
+    :param max_length:
+    :param nlp:
+    :return:
+    """
+
+    batched_texts: list[list[str]] = [
+        split_text_into_batches(s, max_length=max_length) for s in texts
+    ]
 
     chunk_mapper = process_text(
         batched_texts,
@@ -509,7 +533,7 @@ def texts_to_vrep(
             raise ValueError(f"Unknown type of WordGrouping {word_mode}")
 
     ll_tt_stacked, mapping_table = render_elementary_tensor_table(
-        chunk_mapper, word_bnds, ls
+        chunk_mapper, word_bnds, layers_spec
     )
 
     report = []

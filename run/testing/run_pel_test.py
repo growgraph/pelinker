@@ -73,7 +73,7 @@ def run(text_path, model_type, superposition, extra_context, layers_spec):
         labels,
         tokenizer,
         model,
-        ls=layers,
+        layers_spec=layers,
         word_mode=WordGrouping.SENTENCE,
         nlp=nlp,
     )

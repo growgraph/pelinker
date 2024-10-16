@@ -29,6 +29,12 @@ def tokenizer_model_pubmedbert():
 
 
 @pytest.fixture(scope="module")
+def tokenizer_model_scibert():
+    tokenizer, model = load_models("scibert", False)
+    return tokenizer, model
+
+
+@pytest.fixture(scope="module")
 def phrase_vb_0():
     return (
         "TAMs can also secrete in the TME a number of immunosuppressive cytokines, such as IL-6, TGF-β, "
