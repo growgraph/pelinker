@@ -80,6 +80,14 @@ def map_word_indexes_to_token_indexes(
     words_boundaries, token_boundaries
 ) -> dict[tuple[int, int], list[int]]:
     """
+        given two lists of word bounds and token bounds (in character indexes)
+        [ it is implied that the two lists are sorted ]
+        the list of token boundaries is meant to cover the text (to be complete),
+        on the other hand word boundaries might be no `continuous`
+
+        find the correspondence: (wa, wb) -> [index of token]
+
+        to each word boundary find the indexes of corresponding tokens
 
     :param words_boundaries:
     :param token_boundaries:
@@ -229,9 +237,9 @@ def sentence_ix(
 
 
 def map_char_spans_2_token_spans(
-    token_offsets: list[tuple[int, int]], ix_words: list[tuple[int, int]]
+    token_bounds: list[tuple[int, int]], word_bounds: list[tuple[int, int]]
 ) -> tuple[list[tuple[int, int]], list[tuple[int, int]]]:
-    miti0 = map_word_indexes_to_token_indexes(ix_words, token_offsets)
+    miti0 = map_word_indexes_to_token_indexes(word_bounds, token_bounds)
 
     # sanitize token offsets
     miti0 = {k: v for k, v in miti0.items() if v}
@@ -474,7 +482,7 @@ def batched_texts_to_vrep(
 
 
 def texts_to_vrep(
-    texts : list[str],
+    texts: list[str],
     tokenizer,
     model,
     layers_spec,
