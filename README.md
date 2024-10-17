@@ -1,7 +1,19 @@
 # Developer notes
 
-Within env `poetry install`.
-Add spacy LMs `python -m spacy download en_core_web_trf`.
+1. Make sure you have the version of python specified in `pyproject.toml`.
+   1. For example, using [pyenv](https://github.com/pyenv/pyenv?tab=readme-ov-file#automatic-installer) install `pyenv install 3.10.14`
+   2. Then select local python version `pyenv local 3.10.14`
+   3. Check using `which python` or `python --version`
+
+2. Setting up poetry env 
+   1. Install [poetry](https://python-poetry.org/docs/#installing-with-the-official-installer)
+   2. Optionally set the virtual envs to be local `poetry config virtualenvs.in-project true`
+   3. Install env with development dependencies: `poetry install --group dev`
+   4. Add a spacy language model `python -m spacy download en_core_web_trf`
+3. In the project folder before committing
+   1. To lint run `pre-commit  run --all-files`
+   2. To run tests run `pytest test`
+
 
 ## Data Preparation
 - `run/preprocessing/extract_properties_ro`
