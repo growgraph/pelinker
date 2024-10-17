@@ -1,12 +1,11 @@
-import pytest
-
-from pelinker.util import process_text, split_into_sentences, MAX_LENGTH
-
-
-@pytest.fixture()
-def text():
-    return """The title will not be center aligned with the subplot titles. 
-        To set the position of the title you can use plt.suptitle("Title", x=center)."""
+from pelinker.onto import WordGrouping
+from pelinker.util import (
+    process_text,
+    split_into_sentences,
+    get_word_boundaries,
+    batched_texts_to_vrep,
+    texts_to_vrep,
+)
 
 
 def test_splitting(text):
@@ -14,19 +13,59 @@ def test_splitting(text):
     assert len(sents) == 2
 
 
-def test_pro_text(text, tokenizer_model_pubmedbert, nlp):
+def test_pro_text(batched_texts, tokenizer_model_pubmedbert, nlp):
     t_tokenizer, t_model = tokenizer_model_pubmedbert
-    sents, spans, _ = process_text(text, t_tokenizer, t_model, nlp)
+    chunk_mapper = process_text(batched_texts, t_tokenizer, t_model)
 
-    a, b = spans[0][0][0]
-    assert sents[0][a:b] == "be"
-    a, b = spans[1][1][0]
-    assert sents[1][a:b] == "use"
+    assert len(chunk_mapper.flattened_chunks) == 47
 
-    sents, spans, _ = process_text(text, t_tokenizer, t_model, nlp, MAX_LENGTH)
 
-    assert len(sents) == 1
-    a, b = spans[0][0][0]
-    assert sents[0][a:b] == "be"
-    a, b = spans[0][3][0]
-    assert sents[0][a:b] == "use"
+def test_mapping_table(texts, batched_texts, tokenizer_model_pubmedbert, nlp):
+    t_tokenizer, t_model = tokenizer_model_pubmedbert
+    layers = [-1]
+    flattened_chunks: list[str] = [s for group in batched_texts for s in group]
+
+    # word_bnds = [
+    #     get_vb_spans(nlp=nlp, text=s) for batch in batched_texts for s in batch
+    # ]
+    word_bnds = [get_word_boundaries(s) for batch in batched_texts for s in batch]
+
+    ll_tt_stacked, mapping_table = batched_texts_to_vrep(
+        batched_texts, t_tokenizer, t_model, word_spans=word_bnds, layers_spec=layers
+    )
+
+    for itext, ichunk, (_a, _b), (a, b) in mapping_table:
+        print(itext, ichunk, a, b, texts[itext][a:b], flattened_chunks[ichunk][_a:_b])
+        assert texts[itext][a:b] == flattened_chunks[ichunk][_a:_b]
+
+
+def test_texts_to_vrep(texts, tokenizer_model_pubmedbert, nlp):
+    t_tokenizer, t_model = tokenizer_model_pubmedbert
+    layers = [-1]
+    report = texts_to_vrep(
+        texts,
+        t_tokenizer,
+        t_model,
+        layers_spec=layers,
+        word_mode=WordGrouping.VERBAL_STRICT,
+        nlp=nlp,
+    )
+
+    assert len(report["entities"]) == 18
+    assert report["tensor"].shape[0] == 18
+
+
+def test_texts_to_vrep_sentence(texts, tokenizer_model_pubmedbert, nlp):
+    t_tokenizer, t_model = tokenizer_model_pubmedbert
+    layers = [-1]
+    report = texts_to_vrep(
+        texts,
+        t_tokenizer,
+        t_model,
+        layers_spec=layers,
+        word_mode=WordGrouping.SENTENCE,
+        nlp=nlp,
+    )
+
+    assert len(report["entities"]) == 10
+    assert report["tensor"].shape[0] == 10

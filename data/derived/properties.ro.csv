@@ -1,4 +1,4 @@
-property,label,description
+entity_id,label,description
 BFO.0000050,part of,a core relation that holds between a part and its whole
 BFO.0000051,has part,a core relation that holds between a whole and its part
 BFO.0000054,realized in,
@@ -41,7 +41,7 @@ RO.0002001,aligned with,
 RO.0002002,has 2D boundary,"a relation between a material entity and a 2D immaterial entity (the boundary), in which the boundary delimits the material entity"
 RO.0002003,electrically_synapsed_to,A relation that holds between two neurons that are electrically coupled via gap junctions.
 RO.0002004,tracheates,The relationship that holds between a trachea or tracheole and an antomical structure that is contained in (and so provides an oxygen supply to).
-RO.0002005,innervated_by,aroused or stimulated (a nerve or an organ) to activity
+RO.0002005,innervated_by,
 RO.0002006,has synaptic terminal of,
 RO.0002007,bounding layer of,"X outer_layer_of Y iff:
 . X :continuant that bearer_of some PATO:laminar

@@ -1,4 +1,4 @@
-property,label,description
+entity_id,label,description
 BFO.0000050,part of,a core relation that holds between a part and its whole
 BFO.0000051,has part,a core relation that holds between a whole and its part
 BFO.0000066,occurs in,b occurs_in c =def b is a process and c is a material entity or immaterial entity& there exists a spatiotemporal region r and b occupies_spatiotemporal_region r.& forall(t) if b exists_at t then c exists_at t & there exist spatial regions s and s’ where & b spatially_projects_onto s at t& c is occupies_spatial_region s’ at t& s is a proper_continuant_part_of s’ at t

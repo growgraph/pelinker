@@ -7,9 +7,13 @@ from flask_cors import cross_origin
 from flask_restful import Api
 from waitress import serve
 from importlib.resources import files
-from pelinker.util import load_models, MAX_LENGTH
+from pelinker.util import load_models
+from pelinker.onto import MAX_LENGTH
 from pelinker.model import LinkerModel
+from pprint import pprint
+import pathlib
 import spacy
+import json
 
 app = Flask(__name__)
 Compress(app)
@@ -42,6 +46,12 @@ logger = logging.getLogger(__name__)
 )
 @click.option("--thr-score", type=click.FLOAT, default=0.5)
 @click.option("--thr-dif", type=click.FLOAT, default=0.0)
+@click.option(
+    "--sample-path",
+    type=click.Path(path_type=pathlib.Path),
+    default=None,
+    help="json with test docs",
+)
 def main(
     model_type,
     layers_spec,
@@ -51,6 +61,7 @@ def main(
     extra_context,
     thr_score,
     thr_dif,
+    sample_path,
 ):
     logger_conf = "logging.conf"
     logging.config.fileConfig(logger_conf, disable_existing_loggers=False)
@@ -68,7 +79,7 @@ def main(
     )
 
     logger.info(f"model path: {model_spec}")
-    pe_model = LinkerModel.load(model_spec)
+    pe_model: LinkerModel = LinkerModel.load(model_spec)
 
     logger.info(f"pelinker model loaded : {pe_model}")
 
@@ -101,20 +112,30 @@ def main(
                 r = LinkerModel.filter_report(r, thr_score=thr_score0, thr_dif=thr_dif0)
 
             except Exception as exc:
+                logger.error(f"{exc}")
                 return {"error": str(exc)}, 202
 
             try:
                 json_response = jsonify(r)
             except Exception as exc:
+                logger.error(f"{exc}")
                 return {"error": str(exc)}, 201
 
             return json_response, 200
 
-    serve(
-        app,
-        host=host,
-        port=port,
-    )
+    if sample_path is not None:
+        with open(sample_path) as json_file:
+            sample_data = json.load(json_file)
+        text = sample_data["text"][:11]
+        r = pe_model.link(text, tokenizer, model, nlp, MAX_LENGTH, extra_context)
+        r = LinkerModel.filter_report(r, thr_score=thr_score, thr_dif=thr_dif)
+        pprint(r)
+    else:
+        serve(
+            app,
+            host=host,
+            port=port,
+        )
 
 
 if __name__ == "__main__":

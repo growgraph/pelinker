@@ -16,6 +16,8 @@ from pelinker.util import (
     compute_distance_ref,
 )
 from pelinker.preprocess import pre_process_properties
+from pelinker.util import fetch_latest_kb
+from pathlib import Path
 
 
 @click.command()
@@ -39,7 +41,15 @@ def run(model_type, superposition):
 
     suffix = "_superposition" if superposition else ""
 
-    df0 = pd.read_csv("data/derived/properties.synthesis.csv")
+    path_derived = Path("./data/derived/")
+
+    fname, version = fetch_latest_kb(path_derived)
+
+    try:
+        df0 = pd.read_csv(path_derived / fname)
+    except Exception as e:
+        print(f"kb not found at {path_derived}")
+        raise e
 
     report = pre_process_properties(df0)
     labels = report.pop("labels")
