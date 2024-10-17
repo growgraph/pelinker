@@ -461,7 +461,7 @@ def render_elementary_tensor_table(
     #     print(texts[itext][a:b], chunk_mapper.flattened_chunks[ichunk][_a:_b])
     #     assert texts[itext][a:b] == chunk_mapper.flattened_chunks[ichunk][_a:_b]
 
-
+# deprecate ?
 def batched_texts_to_vrep(
     batched_texts: list[list[str]],
     tokenizer,
@@ -575,7 +575,7 @@ def texts_to_vrep(
     layers_spec,
     word_mode: WordGrouping,
     max_length=MAX_LENGTH,
-    nlp=None,
+    nlp=None
 ):
     chunk_mapper, word_bnds_kinds, layers_spec, texts = texts_to_vrep_preparatory(
         texts,
