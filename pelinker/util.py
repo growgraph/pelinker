@@ -399,7 +399,7 @@ def split_text_into_batches(text: str, max_length) -> list[str]:
     return batched
 
 
-def get_word_boundaries(text):
+def get_word_boundaries(text) -> list[tuple[int, int]]:
     """
         render word boundaries in text
 
@@ -481,7 +481,7 @@ def batched_texts_to_vrep(
     return ll_tt_stacked, mapping_table
 
 
-def texts_to_vrep(
+def texts_to_vrep_preparatory(
     texts: list[str],
     tokenizer,
     model,
@@ -489,7 +489,7 @@ def texts_to_vrep(
     word_mode: WordGrouping,
     max_length=MAX_LENGTH,
     nlp=None,
-):
+) -> tuple[ChunkMapper, list[list[tuple[int, int]]], list[int], list[str]]:
     """
         take a list of texts and provide embeddings based on `word_mode`
 
@@ -503,11 +503,13 @@ def texts_to_vrep(
     :return:
     """
 
+    word_bounds_kinds: list[list[list[tuple[int, int]]]] = []
+
     batched_texts: list[list[str]] = [
         split_text_into_batches(s, max_length=max_length) for s in texts
     ]
 
-    chunk_mapper = process_text(
+    chunk_mapper: ChunkMapper = process_text(
         batched_texts,
         tokenizer,
         model,
@@ -516,30 +518,37 @@ def texts_to_vrep(
     if word_mode in {WordGrouping.VERBAL_STRICT, WordGrouping.VERBAL}:
         if nlp is None:
             raise TypeError(f" nlp should be provided for WordGrouping {word_mode}")
-        word_bnds = [
+        word_bnds: list[list[tuple[int, int]]] = [
             get_vb_spans(
                 nlp=nlp, text=s, extra_context=word_mode == WordGrouping.VERBAL
             )
             for batch in batched_texts
             for s in batch
         ]
+        word_bounds_kinds += [word_bnds]
     else:
-        word_bnds = [get_word_boundaries(s) for batch in batched_texts for s in batch]
+        word_bnds: list[list[tuple[int, int]]] = [
+            get_word_boundaries(s) for batch in batched_texts for s in batch
+        ]
         if word_mode == WordGrouping.SENTENCE:
             word_bnds = [[(bnds[0][0], bnds[-1][-1])] for bnds in word_bnds]
+            word_bounds_kinds += [word_bnds]
         elif word_mode.isnumeric():
             windows = [int(x) for x in word_mode]
-
-            def merge_wbs(wb):
-                new_bnds = []
-                for w in windows:
-                    new_bnds += [(ba[0], bb[-1]) for ba, bb in zip(wb, wb[w - 1 :])]
-                return new_bnds
-
-            word_bnds = [merge_wbs(bnds) for bnds in word_bnds]
+            for w in windows:
+                word_bnds: list[list[tuple[int, int]]] = [
+                    merge_wbs(word_boundaries=word_bnds_atom, window=w)
+                    for word_bnds_atom in word_bnds
+                ]
+                word_bounds_kinds += [word_bnds]
         else:
             raise ValueError(f"Unknown type of WordGrouping {word_mode}")
+    return chunk_mapper, word_bounds_kinds, layers_spec, texts
 
+
+def final_mapping(
+    chunk_mapper, word_bnds, layers_spec, texts
+) -> tuple[dict, torch.tensor]:
     ll_tt_stacked, mapping_table = render_elementary_tensor_table(
         chunk_mapper, word_bnds, layers_spec
     )
@@ -556,7 +565,38 @@ def texts_to_vrep(
             }
         ]
 
-    return {"entities": report, "tensor": ll_tt_stacked, "normalized_text": texts}
+    return report, ll_tt_stacked
+
+
+def texts_to_vrep(
+    texts: list[str],
+    tokenizer,
+    model,
+    layers_spec,
+    word_mode: WordGrouping,
+    max_length=MAX_LENGTH,
+    nlp=None,
+):
+    chunk_mapper, word_bnds_kinds, layers_spec, texts = texts_to_vrep_preparatory(
+        texts,
+        tokenizer,
+        model,
+        layers_spec,
+        word_mode,
+        max_length=max_length,
+        nlp=nlp,
+    )
+
+    reports, tts = [], []
+    for word_bnds in word_bnds_kinds:
+        report, ll_tt_stacked = final_mapping(
+            chunk_mapper, word_bnds, layers_spec, texts
+        )
+        reports += report
+        tts += [ll_tt_stacked]
+
+    f_tt_stacked = torch.concat(tts)
+    return {"entities": reports, "tensor": f_tt_stacked, "normalized_text": texts}
 
 
 def report2kb(report):
@@ -565,3 +605,10 @@ def report2kb(report):
     index = faiss.IndexFlatIP(tt_basis.shape[1])
     index.add(tt_basis)
     return vocabulary, index
+
+
+def merge_wbs(word_boundaries, window) -> list[tuple[int, int]]:
+    return [
+        (wa, wb)
+        for (wa, _), (_, wb) in zip(word_boundaries, word_boundaries[window - 1 :])
+    ]

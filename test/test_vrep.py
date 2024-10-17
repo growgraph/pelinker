@@ -23,3 +23,32 @@ def test_vrep_pipeline(tokenizer_model_scibert, nlp):
     )
 
     assert torch.max(ll_tt_stacked[0] - embs["tensor"][i_model]) < 1e-10
+
+
+def test_vrep_word_groupings(tokenizer_model_scibert, nlp):
+    tokenizer, model = tokenizer_model_scibert
+    s = "we used a modified functional balance (fb) model to predict growth response of helianthus annuus l. to elevated co2."
+    texts = [s]
+    layers_spec = [-2, -1]
+
+    embs12 = texts_to_vrep(
+        texts,
+        tokenizer,
+        model,
+        layers_spec,
+        WordGrouping.W12,
+        max_length=MAX_LENGTH,
+        nlp=nlp,
+    )
+
+    embs1 = texts_to_vrep(
+        texts,
+        tokenizer,
+        model,
+        layers_spec,
+        WordGrouping.W1,
+        max_length=MAX_LENGTH,
+        nlp=nlp,
+    )
+
+    assert (embs12["tensor"].shape[0] + 1 ) / 2 == embs1["tensor"].shape[0]
