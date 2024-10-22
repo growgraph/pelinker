@@ -8,10 +8,11 @@
 2. Setting up poetry env 
    1. Install [poetry](https://python-poetry.org/docs/#installing-with-the-official-installer)
    2. Optionally set the virtual envs to be local `poetry config virtualenvs.in-project true`
-   3. Install env with development dependencies: `poetry install --group dev`
-   4. Add a spacy language model `python -m spacy download en_core_web_trf`
+   3. Inside project folder : `poetry env use 3.10.14`
+   4. Install env with development dependencies: `poetry install --with dev`
+   5. Add a spacy language model `python -m spacy download en_core_web_trf`
 3. In the project folder before committing
-   1. To lint run `pre-commit  run --all-files`
+   1. To lint run `pre-commit run --all-files`
    2. To run tests run `pytest test`
 
 
