@@ -41,6 +41,10 @@ from pelinker.util import map_spans_to_spans
 )
 @click.option("--plot-path", type=click.Path(path_type=pathlib.Path), default="figs", required=True)
 def run(model_type, input_path, layers_spec, pattern, plot_path):
+
+    if not plot_path.exists():
+        plot_path.mkdir(parents=True, exist_ok=True)
+
     tokenizer, model = load_models(model_type, sentence=False)
     layers = LinkerModel.str2layers(layers_spec)
 
