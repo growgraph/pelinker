@@ -71,7 +71,7 @@ def run(model_type, input_path, layers_spec, pattern, plot_path):
     data_batched = [data[i : i + batch_size] for i in range(0, len(data), batch_size)]
 
     frep = []
-    mean_tts = []
+    tt_averages = []
     for batch in (pbar := tqdm.tqdm(data_batched)):
         report = texts_to_vrep(
             batch,
@@ -89,8 +89,8 @@ def run(model_type, input_path, layers_spec, pattern, plot_path):
                     zip(normalized_texts, r_item)
                 ):
                     if p == pattern[0] and w == sorted(word_groupings)[0]:
-                        tt0 = torch.stack([t for _, t in report_sent]).mean(0)
-                        mean_tts += [tt0]
+                        tt0 = [t for _, t in report_sent]
+                        tt_averages += tt0
 
                     indexes_of_interest_batched = match_pattern(
                         p, text, suffix_length=0
@@ -118,12 +118,12 @@ def run(model_type, input_path, layers_spec, pattern, plot_path):
     tt_all = (torch.stack([x[4] for x in frep]), "all.patterns")
     tt_pats = [(torch.stack([x[4] for x in frep if x[2] == p]), p) for p in pattern]
 
-    tt_means = (torch.stack(mean_tts), "means")
+    tt_means = (torch.stack(tt_averages), "means")
     cos = CosineSimilarity(dim=1, eps=1e-6)
 
     tts_cmp = tt_pats + [tt_all, tt_means]
 
-    vc_mentions_combication = (
+    vc_mentions_combination = (
         pd.DataFrame(
             [item[:4] for item in frep], columns=["wg", "isent", "pat", "mention"]
         )
@@ -131,15 +131,32 @@ def run(model_type, input_path, layers_spec, pattern, plot_path):
         .value_counts()
     )
 
-    print(vc_mentions_combication)
+    print(vc_mentions_combination)
 
     cos_dist = []
     for t, label in tts_cmp:
-        tt_all_center = t.mean(0).unsqueeze(0)
-        tt_all_center_normed = (t / t.norm(dim=-1).unsqueeze(-1)).mean(0).unsqueeze(0)
-        dists = cos(t, tt_all_center).tolist()
+        if label == "all.patterns":
+            df_labels = pd.DataFrame([x[2] for x in frep], columns=["label"])
+            vc_labels = (
+                df_labels.groupby("label")
+                .apply(lambda x: x.shape[0])
+                .reset_index()
+                .rename(columns={0: "cnt"})
+            )
+            vc_labels["weight"] = 1 / vc_labels["cnt"]
+            df_labels = df_labels.merge(vc_labels, on="label")
+            tt_weight = torch.from_numpy(df_labels["weight"].values)
+        else:
+            tt_weight = torch.ones(t.shape[:1])
+        t_center = (tt_weight.unsqueeze(-1) * t).mean(0).unsqueeze(0)
+        t_center_normed = (
+            ((tt_weight.unsqueeze(-1) * t) / t.norm(dim=-1).unsqueeze(-1))
+            .mean(0)
+            .unsqueeze(0)
+        )
+        dists = cos(t, t_center).tolist()
         cos_dist += [(d, f"{label}") for d in dists]
-        dists = cos(t, tt_all_center_normed).tolist()
+        dists = cos(t, t_center_normed).tolist()
         cos_dist += [(d, f"{label}.normed") for d in dists]
 
     df = pd.DataFrame(cos_dist, columns=["d", "label"])
@@ -159,6 +176,9 @@ def run(model_type, input_path, layers_spec, pattern, plot_path):
             hue="label",
             kind="kde",
             common_norm=False,
+            # stat="density",
+            # element="step",
+            # bins=20
         )
 
         plt.savefig(
