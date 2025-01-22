@@ -39,9 +39,13 @@ from pelinker.util import map_spans_to_spans
     default="./data/test/sample.csv.gz",
     help="input df",
 )
-@click.option("--plot-path", type=click.Path(path_type=pathlib.Path), default="figs", required=True)
+@click.option(
+    "--plot-path",
+    type=click.Path(path_type=pathlib.Path),
+    default="figs",
+    required=True,
+)
 def run(model_type, input_path, layers_spec, pattern, plot_path):
-
     if not plot_path.exists():
         plot_path.mkdir(parents=True, exist_ok=True)
 
@@ -52,19 +56,23 @@ def run(model_type, input_path, layers_spec, pattern, plot_path):
     texts = df["abstract"]
     indexes_of_interest_per_pat = []
     for p in pattern:
-        indexes_of_interest_per_pat += [[match_pattern(p, x, suffix_length=0) for x in texts]]
+        indexes_of_interest_per_pat += [
+            [match_pattern(p, x, suffix_length=0) for x in texts]
+        ]
 
-    flags = [any(True if ixs_ else False for ixs_ in item) for item in zip(*indexes_of_interest_per_pat)]
+    flags = [
+        any(True if ixs_ else False for ixs_ in item)
+        for item in zip(*indexes_of_interest_per_pat)
+    ]
     data = [t for flag, t in zip(flags, texts) if flag]
 
     batch_size = 40
 
-    data_batched = [data[i:i+batch_size] for i in range(0, len(data), batch_size)]
+    data_batched = [data[i : i + batch_size] for i in range(0, len(data), batch_size)]
 
     frep = []
     mean_tts = []
     for batch in (pbar := tqdm.tqdm(data_batched)):
-
         report = texts_to_vrep(
             batch,
             tokenizer=tokenizer,
@@ -77,20 +85,33 @@ def run(model_type, input_path, layers_spec, pattern, plot_path):
             normalized_texts = report["normalized_text"]
             word_groupings = report["word_groupings"]
             for w, r_item in word_groupings.items():
-                for jsent, (text, report_sent) in enumerate(zip(normalized_texts, r_item)):
+                for jsent, (text, report_sent) in enumerate(
+                    zip(normalized_texts, r_item)
+                ):
                     if p == pattern[0] and w == sorted(word_groupings)[0]:
                         tt0 = torch.stack([t for _, t in report_sent]).mean(0)
                         mean_tts += [tt0]
 
-                    indexes_of_interest_batched = match_pattern(p, text, suffix_length=0)
+                    indexes_of_interest_batched = match_pattern(
+                        p, text, suffix_length=0
+                    )
                     if not indexes_of_interest_batched:
                         continue
                     report_sent = sorted(report_sent, key=lambda x: x[0]["a"])
 
-                    _, map_ij = map_spans_to_spans([(x["a"], x["b"]) for x, _ in report_sent], indexes_of_interest_batched)
-                    tts = [torch.stack([t for _, t in report_sent[ja:jb]]).mean(0) for ja, jb in map_ij]
+                    _, map_ij = map_spans_to_spans(
+                        [(x["a"], x["b"]) for x, _ in report_sent],
+                        indexes_of_interest_batched,
+                    )
+                    tts = [
+                        torch.stack([t for _, t in report_sent[ja:jb]]).mean(0)
+                        for ja, jb in map_ij
+                    ]
 
-                    mentions = [" ".join([x["mention"] for x, _ in report_sent[ja:jb]]) for (ja, jb) in map_ij]
+                    mentions = [
+                        " ".join([x["mention"] for x, _ in report_sent[ja:jb]])
+                        for (ja, jb) in map_ij
+                    ]
                     frep += [(w, jsent, p, m, tt) for m, tt in zip(mentions, tts)]
         pbar.set_description(f"entities added : {len(frep)}")
 
@@ -102,8 +123,13 @@ def run(model_type, input_path, layers_spec, pattern, plot_path):
 
     tts_cmp = tt_pats + [tt_all, tt_means]
 
-    vc_mentions_combication = pd.DataFrame([item[:4] for item in frep], columns=["wg", "isent", "pat", "mention"]).apply(
-        lambda x: ": ".join(x[["pat", "mention"]]), axis=1).value_counts()
+    vc_mentions_combication = (
+        pd.DataFrame(
+            [item[:4] for item in frep], columns=["wg", "isent", "pat", "mention"]
+        )
+        .apply(lambda x: ": ".join(x[["pat", "mention"]]), axis=1)
+        .value_counts()
+    )
 
     print(vc_mentions_combication)
 
@@ -127,8 +153,13 @@ def run(model_type, input_path, layers_spec, pattern, plot_path):
         import matplotlib.pyplot as plt
 
         sns.set_style("whitegrid")
-        _ = sns.displot(df.loc[~df["label"].apply(lambda x: x.endswith(".normed"))], x="d", hue="label", kind="kde", common_norm=False)
-
+        _ = sns.displot(
+            df.loc[~df["label"].apply(lambda x: x.endswith(".normed"))],
+            x="d",
+            hue="label",
+            kind="kde",
+            common_norm=False,
+        )
 
         plt.savefig(
             plot_path.expanduser() / f"cos_sim_dist.{model_type}.{layers_spec}.pdf",
@@ -136,7 +167,7 @@ def run(model_type, input_path, layers_spec, pattern, plot_path):
         )
         plt.close()
     except Exception as e:
-        logger.error(f"something happened : {e}")
+        print(f"something happened : {e}")
 
 
 if __name__ == "__main__":
