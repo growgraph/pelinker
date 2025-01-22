@@ -23,6 +23,8 @@ def load_models(model_type, sentence=False):
         spec = "neuml/pubmedbert-base-embeddings"
     elif model_type == "biobert-stsb":
         spec = "pritamdeka/BioBERT-mnli-snli-scinli-scitail-mednli-stsb"
+    elif model_type == "bert":
+        spec = "google-bert/bert-base-uncased"
     else:
         raise ValueError(f"{model_type} unsupported")
     if sentence:
@@ -76,7 +78,7 @@ def text_to_tokens_embeddings(texts: list[str], tokenizer, model):
     return tt.cpu(), enu_offsets
 
 
-def map_word_indexes_to_token_indexes(
+def map_spans_to_spans_basic(
     words_boundaries, token_boundaries
 ) -> dict[tuple[int, int], list[int]]:
     """
@@ -96,20 +98,20 @@ def map_word_indexes_to_token_indexes(
                 value: list of corresponding tokens
     """
 
-    map_ix_words_jx_tokens = {}
+    map_ix_jx = {}
 
     pnt_tokens = 0
 
     for ix_word in words_boundaries:
         wa, wb = ix_word
-        map_ix_words_jx_tokens[ix_word] = []
+        map_ix_jx[ix_word] = []
         while (
             pnt_tokens < len(token_boundaries) and token_boundaries[pnt_tokens][1] <= wb
         ):
             if token_boundaries[pnt_tokens][0] >= wa:
-                map_ix_words_jx_tokens[ix_word] += [pnt_tokens]
+                map_ix_jx[ix_word] += [pnt_tokens]
             pnt_tokens += 1
-    return map_ix_words_jx_tokens
+    return map_ix_jx
 
 
 def aggregate_token_groups(nlp, text, extra_context=False):
@@ -154,13 +156,13 @@ def aggregate_token_groups(nlp, text, extra_context=False):
     return token_groups
 
 
-def get_vb_spans(nlp, text, extra_context=False):
+def get_vb_spans(nlp, text, extra_context=False) -> list[tuple[int, int]]:
     token_groups = aggregate_token_groups(nlp, text, extra_context)
     spans = transform_tokens2spans(token_groups)
     return spans
 
 
-def transform_tokens2spans(token_groups):
+def transform_tokens2spans(token_groups) -> list[tuple[int, int]]:
     spans = [(group[0].idx, group[-1].idx + len(group[-1])) for group in token_groups]
     return spans
 
@@ -212,7 +214,7 @@ def compute_spans(
     token_bnds: list[list[tuple[int, int]]], word_bnds: list[list[tuple[int, int]]]
 ):
     sent_spans = [
-        map_char_spans_2_token_spans(t_bnds, w_bnds)
+        map_spans_to_spans(t_bnds, w_bnds)
         for t_bnds, w_bnds in zip(token_bnds, word_bnds)
     ]
 
@@ -227,24 +229,24 @@ def sentence_ix(
 ) -> tuple[list[tuple[int, int]], list[tuple[int, int]]]:
     ix_words = get_word_boundaries(sent)
 
-    miti0 = map_word_indexes_to_token_indexes(ix_words, token_offsets)
+    map_ix_jx = map_spans_to_spans_basic(ix_words, token_offsets)
 
     # sanitize
-    miti0 = {k: v for k, v in miti0.items() if v}
-    char_spans = [x for x in miti0.keys()]
-    itoken_spans = [(y[0], y[-1] + 1) for y in miti0.values()]
+    map_ix_jx = {k: v for k, v in map_ix_jx.items() if v}
+    char_spans = [x for x in map_ix_jx.keys()]
+    itoken_spans = [(y[0], y[-1] + 1) for y in map_ix_jx.values()]
     return char_spans, itoken_spans
 
 
-def map_char_spans_2_token_spans(
+def map_spans_to_spans(
     token_bounds: list[tuple[int, int]], word_bounds: list[tuple[int, int]]
 ) -> tuple[list[tuple[int, int]], list[tuple[int, int]]]:
-    miti0 = map_word_indexes_to_token_indexes(word_bounds, token_bounds)
+    map_ix_jx = map_spans_to_spans_basic(word_bounds, token_bounds)
 
     # sanitize token offsets
-    miti0 = {k: v for k, v in miti0.items() if v}
-    char_spans = [x for x in miti0.keys()]
-    itoken_spans = [(y[0], y[-1] + 1) for y in miti0.values()]
+    map_ix_jx = {k: v for k, v in map_ix_jx.items() if v}
+    char_spans = [x for x in map_ix_jx.keys()]
+    itoken_spans = [(y[0], y[-1] + 1) for y in map_ix_jx.values()]
     return char_spans, itoken_spans
 
 
@@ -273,13 +275,20 @@ def tt_aggregate_normalize(tt: torch.Tensor, ls):
 def tt_normalize(
     tt: torch.Tensor, ls, ix_tokens: list[list[tuple[int, int]]]
 ) -> list[list[torch.tensor]]:
+    """
+
+    :param tt: n_layers x n_chunks x n_tokens x emb_dim
+    :param ls:
+    :param ix_tokens: list of size n_chunks
+    :return:
+    """
     tt_norm = tt[ls].mean(0)
     tt_r = []
     for js, (ix_tokens, tt_sent) in enumerate(zip(ix_tokens, tt_norm)):
         tt_words_list = []
         for a, b in ix_tokens:
             rr = tt_sent[a:b].mean(0)
-            rr = rr / rr.norm(dim=-1).unsqueeze(-1)
+            # rr = rr / rr.norm(dim=-1).unsqueeze(-1)
             tt_words_list += [rr]
         tt_r += [tt_words_list]
     return tt_r
@@ -437,7 +446,7 @@ def render_tensor_per_group(chunk_mapper: ChunkMapper, layers, token_spans):
 
 
 def render_elementary_tensor_table(
-    chunk_mapper, word_int_bounds: list[list[tuple[int, int]]], layers
+    chunk_mapper: ChunkMapper, word_int_bounds: list[list[tuple[int, int]]], layers
 ):
     token_spans, char_spans = compute_spans(chunk_mapper.token_bounds, word_int_bounds)
     chunk_mapper.token_spans = token_spans
@@ -461,59 +470,20 @@ def render_elementary_tensor_table(
     #     print(texts[itext][a:b], chunk_mapper.flattened_chunks[ichunk][_a:_b])
     #     assert texts[itext][a:b] == chunk_mapper.flattened_chunks[ichunk][_a:_b]
 
-# deprecate ?
-def batched_texts_to_vrep(
-    batched_texts: list[list[str]],
-    tokenizer,
-    model,
-    word_spans: list[list[tuple[int, int]]],
-    layers_spec,
-):
-    chunk_mapper: ChunkMapper = process_text(
-        batched_texts,
-        tokenizer,
-        model,
-    )
-
-    ll_tt_stacked, mapping_table = render_elementary_tensor_table(
-        chunk_mapper, word_spans, layers_spec
-    )
-    return ll_tt_stacked, mapping_table
-
 
 def texts_to_vrep_preparatory(
-    texts: list[str],
-    tokenizer,
-    model,
-    layers_spec,
+    batched_texts: list[list[str]],
     word_mode: WordGrouping,
-    max_length=MAX_LENGTH,
     nlp=None,
-) -> tuple[ChunkMapper, list[list[tuple[int, int]]], list[int], list[str]]:
+) -> list[list[tuple[int, int]]]:
     """
         take a list of texts and provide embeddings based on `word_mode`
 
-    :param texts: list of strings
-    :param tokenizer: hf tokenizer
-    :param model: hf emb model
-    :param layers_spec:
+    :param batched_texts: list of strings
     :param word_mode: mode to render word boundaries: VERBAL or WORD moving window or SENTENCE
-    :param max_length:
     :param nlp:
     :return:
     """
-
-    word_bounds_kinds: list[list[list[tuple[int, int]]]] = []
-
-    batched_texts: list[list[str]] = [
-        split_text_into_batches(s, max_length=max_length) for s in texts
-    ]
-
-    chunk_mapper: ChunkMapper = process_text(
-        batched_texts,
-        tokenizer,
-        model,
-    )
 
     if word_mode in {WordGrouping.VERBAL_STRICT, WordGrouping.VERBAL}:
         if nlp is None:
@@ -525,29 +495,23 @@ def texts_to_vrep_preparatory(
             for batch in batched_texts
             for s in batch
         ]
-        word_bounds_kinds += [word_bnds]
     else:
-        word_bnds: list[list[tuple[int, int]]] = [
-            get_word_boundaries(s) for batch in batched_texts for s in batch
-        ]
+        word_bnds = [get_word_boundaries(s) for batch in batched_texts for s in batch]
         if word_mode == WordGrouping.SENTENCE:
             word_bnds = [[(bnds[0][0], bnds[-1][-1])] for bnds in word_bnds]
-            word_bounds_kinds += [word_bnds]
         elif word_mode.isnumeric():
-            windows = [int(x) for x in word_mode]
-            for w in windows:
-                word_bnds: list[list[tuple[int, int]]] = [
-                    merge_wbs(word_boundaries=word_bnds_atom, window=w)
-                    for word_bnds_atom in word_bnds
-                ]
-                word_bounds_kinds += [word_bnds]
+            w = int(word_mode)
+            word_bnds = [
+                merge_wbs(word_boundaries=word_bnds_atom, window=w)
+                for word_bnds_atom in word_bnds
+            ]
         else:
             raise ValueError(f"Unknown type of WordGrouping {word_mode}")
-    return chunk_mapper, word_bounds_kinds, layers_spec, texts
+    return word_bnds
 
 
 def final_mapping(
-    chunk_mapper, word_bnds, layers_spec, texts
+    chunk_mapper: ChunkMapper, word_bnds, layers_spec, texts: list[str]
 ) -> tuple[dict, torch.tensor]:
     ll_tt_stacked, mapping_table = render_elementary_tensor_table(
         chunk_mapper, word_bnds, layers_spec
@@ -573,35 +537,56 @@ def texts_to_vrep(
     tokenizer,
     model,
     layers_spec,
-    word_mode: WordGrouping,
+    word_modes: list[WordGrouping],
     max_length=MAX_LENGTH,
-    nlp=None
+    nlp=None,
 ):
-    chunk_mapper, word_bnds_kinds, layers_spec, texts = texts_to_vrep_preparatory(
-        texts,
+    batched_texts: list[list[str]] = [
+        split_text_into_batches(s, max_length=max_length) for s in texts
+    ]
+
+    chunk_mapper: ChunkMapper = process_text(
+        batched_texts,
         tokenizer,
         model,
-        layers_spec,
-        word_mode,
-        max_length=max_length,
-        nlp=nlp,
     )
 
-    reports, tts = [], []
-    for word_bnds in word_bnds_kinds:
-        report, ll_tt_stacked = final_mapping(
-            chunk_mapper, word_bnds, layers_spec, texts
+    normalized_text = ["".join(chunk) for chunk in batched_texts]
+
+    report0: dict[WordGrouping, list[list[tuple[dict, torch.tensor]]]] = {}
+    for word_mode in word_modes:
+        word_bnds = texts_to_vrep_preparatory(
+            batched_texts=batched_texts,
+            word_mode=word_mode,
+            nlp=nlp,
         )
-        reports += report
-        tts += [ll_tt_stacked]
 
-    f_tt_stacked = torch.concat(tts)
-    return {"entities": reports, "tensor": f_tt_stacked, "normalized_text": texts}
+        report, ll_tt_stacked = final_mapping(
+            chunk_mapper, word_bnds, layers_spec, normalized_text
+        )
+
+        itemized: dict[int, list[tuple[dict, torch.tensor]]] = {}
+
+        for item, tt in zip(report, ll_tt_stacked):
+            itext = int(item["itext"])
+            if itext in itemized:
+                itemized[itext] += [(item, tt)]
+            else:
+                itemized[itext] = [(item, tt)]
+
+        report0[word_mode] = [itemized[k] for k in sorted(itemized)]
+
+    return {"normalized_text": texts, "word_groupings": report0}
 
 
-def report2kb(report):
-    vocabulary = report["entities"]
-    tt_basis = report["tensor"]
+def report2kb(report, wg):
+    wg_current = report["word_groupings"][wg]
+    tt_list = []
+    vocabulary = []
+    for sentence in wg_current:
+        tt_list += [t for _, t in sentence]
+        vocabulary += [item["mention"] for item, _ in sentence]
+    tt_basis = torch.concat(tt_list)
     index = faiss.IndexFlatIP(tt_basis.shape[1])
     index.add(tt_basis)
     return vocabulary, index

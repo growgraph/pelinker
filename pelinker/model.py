@@ -1,6 +1,7 @@
 import faiss
 from pelinker.util import texts_to_vrep
 from pelinker.onto import WordGrouping
+import torch
 import joblib
 
 
@@ -78,18 +79,24 @@ class LinkerModel:
             tokenizer,
             model,
             layers_spec=self.ls,
-            word_mode=WordGrouping.VERBAL,
+            word_modes=[WordGrouping.VERBAL],
             nlp=nlp,
             max_length=max_length,
         )
 
-        tt = report.pop("tensor")
+        wg_current = report["word_groupings"][WordGrouping.VERBAL]
+
+        tt_list = []
+        vocabulary = []
+        for sentence in wg_current:
+            tt_list += [t for _, t in sentence]
+            vocabulary += [item for item, _ in sentence]
+        tt = torch.concat(tt_list)
+
         distance_matrix, nearest_neighbors_matrix = self.index.search(tt, self.nb_nn)
 
         kb_items = []
-        for item, nn, d in zip(
-            report["entities"], nearest_neighbors_matrix, distance_matrix
-        ):
+        for item, nn, d in zip(vocabulary, nearest_neighbors_matrix, distance_matrix):
             item = self.complement_with_kb_data(item, nn, d, topk=topk)
             kb_items += [item]
 

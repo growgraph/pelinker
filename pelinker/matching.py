@@ -14,7 +14,7 @@ def match_pattern(pattern, text, suffix_length=1, buffer_length=10):
     """
     pattern_words = pattern.split()
     pattern_words_limit = [
-        rf"\b{re.escape(word[:-suffix_length] if len(word) > 5 else word)}\w*"
+        rf"\b{re.escape(word[:-suffix_length] if len(word) > 5 and suffix_length is not None and suffix_length > 0 else word)}\w*"
         for word in pattern_words
     ]
     buffer = rf"\s+[\w\s-]{{0,{buffer_length - 1}}}"

@@ -74,10 +74,10 @@ def run(text_path, model_type, superposition, extra_context, layers_spec):
         tokenizer,
         model,
         layers_spec=layers,
-        word_mode=WordGrouping.SENTENCE,
+        word_modes=[WordGrouping.SENTENCE],
         nlp=nlp,
     )
-    vocabulary, index = report2kb(report)
+    vocabulary, index = report2kb(report, wg=WordGrouping.SENTENCE)
 
     nb_nn = min([10, report["tensor"].shape[0]])
     lm = LinkerModel(

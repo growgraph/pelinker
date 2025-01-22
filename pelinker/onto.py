@@ -8,9 +8,9 @@ class WordGrouping(str, enum.Enum):
     VERBAL_STRICT = "verbal_strict"
     VERBAL = "verbal"
     W1 = "1"
-    W12 = "12"
-    W123 = "123"
-    W1234 = "1234"
+    W2 = "2"
+    W3 = "3"
+    W4 = "4"
     SENTENCE = "sentence"
 
 
