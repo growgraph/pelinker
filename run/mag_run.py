@@ -16,7 +16,7 @@ tokenizer = AutoTokenizer.from_pretrained("NeuML/pubmedbert-base-embeddings")
 
 nlp = spacy.load("en_core_web_sm")
 
-df = pd.read_csv("../data/mag/sample.tsv", sep='\t', header=None)
+df = pd.read_csv("data/test/sample.tsv", sep='\t', header=None)
 
 props = ['activates', 'enhances', 'upregulates', 'suppress']
 texts = df[1]
