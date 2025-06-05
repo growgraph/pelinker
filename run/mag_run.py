@@ -1,5 +1,6 @@
 import spacy
 import torch
+import pickle
 import numpy as np
 import pandas as pd
 import tqdm
@@ -33,8 +34,23 @@ with open(props_path, "r") as f:
     all_props = f.read().split("\n")
 
 
+def run_on_selected_texts():
+    
+    res = {}
+    save_path = "data/jamshid/bio_2M_res.pkl"
+    for i,chunk in tqdm.tqdm(enumerate(df), leave=True, position=0):
 
-def extract_and_embed_mentions(props, texts):
+        chunk_texts = list(chunk[1])
+        extract_and_embed_mentions(all_props, chunk_texts, res)
+        with open("data/jamshid/log", 'w') as f:
+            f.write(str(i))
+
+        if not(i%20):
+            with open(save_path, 'wb') as f:
+                pickle.dump(res, f)
+
+
+def extract_and_embed_mentions(props, texts, embeds_dict={}):
 
     indexes_of_interest_per_pat = []
     for p in props:
@@ -103,6 +119,16 @@ def extract_and_embed_mentions(props, texts):
         pbar.set_description(f"entities added : {len(frep)}")
 
     uprops = np.unique([x[2] for x in frep])
-    tt_pats = {p:torch.stack([x[4] for x in frep if x[2] == p]) for p in uprops}
 
-    return tt_pats
+    for p in uprops:
+        new_embeds = torch.stack([x[4] for x in frep if x[2] == p])
+        if p in embeds_dict:
+            embeds_dict[p] = torch.concat((embeds_dict[p], new_embeds), axis=0)
+        else:
+            embeds_dict[p] = new_embeds
+
+    return embeds_dict
+
+
+
+
