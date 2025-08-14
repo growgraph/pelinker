@@ -86,15 +86,18 @@ def extract_and_embed_mentions(props, texts, pmids, embeds_df=[]):
             tokenizer,
             M,
             [1, 2],
-            word_modes=[WordGrouping.W1],
+            word_modes=[WordGrouping.W1, WordGrouping.W2],
         )
+        
         # next line assumes that "texts_to_vrep" function returns exactly the same input text as 
         # the "normalized_text" of the output dictionary, hence using their PMIDs as is
         batch_pmids = data_pmids_batched[i]
 
+
+        normalized_texts = report["normalized_text"]
+        word_groupings = report["word_groupings"]
+
         for p in props:
-            normalized_texts = report["normalized_text"]
-            word_groupings = report["word_groupings"]
 
             for w, r_item in word_groupings.items():
                 for jsent, (text, report_sent) in enumerate(zip(normalized_texts, r_item)):
