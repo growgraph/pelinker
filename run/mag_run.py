@@ -74,7 +74,7 @@ def extract_and_embed_mentions(props, texts, pmids, embeds_df=[]):
             tokenizer,
             M,
             [1, 2],
-            word_modes=[WordGrouping.W1, WordGrouping.W2],
+            word_modes=[WordGrouping.W1, WordGrouping.W2, WordGrouping.W3],
         )
 
         # next line assumes that "texts_to_vrep" function returns exactly the same input texte
@@ -86,8 +86,15 @@ def extract_and_embed_mentions(props, texts, pmids, embeds_df=[]):
         word_groupings = report["word_groupings"]
 
         for p in props:
-
             for w, r_item in word_groupings.items():
+
+                # ad-hoc solution for not having repetitive embeddings
+                # for multi-part properties
+                if len(p.split())==2 and w!=WordGrouping.W2:
+                    continue
+                elif len(p.split())==3 and w!=WordGrouping.W3:
+                    continue
+
                 for jsent, (text, report_sent) in enumerate(
                     zip(normalized_texts, r_item)
                 ):
