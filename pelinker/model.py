@@ -79,12 +79,12 @@ class LinkerModel:
             tokenizer,
             model,
             layers_spec=self.ls,
-            word_modes=[WordGrouping.VERBAL],
+            word_modes=[WordGrouping.W1],
             nlp=nlp,
             max_length=max_length,
         )
 
-        wg_current = report["word_groupings"][WordGrouping.VERBAL]
+        wg_current = report["word_groupings"][WordGrouping.W1]
 
         tt_list = []
         vocabulary = []

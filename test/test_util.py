@@ -1,69 +1,43 @@
-import pytest
 import torch
 
+from pelinker.onto import Expression
 from pelinker.util import (
     get_word_boundaries,
     map_spans_to_spans_basic,
     get_vb_spans,
+    text_to_tokens,
     map_spans_to_spans,
     split_text_into_batches,
+    token_list_with_window,
+    SimplifiedToken,
 )
 
 
-@pytest.fixture
-def sentence():
-    return "TAMs can also secrete in the TME a number of immunosuppressive cytokines, such as IL-6, TGF-β, and IL-10 that are able to suppress CD8+ T-cell function."
-
-
-@pytest.fixture
-def token_bounds() -> list[tuple[int, int]]:
-    bnds = [
-        [0, 4],
-        [5, 8],
-        [9, 13],
-        [14, 21],
-        [22, 24],
-        [25, 28],
-        [29, 32],
-        [33, 34],
-        [35, 41],
-        [42, 44],
-        [45, 62],
-        [63, 72],
-        [72, 73],
-        [74, 78],
-        [79, 81],
-        [82, 84],
-        [84, 85],
-        [85, 86],
-        [86, 87],
-        [88, 91],
-        [91, 92],
-        [92, 93],
-        [93, 94],
-        [95, 98],
-        [99, 101],
-        [101, 102],
-        [102, 104],
-        [105, 109],
-        [110, 113],
-        [114, 118],
-        [119, 121],
-        [122, 130],
-        [131, 134],
-        [134, 135],
-        [136, 137],
-        [137, 138],
-        [138, 142],
-        [143, 151],
-        [151, 152],
-    ]
-    return [tuple(item) for item in bnds]
-
-
-def test_vb_span(nlp, phrase_vb_0, phrase_vb_1):
+def test_vb_span(nlp, phrase_vb_0):
     spans0 = get_vb_spans(nlp, text=phrase_vb_0, extra_context=True)
     assert len(spans0) == 2
+
+
+def test_text_info(nlp, phrase_vb_0):
+    tokens = text_to_tokens(nlp, text=phrase_vb_0)
+    assert isinstance(tokens[0], SimplifiedToken)
+    assert tokens[1].lemma == "can"
+
+
+def test_expression(nlp, phrase_vb_0):
+    tokens = text_to_tokens(nlp, text=phrase_vb_0)
+    e = Expression(tokens=tokens[:3])
+    assert e.b == tokens[2].ix_end
+
+
+def test_window_expressions(nlp, phrase_vb_0):
+    tokens = text_to_tokens(nlp, text=phrase_vb_0)
+    window1 = token_list_with_window(tokens, 1)
+    window2 = token_list_with_window(tokens, 2)
+    window3 = token_list_with_window(tokens, 3)
+    assert len(window1) == len(tokens)
+    assert len(window2) == len(tokens) - 1
+    assert len(window3[0].tokens) == 3
 
 
 def test_sentence_ix(nlp, sentence, token_bounds):

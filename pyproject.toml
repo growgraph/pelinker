@@ -12,6 +12,7 @@ readme = "README.md"
 version = "0.1.3"
 
 [tool.poetry.dependencies]
+dataclass-wizard = "^0.35.1"
 faiss-cpu = "1.8.0"
 flask = "^3.0.3"
 flask-compress = "^1.15"

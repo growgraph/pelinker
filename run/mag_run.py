@@ -81,18 +81,16 @@ def extract_and_embed_mentions(props, texts, pmids, embeds_df=[]):
         # the "normalized_text" of the output dictionary, hence using their PMIDs as is
         batch_pmids = data_pmids_batched[i]
 
-
         normalized_texts = report["normalized_text"]
         word_groupings = report["word_groupings"]
 
         for p in props:
             for w, r_item in word_groupings.items():
-
                 # ad-hoc solution for not having repetitive embeddings
                 # for multi-part properties
-                if len(p.split())==2 and w!=WordGrouping.W2:
+                if len(p.split()) == 2 and w != WordGrouping.W2:
                     continue
-                elif len(p.split())==3 and w!=WordGrouping.W3:
+                elif len(p.split()) == 3 and w != WordGrouping.W3:
                     continue
 
                 for jsent, (text, report_sent) in enumerate(

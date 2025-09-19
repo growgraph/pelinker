@@ -1,6 +1,8 @@
 # pylint: disable=E1120
 
 import re
+
+from spacy import Language
 from string import punctuation, whitespace
 from transformers import AutoModel, AutoTokenizer
 from sentence_transformers import SentenceTransformer
@@ -8,10 +10,21 @@ import faiss
 import torch
 import pandas as pd
 from sklearn.metrics import accuracy_score
-
 from functools import reduce
+import logging
 
-from pelinker.onto import MAX_LENGTH, ChunkMapper, WordGrouping
+from pelinker.onto import (
+    MAX_LENGTH,
+    ChunkMapper,
+    WordGrouping,
+    SimplifiedToken,
+    Expression,
+    ExpressionBatch,
+    ExpressionContainer,
+)
+from collections import defaultdict
+
+logger = logging.getLogger(__name__)
 
 
 def load_models(model_type, sentence=False):
@@ -85,7 +98,7 @@ def map_spans_to_spans_basic(
         given two lists of word bounds and token bounds (in character indexes)
         [ it is implied that the two lists are sorted ]
         the list of token boundaries is meant to cover the text (to be complete),
-        on the other hand word boundaries might be no `continuous`
+        on the other hand word boundaries might be not `continuous`
 
         find the correspondence: (wa, wb) -> [index of token]
 
@@ -160,6 +173,23 @@ def get_vb_spans(nlp, text, extra_context=False) -> list[tuple[int, int]]:
     token_groups = aggregate_token_groups(nlp, text, extra_context)
     spans = transform_tokens2spans(token_groups)
     return spans
+
+
+def text_to_tokens(nlp, text) -> list[SimplifiedToken]:
+    stokens = [
+        SimplifiedToken(
+            **{
+                "lemma": token.lemma_,
+                "text": token.text,
+                "tag": token.tag_,
+                "ix": token.idx,
+                "ix_end": token.idx + len(token),
+            }
+        )
+        for token in nlp(text)
+    ]
+
+    return stokens
 
 
 def transform_tokens2spans(token_groups) -> list[tuple[int, int]]:
@@ -245,6 +275,8 @@ def map_spans_to_spans(
 
     # sanitize token offsets
     map_ix_jx = {k: v for k, v in map_ix_jx.items() if v}
+    # if len(map_ix_jx) != len(map_ix_jx_):
+    #     logger.info(f"{map_ix_jx_} {map_ix_jx}")
     char_spans = [x for x in map_ix_jx.keys()]
     itoken_spans = [(y[0], y[-1] + 1) for y in map_ix_jx.values()]
     return char_spans, itoken_spans
@@ -274,7 +306,7 @@ def tt_aggregate_normalize(tt: torch.Tensor, ls):
 
 def tt_normalize(
     tt: torch.Tensor, ls, ix_tokens: list[list[tuple[int, int]]]
-) -> list[list[torch.tensor]]:
+) -> list[list[torch.Tensor]]:
     """
 
     :param tt: n_layers x n_chunks x n_tokens x emb_dim
@@ -447,7 +479,7 @@ def render_tensor_per_group(chunk_mapper: ChunkMapper, layers, token_spans):
 
 def render_elementary_tensor_table(
     chunk_mapper: ChunkMapper, word_int_bounds: list[list[tuple[int, int]]], layers
-):
+) -> tuple[torch.Tensor, list[tuple]]:
     token_spans, char_spans = compute_spans(chunk_mapper.token_bounds, word_int_bounds)
     chunk_mapper.token_spans = token_spans
     chunk_mapper.char_spans = char_spans
@@ -471,48 +503,18 @@ def render_elementary_tensor_table(
     #     assert texts[itext][a:b] == chunk_mapper.flattened_chunks[ichunk][_a:_b]
 
 
-def texts_to_vrep_preparatory(
-    batched_texts: list[list[str]],
-    word_mode: WordGrouping,
-    nlp=None,
-) -> list[list[tuple[int, int]]]:
+def derive_bounds_to_tensors(
+    chunk_mapper: ChunkMapper, word_bnds, layers_spec, texts: list[str]
+) -> tuple[list, torch.Tensor]:
     """
-        take a list of texts and provide embeddings based on `word_mode`
 
-    :param batched_texts: list of strings
-    :param word_mode: mode to render word boundaries: VERBAL or WORD moving window or SENTENCE
-    :param nlp:
+    :param chunk_mapper:
+    :param word_bnds:
+    :param layers_spec:
+    :param texts:
     :return:
     """
 
-    if word_mode in {WordGrouping.VERBAL_STRICT, WordGrouping.VERBAL}:
-        if nlp is None:
-            raise TypeError(f" nlp should be provided for WordGrouping {word_mode}")
-        word_bnds: list[list[tuple[int, int]]] = [
-            get_vb_spans(
-                nlp=nlp, text=s, extra_context=word_mode == WordGrouping.VERBAL
-            )
-            for batch in batched_texts
-            for s in batch
-        ]
-    else:
-        word_bnds = [get_word_boundaries(s) for batch in batched_texts for s in batch]
-        if word_mode == WordGrouping.SENTENCE:
-            word_bnds = [[(bnds[0][0], bnds[-1][-1])] for bnds in word_bnds]
-        elif word_mode.isnumeric():
-            w = int(word_mode)
-            word_bnds = [
-                merge_wbs(word_boundaries=word_bnds_atom, window=w)
-                for word_bnds_atom in word_bnds
-            ]
-        else:
-            raise ValueError(f"Unknown type of WordGrouping {word_mode}")
-    return word_bnds
-
-
-def final_mapping(
-    chunk_mapper: ChunkMapper, word_bnds, layers_spec, texts: list[str]
-) -> tuple[dict, torch.tensor]:
     ll_tt_stacked, mapping_table = render_elementary_tensor_table(
         chunk_mapper, word_bnds, layers_spec
     )
@@ -530,6 +532,82 @@ def final_mapping(
         ]
 
     return report, ll_tt_stacked
+
+
+def texts_to_stokens(
+    batched_texts: list[list[str]], nlp: Language
+) -> list[list[SimplifiedToken]]:
+    """
+        take a list of texts and provide embeddings based on `word_mode`
+
+    :param batched_texts: list of strings
+    :param nlp:
+    :return:
+    """
+    batched_stokens: list[list[SimplifiedToken]] = [
+        text_to_tokens(
+            nlp=nlp,
+            text=s,
+        )
+        for batch in batched_texts
+        for s in batch
+    ]
+
+    return batched_stokens
+
+
+def align_expressions_to_mapping(
+    expression_llist: list[list[Expression]], mapping_table: list[tuple]
+):
+    expression_list = [
+        Expression.from_dict({**x.to_dict(), **{"ibatch": ibatch}})
+        for ibatch, sl in enumerate(expression_llist)
+        for x in sl
+    ]
+    expression_list_filtered = []
+
+    ix = 0
+    gap = 0
+    while ix < len(mapping_table):
+        e = expression_list[ix + gap]
+        m = mapping_table[ix]
+        isent, ibatch, bnds, abs_bnds = m
+
+        if e.ibatch == ibatch and e.a == bnds[0] and e.b == bnds[1]:
+            e.itext = isent
+            expression_list_filtered.append(e)
+            ix += 1
+        else:
+            gap += 1
+
+    if len(expression_list_filtered) != len(mapping_table):
+        raise ValueError(
+            "expression_list_filtered should contain all entries from mapping_table"
+        )
+
+    return expression_list_filtered
+
+
+def build_expression_container(
+    expressions: list[Expression], tt
+) -> ExpressionContainer:
+    grouped = defaultdict(list)
+
+    for idx, expr in enumerate(expressions):
+        grouped[(expr.ibatch, expr.itext)].append((idx, expr))
+
+    batches = []
+    for _, items in grouped.items():
+        exprs = [e for _, e in items]
+
+        start_idx = items[0][0]
+        end_idx = items[-1][0] + 1
+
+        idx_tensor = tt[start_idx:end_idx, ...]
+
+        batches.append(ExpressionBatch(tt=idx_tensor, expressions=exprs))
+
+    return ExpressionContainer(batches=batches)
 
 
 def texts_to_vrep(
@@ -553,28 +631,39 @@ def texts_to_vrep(
 
     normalized_text = ["".join(chunk) for chunk in batched_texts]
 
-    report0: dict[WordGrouping, list[list[tuple[dict, torch.tensor]]]] = {}
-    for word_mode in word_modes:
-        word_bnds = texts_to_vrep_preparatory(
-            batched_texts=batched_texts,
-            word_mode=word_mode,
-            nlp=nlp,
-        )
+    report0: dict[WordGrouping, list[list[tuple[dict, torch.Tensor]]]] = {}
 
-        report, ll_tt_stacked = final_mapping(
+    batched_stokens: list[list[SimplifiedToken]] = [
+        text_to_tokens(
+            nlp=nlp,
+            text=s,
+        )
+        for batch in batched_texts
+        for s in batch
+    ]
+
+    for window in word_modes:
+        expression_llist = [
+            token_list_with_window(tokens, window)
+            for ix, tokens in enumerate(batched_stokens)
+        ]
+        word_bnds = [[(e.a, e.b) for e in batch] for batch in expression_llist]
+
+        ll_tt_stacked, mapping_table = render_elementary_tensor_table(
+            chunk_mapper, word_bnds, layers_spec
+        )
+        print(ll_tt_stacked.shape)
+
+        report, ll_tt_stacked = derive_bounds_to_tensors(
             chunk_mapper, word_bnds, layers_spec, normalized_text
         )
 
-        itemized: dict[int, list[tuple[dict, torch.tensor]]] = {}
-
-        for item, tt in zip(report, ll_tt_stacked):
-            itext = int(item["itext"])
-            if itext in itemized:
-                itemized[itext] += [(item, tt)]
-            else:
-                itemized[itext] = [(item, tt)]
-
-        report0[word_mode] = [itemized[k] for k in sorted(itemized)]
+        expressions = align_expressions_to_mapping(
+            expression_llist=expression_llist, mapping_table=mapping_table
+        )
+        report0[window]: ExpressionContainer = build_expression_container(
+            expressions=expressions, tt=ll_tt_stacked
+        )
 
     return {"normalized_text": texts, "word_groupings": report0}
 
@@ -597,3 +686,13 @@ def merge_wbs(word_boundaries, window) -> list[tuple[int, int]]:
         (wa, wb)
         for (wa, _), (_, wb) in zip(word_boundaries, word_boundaries[window - 1 :])
     ]
+
+
+def token_list_with_window(
+    tokens: list[SimplifiedToken], window: WordGrouping
+) -> list[Expression]:
+    agg = []
+    w = int(window.value)
+    for k in range(len(tokens) - w + 1):
+        agg.append(Expression(tokens=tokens[k : k + w]))
+    return agg

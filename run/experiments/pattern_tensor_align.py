@@ -7,6 +7,7 @@ from pelinker.onto import WordGrouping
 from pelinker.util import texts_to_vrep
 from pelinker.matching import match_pattern
 import pathlib
+import spacy
 import torch
 from pelinker.util import load_models
 from pelinker.model import LinkerModel
@@ -46,6 +47,8 @@ from pelinker.util import map_spans_to_spans
     required=True,
 )
 def run(model_type, input_path, layers_spec, pattern, plot_path):
+    nlp = spacy.load("en_core_web_trf")
+
     if not plot_path.exists():
         plot_path.mkdir(parents=True, exist_ok=True)
 
@@ -72,6 +75,7 @@ def run(model_type, input_path, layers_spec, pattern, plot_path):
 
     frep = []
     tt_averages = []
+
     for batch in (pbar := tqdm.tqdm(data_batched)):
         report = texts_to_vrep(
             batch,
@@ -79,18 +83,19 @@ def run(model_type, input_path, layers_spec, pattern, plot_path):
             model=model,
             layers_spec=layers,
             word_modes=[WordGrouping.W1],
+            nlp=nlp,
         )
 
         for p in pattern:
             normalized_texts = report["normalized_text"]
             word_groupings = report["word_groupings"]
-            for w, r_item in word_groupings.items():
+            for w, expression_container in word_groupings.items():
                 for jsent, (text, report_sent) in enumerate(
-                    zip(normalized_texts, r_item)
+                    zip(normalized_texts, expression_container.batches)
                 ):
-                    if p == pattern[0] and w == sorted(word_groupings)[0]:
-                        tt0 = [t for _, t in report_sent]
-                        tt_averages += tt0
+                    # if p == pattern[0] and w == sorted(word_groupings)[0]:
+                    #     tt0 = [t for _, t in report_sent]
+                    #     tt_averages += tt0
 
                     indexes_of_interest_batched = match_pattern(
                         p, text, suffix_length=0
