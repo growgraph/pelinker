@@ -6,7 +6,7 @@ from pelinker.util import (
     map_spans_to_spans_basic,
     get_vb_spans,
     text_to_tokens,
-    map_spans_to_spans,
+    map_words_to_tokens,
     split_text_into_batches,
     token_list_with_window,
     SimplifiedToken,
@@ -42,7 +42,7 @@ def test_window_expressions(nlp, phrase_vb_0):
 
 def test_sentence_ix(nlp, sentence, token_bounds):
     word_bnds = get_word_boundaries(sentence)
-    char_spans, token_spans = map_spans_to_spans(token_bounds, word_bnds)
+    char_spans, token_spans = map_words_to_tokens(token_bounds, word_bnds)
     phrase = sentence[char_spans[3][0] : char_spans[3][1]]
     assert phrase == "secrete"
 
@@ -50,8 +50,8 @@ def test_sentence_ix(nlp, sentence, token_bounds):
 def test_sentence_ix2(nlp, sentence, token_bounds):
     word_bnds = get_word_boundaries(sentence)
     ioi = 3
-    char_spans_, token_spans_ = map_spans_to_spans(token_bounds, [word_bnds[ioi]])
-    char_spans, token_spans = map_spans_to_spans(token_bounds, word_bnds)
+    char_spans_, token_spans_ = map_words_to_tokens(token_bounds, [word_bnds[ioi]])
+    char_spans, token_spans = map_words_to_tokens(token_bounds, word_bnds)
     assert token_spans_[0] == token_spans[ioi]
 
 

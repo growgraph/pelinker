@@ -1,19 +1,21 @@
-# Developer notes
+# PELinker
 
-1. Make sure you have the version of python specified in `pyproject.toml`.
-   1. For example, using [pyenv](https://github.com/pyenv/pyenv?tab=readme-ov-file#automatic-installer) install `pyenv install 3.10.14`
-   2. Then select local python version `pyenv local 3.10.14`
-   3. Check using `which python` or `python --version`
+A service for entity linking of properties
 
-2. Setting up poetry env 
-   1. Install [poetry](https://python-poetry.org/docs/#installing-with-the-official-installer)
-   2. Optionally set the virtual envs to be local `poetry config virtualenvs.in-project true`
-   3. Inside project folder : `poetry env use 3.10.14`
-   4. Install env with development dependencies: `poetry install --with dev`
-   5. Add a spacy language model `python -m spacy download en_core_web_trf`
-3. In the project folder before committing
-   1. To lint run `pre-commit run --all-files`
-   2. To run tests run `pytest test`
+## Developer notes
+
+1. Make sure there is an available version of python specified in `pyproject.toml`, for example installed using pyenv.
+2. Install `uv` : `curl -LsSf https://astral.sh/uv/install.sh | sh`
+3. Run `uv sync --all-groups` to create a local environment with project dependencies specified in `uv.lock`
+4. Add a spacy language model `uv run python -m spacy download en_core_web_trf`
+5. Set up `pre-commit` hooks:  `uv run pre-commit install`.
+6. To run `pre-commit` independently from `git commit`, run `uv run pre-commit run --all-files`
+7. To run tests run `pytest test`
+
+
+NB.
+1. To run python scripts prefix the command with `uv run`, e.g. `uv run python script.py`
+2. To git commit also `uv run` prefix, e.g. `uv run git commit -m "first commit"` to make sure `pre-commit` hooks are used from the correct python environement. 
 
 
 ## Data Preparation

@@ -6,7 +6,7 @@ import tqdm
 from pelinker.matching import match_pattern
 from pelinker.util import texts_to_vrep
 from pelinker.onto import WordGrouping
-from pelinker.util import map_spans_to_spans
+from pelinker.util import map_words_to_tokens
 
 from transformers import AutoTokenizer, AutoModel
 
@@ -109,7 +109,7 @@ def extract_and_embed_mentions(props, texts, pmids, embeds_df=[]):
 
                     report_sent = sorted(report_sent, key=lambda x: x[0]["a"])
 
-                    _, map_ij = map_spans_to_spans(
+                    _, map_ij = map_words_to_tokens(
                         [(x["a"], x["b"]) for x, _ in report_sent],
                         indexes_of_interest_batched,
                     )

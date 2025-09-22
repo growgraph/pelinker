@@ -11,7 +11,7 @@ import spacy
 import torch
 from pelinker.util import load_models
 from pelinker.model import LinkerModel
-from pelinker.util import map_spans_to_spans
+from pelinker.util import map_words_to_tokens
 
 
 @click.command()
@@ -91,7 +91,7 @@ def run(model_type, input_path, layers_spec, pattern, plot_path):
             word_groupings = report["word_groupings"]
             for w, expression_container in word_groupings.items():
                 for jsent, (text, report_sent) in enumerate(
-                    zip(normalized_texts, expression_container.batches)
+                    zip(normalized_texts, expression_container.texts)
                 ):
                     # if p == pattern[0] and w == sorted(word_groupings)[0]:
                     #     tt0 = [t for _, t in report_sent]
@@ -104,7 +104,7 @@ def run(model_type, input_path, layers_spec, pattern, plot_path):
                         continue
                     report_sent = sorted(report_sent, key=lambda x: x[0]["a"])
 
-                    _, map_ij = map_spans_to_spans(
+                    _, map_ij = map_words_to_tokens(
                         [(x["a"], x["b"]) for x, _ in report_sent],
                         indexes_of_interest_batched,
                     )

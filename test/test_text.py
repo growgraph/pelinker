@@ -10,4 +10,4 @@ def test_pro_text(batched_texts, tokenizer_model_pubmedbert, nlp):
     t_tokenizer, t_model = tokenizer_model_pubmedbert
     chunk_mapper = process_text(batched_texts, t_tokenizer, t_model)
 
-    assert len(chunk_mapper.flattened_chunks) == 47
+    assert len(chunk_mapper.chunks) == 47
