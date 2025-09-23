@@ -9,9 +9,8 @@ from pelinker.matching import match_pattern
 import pathlib
 import spacy
 import torch
-from pelinker.util import load_models
+from pelinker.util import load_models, text_to_tokens
 from pelinker.model import LinkerModel
-from pelinker.util import map_words_to_tokens
 
 
 @click.command()
@@ -57,15 +56,17 @@ def run(model_type, input_path, layers_spec, pattern, plot_path):
 
     df = pd.read_csv(input_path, index_col=0)
     texts = df["abstract"]
-    indexes_of_interest_per_pat = []
+    indexes_of_interest_batch = []
     for p in pattern:
-        indexes_of_interest_per_pat += [
+        indexes_of_interest_batch += [
             [match_pattern(p, x, suffix_length=0) for x in texts]
         ]
 
+    pattern_expressions = {p: text_to_tokens(nlp=nlp, text=p) for p in pattern}
+
     flags = [
         any(True if ixs_ else False for ixs_ in item)
-        for item in zip(*indexes_of_interest_per_pat)
+        for item in zip(*indexes_of_interest_batch)
     ]
     data = [t for flag, t in zip(flags, texts) if flag]
 
@@ -76,9 +77,9 @@ def run(model_type, input_path, layers_spec, pattern, plot_path):
     frep = []
     tt_averages = []
 
-    for batch in (pbar := tqdm.tqdm(data_batched)):
-        report = texts_to_vrep(
-            batch,
+    for ibatch, text_batch in enumerate((pbar := tqdm.tqdm(data_batched))):
+        report_batch = texts_to_vrep(
+            text_batch,
             tokenizer=tokenizer,
             model=model,
             layers_spec=layers,
@@ -86,53 +87,72 @@ def run(model_type, input_path, layers_spec, pattern, plot_path):
             nlp=nlp,
         )
 
+        indexes_of_interest_batch = {
+            p: [match_pattern(p, text, suffix_length=0) for text in text_batch]
+            for p in pattern
+        }
+        # offsets = [report_batch.chunk_mapper.ichunk_char_offset(k) for k, _ in enumerate(report_batch.texts)]
+
         for p in pattern:
-            normalized_texts = report["normalized_text"]
-            word_groupings = report["word_groupings"]
-            for w, expression_container in word_groupings.items():
-                for jsent, (text, report_sent) in enumerate(
-                    zip(normalized_texts, expression_container.texts)
+            # matches = indexes_of_interest_batch[p]
+            pe = pattern_expressions[p]
+            pe_lemmatized = " ".join([e.lemma for e in pe])
+            for w in report_batch.available_groupings():
+                expression_container = report_batch[w]
+                for itext, (text, expr_holder) in enumerate(
+                    zip(
+                        report_batch.texts,
+                        expression_container.expression_data,
+                    )
                 ):
-                    # if p == pattern[0] and w == sorted(word_groupings)[0]:
-                    #     tt0 = [t for _, t in report_sent]
-                    #     tt_averages += tt0
+                    # if not matches:
+                    #     continue
 
-                    indexes_of_interest_batched = match_pattern(
-                        p, text, suffix_length=0
-                    )
-                    if not indexes_of_interest_batched:
+                    tt_averages += [expression_container.expression_data[0].tt]
+
+                    expr_lemma_match = expr_holder.filter_on_lemmas(pe)
+
+                    if not expr_lemma_match:
                         continue
-                    report_sent = sorted(report_sent, key=lambda x: x[0]["a"])
-
-                    _, map_ij = map_words_to_tokens(
-                        [(x["a"], x["b"]) for x, _ in report_sent],
-                        indexes_of_interest_batched,
-                    )
-                    tts = [
-                        torch.stack([t for _, t in report_sent[ja:jb]]).mean(0)
-                        for ja, jb in map_ij
+                    offsets = [
+                        report_batch.chunk_mapper.map_chunk_to_text(e.itext, e.ichunk)
+                        for e, _ in expr_lemma_match
                     ]
 
-                    mentions = [
-                        " ".join([x["mention"] for x, _ in report_sent[ja:jb]])
-                        for (ja, jb) in map_ij
+                    frep += [
+                        (
+                            {
+                                "word_grouping": w,
+                                "idoc": ibatch * batch_size + itext,
+                                "pattern_lemmatized": pe_lemmatized,
+                                "mention": text[offset + e.a : offset + e.b],
+                                "mention_": " ".join([t.text for t in e.tokens]),
+                                "mention_lemmatized": pe_lemmatized,
+                                "tensor": tt,
+                            }
+                        )
+                        for (e, tt), offset in zip(expr_lemma_match, offsets)
                     ]
-                    frep += [(w, jsent, p, m, tt) for m, tt in zip(mentions, tts)]
+
         pbar.set_description(f"entities added : {len(frep)}")
 
-    tt_all = (torch.stack([x[4] for x in frep]), "all.patterns")
-    tt_pats = [(torch.stack([x[4] for x in frep if x[2] == p]), p) for p in pattern]
+    tt_all = (torch.stack([x["tensor"] for x in frep]), "all.patterns")
+    tt_pats = [
+        (torch.stack([x["tensor"] for x in frep if x["mention_lemmatized"] == p]), p)
+        for p in pattern
+    ]
 
-    tt_means = (torch.stack(tt_averages), "means")
+    tt_means = (torch.cat(tt_averages), "all")
     cos = CosineSimilarity(dim=1, eps=1e-6)
 
     tts_cmp = tt_pats + [tt_all, tt_means]
 
     vc_mentions_combination = (
         pd.DataFrame(
-            [item[:4] for item in frep], columns=["wg", "isent", "pat", "mention"]
+            [{k: v for k, v in item.items() if k != "tensor"} for item in frep],
+            # columns=["wg", "isent", "pat", "mention"]
         )
-        .apply(lambda x: ": ".join(x[["pat", "mention"]]), axis=1)
+        .apply(lambda x: ": ".join(x[["pattern_lemmatized", "mention_"]]), axis=1)
         .value_counts()
     )
 

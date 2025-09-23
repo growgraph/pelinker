@@ -61,6 +61,16 @@ class ChunkMapper(BaseDataclass):
                     (itext, ichunk, (a, b), (a + chunk_offset, b + chunk_offset))
                 ]
 
+    def map_chunk_to_text(self, itext, ichunk_local, a=0):
+        return a + self.cumulative_lens[itext][ichunk_local]
+
+    def ichunk_to_itext_ichunk_local(self, ichunk: int):
+        return self.it_ic[ichunk]
+
+    def ichunk_char_offset(self, ichunk: int):
+        itext, ichunk_local = self.ichunk_to_itext_ichunk_local(ichunk)
+        return self.cumulative_lens[itext][ichunk_local]
+
 
 @dataclasses.dataclass
 class SimplifiedToken(BaseDataclass):
@@ -74,7 +84,7 @@ class SimplifiedToken(BaseDataclass):
 @dataclasses.dataclass
 class Expression(BaseDataclass):
     tokens: list[SimplifiedToken]
-    idoc: int | None = None  # index of document
+    itext: int | None = None  # index of document
     ichunk: int | None = None  # index of document chunk
     a: int | None = None  # index of the first character
     b: int | None = None  # index of the last character
@@ -86,7 +96,7 @@ class Expression(BaseDataclass):
 
 
 @dataclasses.dataclass
-class ExpressionsGroup(BaseDataclass):
+class ExpressionHolder(BaseDataclass):
     tt: torch.Tensor
     expressions: list[Expression]
 
@@ -96,7 +106,45 @@ class ExpressionsGroup(BaseDataclass):
                 "The number of expressions does not match the shape of the tensor"
             )
 
+    def filter_on_lemmas(
+        self, tokens: list[SimplifiedToken]
+    ) -> list[tuple[Expression, torch.Tensor]]:
+        tokens_lemmatized = " ".join([e.lemma for e in tokens])
+        return [
+            (e, t)
+            for e, t in zip(self.expressions, self.tt)
+            if " ".join([t.lemma for t in e.tokens]) == tokens_lemmatized
+        ]
+
 
 @dataclasses.dataclass
-class ExpressionContainer(BaseDataclass):
-    texts: list[ExpressionsGroup]
+class ExpressionHolderBatch(BaseDataclass):
+    expression_data: list[ExpressionHolder]
+    word_grouping: WordGrouping | None = None
+
+
+@dataclasses.dataclass
+class ReportBatch(BaseDataclass):
+    _data: list[ExpressionHolderBatch]
+    texts: list[str]
+    chunk_mapper: ChunkMapper
+
+    def __post_init__(self):
+        for item in self._data:
+            if len(self.texts) != len(item.expression_data):
+                raise ValueError(
+                    "The number of ExpressionHolders does not match the number of texts"
+                )
+
+    def __getitem__(self, wg: WordGrouping) -> ExpressionHolderBatch:
+        filtered = [item for item in self._data if item.word_grouping == wg]
+        if filtered:
+            return filtered[0]
+        else:
+            raise ValueError(f"{wg} not available")
+
+    def get_data_for_grouping(self, wg: WordGrouping):
+        return [item for item in self._data if item.word_grouping == wg]
+
+    def available_groupings(self):
+        return [item.word_grouping for item in self._data]

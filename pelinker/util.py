@@ -18,8 +18,9 @@ from pelinker.onto import (
     WordGrouping,
     SimplifiedToken,
     Expression,
-    ExpressionsGroup,
-    ExpressionContainer,
+    ExpressionHolder,
+    ExpressionHolderBatch,
+    ReportBatch,
 )
 
 logger = logging.getLogger(__name__)
@@ -469,17 +470,17 @@ def render_elementary_tensor_table(
 
 
 def build_expression_container(
-    cm: ChunkMapper, expression_lists_per_chunk
-) -> ExpressionContainer:
+    cm: ChunkMapper, expression_lists_per_chunk, word_grouping: WordGrouping
+) -> ExpressionHolderBatch:
     texts = []
     for itext, ichunks in cm.text_chunk_map.items():
         expressions = reduce(
             lambda a, b: a + b, [expression_lists_per_chunk[i] for i in ichunks]
         )
         tt_merged = torch.cat([cm.tt_expressions[i] for i in ichunks])
-        texts.append(ExpressionsGroup(tt=tt_merged, expressions=expressions))
+        texts.append(ExpressionHolder(tt=tt_merged, expressions=expressions))
 
-    return ExpressionContainer(texts=texts)
+    return ExpressionHolderBatch(expression_data=texts, word_grouping=word_grouping)
 
 
 def texts_to_vrep(
@@ -490,7 +491,7 @@ def texts_to_vrep(
     word_modes: list[WordGrouping],
     max_length=MAX_LENGTH,
     nlp=None,
-):
+) -> ReportBatch:
     batched_texts: list[list[str]] = [
         split_text_into_batches(s, max_length=max_length) for s in texts
     ]
@@ -501,16 +502,25 @@ def texts_to_vrep(
         model,
     )
 
-    report0: dict[WordGrouping, ExpressionContainer] = {}
-
     stoken_per_chunk: list[list[SimplifiedToken]] = [
         text_to_tokens(nlp=nlp, text=chunk) for chunk in chunk_mapper.chunks
     ]
 
-    for window in word_modes:
+    # ichunk -> itext, ichunk local
+    ichunk_to_itext_ichunk_local_list = [
+        chunk_mapper.ichunk_to_itext_ichunk_local(k)
+        for k, _ in enumerate(stoken_per_chunk)
+    ]
+
+    data: list[ExpressionHolderBatch] = []
+    for word_grouping in word_modes:
         expression_lists_per_chunk: list[list[Expression]] = [
-            token_list_with_window(chunk_tokens, window)
-            for chunk_tokens in stoken_per_chunk
+            token_list_with_window(
+                chunk_tokens, word_grouping, ichunk=ichunk_local, itext=itext
+            )
+            for chunk_tokens, (itext, ichunk_local) in zip(
+                stoken_per_chunk, ichunk_to_itext_ichunk_local_list
+            )
         ]
 
         word_spans: list[list[tuple[int, int]]] = [
@@ -529,11 +539,15 @@ def texts_to_vrep(
                 [e for e in exprs if e.a in ix_start]
             )
 
-        report0[window]: ExpressionContainer = build_expression_container(
-            chunk_mapper, filtered_expression_lists_per_chunk
-        )
-
-    return {"normalized_text": texts, "word_groupings": report0}
+        data += [
+            build_expression_container(
+                chunk_mapper,
+                filtered_expression_lists_per_chunk,
+                word_grouping=word_grouping,
+            )
+        ]
+    return ReportBatch(chunk_mapper=chunk_mapper, texts=texts, _data=data)
+    # return {"normalized_text": texts, "word_groupings": report0, "chunk_mapper": chunk_mapper}
 
 
 def report2kb(report, wg):
@@ -557,12 +571,12 @@ def merge_wbs(word_boundaries, window) -> list[tuple[int, int]]:
 
 
 def token_list_with_window(
-    tokens: list[SimplifiedToken], window: WordGrouping, idoc=None, ibatch=None
+    tokens: list[SimplifiedToken], window: WordGrouping, itext=None, ichunk=None
 ) -> list[Expression]:
     agg = []
     w = int(window.value)
     for k in range(len(tokens) - w + 1):
-        agg.append(Expression(tokens=tokens[k : k + w], idoc=idoc, ichunk=ibatch))
+        agg.append(Expression(tokens=tokens[k : k + w], itext=itext, ichunk=ichunk))
     return agg
 
 
