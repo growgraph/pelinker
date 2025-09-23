@@ -11,6 +11,7 @@ import spacy
 import torch
 from pelinker.util import load_models, text_to_tokens
 from pelinker.model import LinkerModel
+from pelinker.util import SimplifiedToken
 
 
 @click.command()
@@ -62,7 +63,12 @@ def run(model_type, input_path, layers_spec, pattern, plot_path):
             [match_pattern(p, x, suffix_length=0) for x in texts]
         ]
 
-    pattern_expressions = {p: text_to_tokens(nlp=nlp, text=p) for p in pattern}
+    pattern_expressions: dict[str, list[SimplifiedToken]] = {
+        p: text_to_tokens(nlp=nlp, text=p) for p in pattern
+    }
+    pattern_lemmatized = [
+        " ".join([e.lemma for e in pe]) for pe in pattern_expressions.values()
+    ]
 
     flags = [
         any(True if ixs_ else False for ixs_ in item)
@@ -127,7 +133,9 @@ def run(model_type, input_path, layers_spec, pattern, plot_path):
                                 "pattern_lemmatized": pe_lemmatized,
                                 "mention": text[offset + e.a : offset + e.b],
                                 "mention_": " ".join([t.text for t in e.tokens]),
-                                "mention_lemmatized": pe_lemmatized,
+                                "mention_lemmatized": " ".join(
+                                    [t.lemma for t in e.tokens]
+                                ),
                                 "tensor": tt,
                             }
                         )
@@ -138,8 +146,8 @@ def run(model_type, input_path, layers_spec, pattern, plot_path):
 
     tt_all = (torch.stack([x["tensor"] for x in frep]), "all.patterns")
     tt_pats = [
-        (torch.stack([x["tensor"] for x in frep if x["mention_lemmatized"] == p]), p)
-        for p in pattern
+        (torch.stack([x["tensor"] for x in frep if x["pattern_lemmatized"] == p]), p)
+        for p in pattern_lemmatized
     ]
 
     tt_means = (torch.cat(tt_averages), "all")
@@ -150,7 +158,6 @@ def run(model_type, input_path, layers_spec, pattern, plot_path):
     vc_mentions_combination = (
         pd.DataFrame(
             [{k: v for k, v in item.items() if k != "tensor"} for item in frep],
-            # columns=["wg", "isent", "pat", "mention"]
         )
         .apply(lambda x: ": ".join(x[["pattern_lemmatized", "mention_"]]), axis=1)
         .value_counts()
@@ -161,7 +168,9 @@ def run(model_type, input_path, layers_spec, pattern, plot_path):
     cos_dist = []
     for t, label in tts_cmp:
         if label == "all.patterns":
-            df_labels = pd.DataFrame([x[2] for x in frep], columns=["label"])
+            df_labels = pd.DataFrame(
+                [x["pattern_lemmatized"] for x in frep], columns=["label"]
+            )
             vc_labels = (
                 df_labels.groupby("label")
                 .apply(lambda x: x.shape[0])
