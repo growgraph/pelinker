@@ -464,10 +464,6 @@ def render_elementary_tensor_table(
     ll_tt = tt_normalize(chunk_mapper, layers)
     chunk_mapper.tt_expressions = [torch.stack([t for t in sl]) for sl in ll_tt]
 
-    # for itext, ichunk, (_a, _b), (a, b) in mapping_table:
-    #     print(texts[itext][a:b], chunk_mapper.flattened_chunks[ichunk][_a:_b])
-    #     assert texts[itext][a:b] == chunk_mapper.flattened_chunks[ichunk][_a:_b]
-
 
 def build_expression_container(
     cm: ChunkMapper, expression_lists_per_chunk, word_grouping: WordGrouping
@@ -547,7 +543,6 @@ def texts_to_vrep(
             )
         ]
     return ReportBatch(chunk_mapper=chunk_mapper, texts=texts, _data=data)
-    # return {"normalized_text": texts, "word_groupings": report0, "chunk_mapper": chunk_mapper}
 
 
 def report2kb(report, wg):

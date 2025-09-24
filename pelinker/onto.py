@@ -49,6 +49,8 @@ class ChunkMapper(BaseDataclass):
     def set_mapping_table(self):
         it_ic = sorted(self.it_ic)
         self.mapping_table = []
+        self.text_chunk_map = defaultdict(list)
+
         if self.text_word_spans_list is None:
             pass
         for (ichunk, (itext, ichunk_local)), chsp in zip(

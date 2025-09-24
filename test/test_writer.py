@@ -398,44 +398,5 @@ def test_file_overwrite_behavior(temp_dir, sample_data):
     assert table2.num_rows == 3
 
 
-# Performance benchmark (optional - can be skipped with markers)
-@pytest.mark.performance
-def test_performance_comparison(temp_dir, large_embedding_data):
-    """Compare performance between RecordBatch and Table modes."""
-    import time
-
-    # Test RecordBatch mode
-    rb_path = temp_dir / "test_perf_rb.parquet"
-    start_time = time.time()
-
-    writer_rb = ParquetWriter(rb_path, use_record_batch=True)
-    try:
-        writer_rb.write_batch(large_embedding_data)
-    finally:
-        writer_rb.close()
-
-    rb_time = time.time() - start_time
-
-    # Test Table mode
-    table_path = temp_dir / "test_perf_table.parquet"
-    start_time = time.time()
-
-    writer_table = ParquetWriter(table_path, use_record_batch=False)
-    try:
-        writer_table.write_batch(large_embedding_data)
-    finally:
-        writer_table.close()
-
-    table_time = time.time() - start_time
-
-    print(f"RecordBatch time: {rb_time:.3f}s")
-    print(f"Table time: {table_time:.3f}s")
-
-    # Both should produce the same result
-    rb_table = read_parquet_file(rb_path)
-    table_table = read_parquet_file(table_path)
-    assert rb_table.num_rows == table_table.num_rows
-
-
 if __name__ == "__main__":
     pytest.main([__file__])

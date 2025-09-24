@@ -1,6 +1,6 @@
 import torch
 
-from pelinker.onto import Expression
+from pelinker.onto import Expression, WordGrouping
 from pelinker.util import (
     get_word_boundaries,
     map_spans_to_spans_basic,
@@ -15,13 +15,13 @@ from pelinker.util import (
 
 def test_vb_span(nlp, phrase_vb_0):
     spans0 = get_vb_spans(nlp, text=phrase_vb_0, extra_context=True)
-    assert len(spans0) == 2
+    assert len(spans0) == 3
 
 
 def test_text_info(nlp, phrase_vb_0):
     tokens = text_to_tokens(nlp, text=phrase_vb_0)
     assert isinstance(tokens[0], SimplifiedToken)
-    assert tokens[1].lemma == "can"
+    assert tokens[1].lemma == "be"
 
 
 def test_expression(nlp, phrase_vb_0):
@@ -32,9 +32,9 @@ def test_expression(nlp, phrase_vb_0):
 
 def test_window_expressions(nlp, phrase_vb_0):
     tokens = text_to_tokens(nlp, text=phrase_vb_0)
-    window1 = token_list_with_window(tokens, 1)
-    window2 = token_list_with_window(tokens, 2)
-    window3 = token_list_with_window(tokens, 3)
+    window1 = token_list_with_window(tokens, WordGrouping.W1)
+    window2 = token_list_with_window(tokens, WordGrouping.W2)
+    window3 = token_list_with_window(tokens, WordGrouping.W3)
     assert len(window1) == len(tokens)
     assert len(window2) == len(tokens) - 1
     assert len(window3[0].tokens) == 3

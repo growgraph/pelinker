@@ -7,7 +7,7 @@ A service for entity linking of properties
 1. Make sure there is an available version of python specified in `pyproject.toml`, for example installed using pyenv.
 2. Install `uv` : `curl -LsSf https://astral.sh/uv/install.sh | sh`
 3. Run `uv sync --all-groups` to create a local environment with project dependencies specified in `uv.lock`
-4. Add a spacy language model `uv run python -m spacy download en_core_web_trf`
+4. Add a spacy language model `uv run spacy download en_core_web_trf`
 5. Set up `pre-commit` hooks:  `uv run pre-commit install`.
 6. To run `pre-commit` independently from `git commit`, run `uv run pre-commit run --all-files`
 7. To run tests run `pytest test`

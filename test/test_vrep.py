@@ -18,7 +18,7 @@ def test_vrep_word_groupings(tokenizer_model_scibert, nlp):
         nlp=nlp,
     )
 
-    wg_w1 = report["word_groupings"][WordGrouping.W1][0]
-    wg_w2 = report["word_groupings"][WordGrouping.W2][0]
+    wg_w1 = report[WordGrouping.W1].expression_data[0].expressions
+    wg_w2 = report[WordGrouping.W2].expression_data[0].expressions
 
-    assert len(wg_w1) == len(wg_w2) + 1
+    assert len(wg_w2) + 1 == len(wg_w1)
