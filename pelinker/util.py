@@ -462,7 +462,9 @@ def render_elementary_tensor_table(
     chunk_mapper.set_mapping_table()
 
     ll_tt = tt_normalize(chunk_mapper, layers)
-    chunk_mapper.tt_expressions = [torch.stack([t for t in sl]) for sl in ll_tt]
+    chunk_mapper.tt_expressions = [
+        torch.stack([t for t in sl]) if sl else torch.tensor([]) for sl in ll_tt
+    ]
 
 
 def build_expression_container(

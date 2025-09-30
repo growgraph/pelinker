@@ -94,7 +94,7 @@ def extract_and_embed_mentions(
                         }
                     )
 
-        pbar.set_description(f"entities added in chunk : {len(rows)}")
+        pbar.set_description(f"Entities added in chunk : {len(rows)}")
 
     return rows
 
@@ -145,7 +145,7 @@ def extract_and_embed_mentions(
 @click.option(
     "--nlp-model",
     type=click.STRING,
-    default="en_core_web_sm",
+    default="en_core_web_trf",
     help="spaCy model to use for tokenization/lemmas.",
 )
 def run(
