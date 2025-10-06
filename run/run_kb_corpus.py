@@ -193,7 +193,7 @@ def run(
         ):
             try:
                 chunk_texts = list(chunk[1])
-                pmids = list(chunk[0])
+                pmids = [str(pmid) for pmid in chunk[0]]  # Convert PMIDs to strings
 
                 # Extract mentions and embeddings
                 rows_data = extract_and_embed_mentions(
