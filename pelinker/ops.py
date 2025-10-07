@@ -8,14 +8,20 @@ logger = logging.getLogger(__name__)
 
 
 def _detect_file_format(file_path: pathlib.Path) -> str:
-    suffix = file_path.suffix.lower()
-    if suffix in [".tsv", ".tsv.gz"]:
+    """Detect file format based on extension."""
+    # Get all suffixes to handle cases like .tsv.gz
+    suffixes = file_path.suffixes
+    all_suffixes = "".join(suffixes).lower()
+
+    if ".tsv" in all_suffixes:
         return "tsv"
-    elif suffix in [".csv", ".csv.gz"]:
+    elif ".csv" in all_suffixes:
         return "csv"
     else:
         # Default to tsv for backward compatibility
-        logger.warning(f"Unknown file extension {suffix}, defaulting to TSV format")
+        logger.warning(
+            f"Unknown file extension {all_suffixes}, defaulting to TSV format"
+        )
         return "tsv"
 
 

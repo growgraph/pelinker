@@ -47,13 +47,13 @@ logger = logging.getLogger(__name__)
 @click.option(
     "--chunk-size",
     type=click.INT,
-    default=2000,
-    help="Chunk size for streaming input.",
+    default=1000,
+    help="Chunk size for streaming input. Each chunk is split into batches and serialized.",
 )
 @click.option(
     "--batch-size",
     type=click.INT,
-    default=40,
+    default=200,
     help="Embedding batch size inside a chunk.",
 )
 @click.option(
@@ -125,24 +125,22 @@ def run(
     )
 
     # Create output directory
-    output_parquet_path.parent.mkdir(parents=True, exist_ok=True)
     output_parquet_path = output_parquet_path.expanduser()
+    output_parquet_path.parent.mkdir(parents=True, exist_ok=True)
 
     # Initialize Parquet writer
     parquet_writer = ParquetWriter(output_parquet_path)
 
     try:
         total_processed = 0
-        chunk_iterator = enumerate(reader)
-
-        # Apply head limit if specified
-        if head is not None:
-            chunk_iterator = zip(range(head), reader)
-            logger.info(f"Limited to first {head} chunks")
 
         for i, chunk in tqdm.tqdm(
-            chunk_iterator, desc="Processing chunks", leave=True, position=0
+            enumerate(reader), desc="Processing chunks", leave=True, position=0
         ):
+            # Apply head limit if specified
+            if head is not None and i >= head:
+                logger.info(f"Reached head limit of {head} chunks, stopping")
+                break
             try:
                 # Extract texts and pmids using detected column names
                 chunk_texts = list(chunk[text_col])
@@ -174,7 +172,6 @@ def run(
                     f"Total texts processed: {total_processed}"
                 )
 
-                # Clear memory
                 del rows_data
 
             except Exception as e:
