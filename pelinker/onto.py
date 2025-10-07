@@ -150,3 +150,10 @@ class ReportBatch(BaseDataclass):
 
     def available_groupings(self):
         return [item.word_grouping for item in self._data]
+
+
+def _wg_for_property(prop: str) -> WordGrouping | None:
+    n = len(prop.split())
+    if n in (1, 2, 3, 4):
+        return WordGrouping(n)
+    return None

@@ -4,99 +4,14 @@ import spacy
 import pandas as pd
 import tqdm
 import logging
-from typing import List
 
-from pelinker.util import texts_to_vrep, text_to_tokens, load_models
+from pelinker.ops import _detect_file_format, _detect_headers_and_columns
+from pelinker.util import load_models, extract_and_embed_mentions
 from pelinker.onto import WordGrouping
 from pelinker.model import LinkerModel
 from pelinker.writer import ParquetWriter
 
 logger = logging.getLogger(__name__)
-
-
-def _wg_for_property(prop: str) -> WordGrouping | None:
-    n = len(prop.split())
-    if n in (1, 2, 3, 4):
-        return WordGrouping(n)
-    return None
-
-
-def extract_and_embed_mentions(
-    props: list[str],
-    data: list[str],
-    pmids: list[str],
-    tokenizer,
-    model,
-    nlp,
-    layers,
-    batch_size,
-    word_modes=(WordGrouping.W1, WordGrouping.W2, WordGrouping.W3),
-) -> List[dict]:
-    """
-    Modified to return list of dicts instead of DataFrame for better memory management
-    and consistent schema handling.
-    """
-    data_pmids = pmids
-
-    data_batched = [data[i : i + batch_size] for i in range(0, len(data), batch_size)]
-    data_pmids_batched = [
-        data_pmids[i : i + batch_size] for i in range(0, len(data), batch_size)
-    ]
-
-    # Pre-tokenize properties for lemma matching
-    prop_tokens = {p: text_to_tokens(nlp=nlp, text=p) for p in props}
-
-    rows = []
-    for ibatch, text_batch in enumerate((pbar := tqdm.tqdm(data_batched))):
-        report_batch = texts_to_vrep(
-            text_batch,
-            tokenizer=tokenizer,
-            model=model,
-            layers_spec=layers,
-            word_modes=list(word_modes),
-            nlp=nlp,
-        )
-
-        batch_pmids = data_pmids_batched[ibatch]
-
-        # For each property, pick the matching word grouping and aggregate matches
-        for p in props:
-            pe = prop_tokens[p]
-            wg = _wg_for_property(p)
-            if wg is None:
-                continue
-            if wg not in report_batch.available_groupings():
-                continue
-
-            expression_container = report_batch[wg]
-            for itext, (text, expr_holder) in enumerate(
-                zip(report_batch.texts, expression_container.expression_data)
-            ):
-                expr_lemma_match = expr_holder.filter_on_lemmas(pe)
-                if not expr_lemma_match:
-                    continue
-
-                offsets = [
-                    report_batch.chunk_mapper.map_chunk_to_text(e.itext, e.ichunk)
-                    for e, _ in expr_lemma_match
-                ]
-
-                for (e, tt), offset in zip(expr_lemma_match, offsets):
-                    mention = text[offset + e.a : offset + e.b]
-                    # Convert numpy array to list for consistent Parquet schema
-                    embed_list = tt.numpy().tolist()
-                    rows.append(
-                        {
-                            "pmid": batch_pmids[itext],
-                            "property": p,
-                            "mention": mention,
-                            "embed": embed_list,  # Now a Python list, not numpy array
-                        }
-                    )
-
-        pbar.set_description(f"Entities added in chunk : {len(rows)}")
-
-    return rows
 
 
 @click.command()
@@ -113,22 +28,21 @@ def extract_and_embed_mentions(
     help="String of layers; e.g., `1,2,3` corresponds to [-1,-2,-3].",
 )
 @click.option(
-    "--input-path",
+    "--input-text-table-path",
     type=click.Path(path_type=pathlib.Path),
-    default=pathlib.Path("data/jamshid/bio_mag_2M.tsv.gz"),
-    help="Input TSV.GZ with two columns: pmid, text.",
+    default=pathlib.Path("data/test/mag_sample.tsv.gz"),
+    help="Input file (TSV/CSV, optionally gzipped) with pmid and text columns. Headers are auto-detected.",
 )
 @click.option(
-    "--props-path",
+    "--properties-txt-path",
     type=click.Path(path_type=pathlib.Path),
     default=pathlib.Path("data/test/uni_props.txt"),
     help="Path to newline-separated list of properties/patterns.",
 )
 @click.option(
-    "--output-path",
+    "--output-parquet-path",
     type=click.Path(path_type=pathlib.Path),
-    default=pathlib.Path("data/jamshid/bio_2M_res.parquet"),
-    help="Output Parquet file to append to.",
+    help="output Parquet file to append to",
 )
 @click.option(
     "--chunk-size",
@@ -148,15 +62,22 @@ def extract_and_embed_mentions(
     default="en_core_web_trf",
     help="spaCy model to use for tokenization/lemmas.",
 )
+@click.option(
+    "--head",
+    type=click.INT,
+    default=None,
+    help="Number of chunks to process (skip it for all chunks).",
+)
 def run(
     model_type,
     layers_spec,
-    input_path,
-    props_path,
-    output_path,
+    input_text_table_path,
+    properties_txt_path,
+    output_parquet_path,
     chunk_size,
     batch_size,
     nlp_model,
+    head,
 ):
     # Set up logging
     logging.basicConfig(
@@ -170,30 +91,64 @@ def run(
     layers = LinkerModel.str2layers(layers_spec)
 
     # Load properties
-    with open(props_path, "r") as f:
+    with open(properties_txt_path, "r") as f:
         props = [p for p in f.read().split("\n") if p]
 
     logger.info(f"Loaded {len(props)} properties")
 
-    # Set up input reader
+    # Detect file format and headers
+    file_format = _detect_file_format(input_text_table_path)
+    has_header, pmid_col, text_col = _detect_headers_and_columns(
+        input_text_table_path, file_format
+    )
+
+    logger.info(f"Detected file format: {file_format.upper()}")
+    logger.info(f"Headers detected: {has_header}")
+    logger.info(f"Using columns: '{pmid_col}', {text_col}'")
+
+    # Log head parameter usage
+    if head is not None:
+        logger.info(f"Processing only first {head} chunks (head={head})")
+    else:
+        logger.info("Processing all chunks")
+
+    # Set up input reader with detected format and headers
+    compression = "gzip" if input_text_table_path.suffix.endswith(".gz") else None
+    sep = "\t" if file_format == "tsv" else ","
+
     reader = pd.read_csv(
-        input_path, sep="\t", header=None, compression="gzip", chunksize=chunk_size
+        input_text_table_path,
+        sep=sep,
+        header=0 if has_header else None,
+        compression=compression,
+        chunksize=chunk_size,
     )
 
     # Create output directory
-    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_parquet_path.parent.mkdir(parents=True, exist_ok=True)
+    output_parquet_path = output_parquet_path.expanduser()
 
     # Initialize Parquet writer
-    parquet_writer = ParquetWriter(output_path)
+    parquet_writer = ParquetWriter(output_parquet_path)
 
     try:
         total_processed = 0
+        chunk_iterator = enumerate(reader)
+
+        # Apply head limit if specified
+        if head is not None:
+            chunk_iterator = zip(range(head), reader)
+            logger.info(f"Limited to first {head} chunks")
+
         for i, chunk in tqdm.tqdm(
-            enumerate(reader), desc="Processing chunks", leave=True, position=0
+            chunk_iterator, desc="Processing chunks", leave=True, position=0
         ):
             try:
-                chunk_texts = list(chunk[1])
-                pmids = [str(pmid) for pmid in chunk[0]]  # Convert PMIDs to strings
+                # Extract texts and pmids using detected column names
+                chunk_texts = list(chunk[text_col])
+                pmids = [
+                    str(pmid) for pmid in chunk[pmid_col]
+                ]  # Convert PMIDs to strings
 
                 # Extract mentions and embeddings
                 rows_data = extract_and_embed_mentions(
@@ -234,7 +189,7 @@ def run(
     finally:
         # Always close the writer
         parquet_writer.close()
-        logger.info(f"Processing completed. Output saved to {output_path}")
+        logger.info(f"Processing completed. Output saved to {output_parquet_path}")
 
 
 if __name__ == "__main__":

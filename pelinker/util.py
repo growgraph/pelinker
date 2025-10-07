@@ -3,6 +3,9 @@
 import re
 
 from string import punctuation, whitespace
+from typing import List
+
+import tqdm
 from transformers import AutoModel, AutoTokenizer
 from sentence_transformers import SentenceTransformer
 import faiss
@@ -21,6 +24,7 @@ from pelinker.onto import (
     ExpressionHolder,
     ExpressionHolderBatch,
     ReportBatch,
+    _wg_for_property,
 )
 
 logger = logging.getLogger(__name__)
@@ -604,3 +608,81 @@ def map_words_to_tokens_list(
         token_work_spans_list += [token_word_spans]
 
     return token_work_spans_list, text_word_spans_list_
+
+
+def extract_and_embed_mentions(
+    props: list[str],
+    data: list[str],
+    pmids: list[str],
+    tokenizer,
+    model,
+    nlp,
+    layers,
+    batch_size,
+    word_modes=(WordGrouping.W1, WordGrouping.W2, WordGrouping.W3),
+) -> List[dict]:
+    """
+    Modified to return list of dicts instead of DataFrame for better memory management
+    and consistent schema handling.
+    """
+    data_pmids = pmids
+
+    data_batched = [data[i : i + batch_size] for i in range(0, len(data), batch_size)]
+    data_pmids_batched = [
+        data_pmids[i : i + batch_size] for i in range(0, len(data), batch_size)
+    ]
+
+    # Pre-tokenize properties for lemma matching
+    prop_tokens = {p: text_to_tokens(nlp=nlp, text=p) for p in props}
+
+    rows = []
+    for ibatch, text_batch in enumerate((pbar := tqdm.tqdm(data_batched))):
+        report_batch = texts_to_vrep(
+            text_batch,
+            tokenizer=tokenizer,
+            model=model,
+            layers_spec=layers,
+            word_modes=list(word_modes),
+            nlp=nlp,
+        )
+
+        batch_pmids = data_pmids_batched[ibatch]
+
+        # For each property, pick the matching word grouping and aggregate matches
+        for p in props:
+            pe = prop_tokens[p]
+            wg = _wg_for_property(p)
+            if wg is None:
+                continue
+            if wg not in report_batch.available_groupings():
+                continue
+
+            expression_container = report_batch[wg]
+            for itext, (text, expr_holder) in enumerate(
+                zip(report_batch.texts, expression_container.expression_data)
+            ):
+                expr_lemma_match = expr_holder.filter_on_lemmas(pe)
+                if not expr_lemma_match:
+                    continue
+
+                offsets = [
+                    report_batch.chunk_mapper.map_chunk_to_text(e.itext, e.ichunk)
+                    for e, _ in expr_lemma_match
+                ]
+
+                for (e, tt), offset in zip(expr_lemma_match, offsets):
+                    mention = text[offset + e.a : offset + e.b]
+                    # Convert numpy array to list for consistent Parquet schema
+                    embed_list = tt.numpy().tolist()
+                    rows.append(
+                        {
+                            "pmid": batch_pmids[itext],
+                            "property": p,
+                            "mention": mention,
+                            "embed": embed_list,  # Now a Python list, not numpy array
+                        }
+                    )
+
+        pbar.set_description(f"Entities added in chunk : {len(rows)}")
+
+    return rows
