@@ -41,6 +41,8 @@ def load_models(model_type, sentence=False):
         spec = "pritamdeka/BioBERT-mnli-snli-scinli-scitail-mednli-stsb"
     elif model_type == "bert":
         spec = "google-bert/bert-base-uncased"
+    elif model_type == "bluebert":
+        spec = "bionlp/bluebert_pubmed_mimic_uncased_L-12_H-768_A-12"
     else:
         raise ValueError(f"{model_type} unsupported")
     if sentence:
@@ -72,7 +74,15 @@ def text_to_tokens_embeddings(texts: list[str], tokenizer, model):
         truncation=True,
     )
 
-    inputs = {k: encoding[k] for k in ["input_ids", "token_type_ids", "attention_mask"]}
+    if model.device.type == "cuda":
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    else:
+        device = "cpu"
+
+    inputs = {
+        k: encoding[k].to(device)
+        for k in ["input_ids", "token_type_ids", "attention_mask"]
+    }
 
     with torch.no_grad():
         outputs = model(output_hidden_states=True, **inputs)
@@ -82,7 +92,7 @@ def text_to_tokens_embeddings(texts: list[str], tokenizer, model):
 
     # fill with zeros latent vectors for padded tokens
     mask = encoding["attention_mask"]
-    mask = mask.unsqueeze(-1).unsqueeze(0)
+    mask = mask.unsqueeze(-1).unsqueeze(0).to(device)
     tt = tt.masked_fill(mask.logical_not(), 0)
 
     # nb x n_len x 2

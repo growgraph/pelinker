@@ -1,6 +1,7 @@
 import click
 import pathlib
 import spacy
+import torch
 import pandas as pd
 import tqdm
 import logging
@@ -36,13 +37,19 @@ logger = logging.getLogger(__name__)
 @click.option(
     "--properties-txt-path",
     type=click.Path(path_type=pathlib.Path),
-    default=pathlib.Path("data/test/uni_props.txt"),
+    default=pathlib.Path("data/test/props.txt"),
     help="Path to newline-separated list of properties/patterns.",
 )
 @click.option(
     "--output-parquet-path",
     type=click.Path(path_type=pathlib.Path),
     help="output Parquet file to append to",
+)
+@click.option(
+    "--use-gpu",
+    is_flag=True,
+    default=False,
+    help="Enable GPU acceleration if CUDA is available",
 )
 @click.option(
     "--chunk-size",
@@ -74,6 +81,7 @@ def run(
     input_text_table_path,
     properties_txt_path,
     output_parquet_path,
+    use_gpu,
     chunk_size,
     batch_size,
     nlp_model,
@@ -84,10 +92,20 @@ def run(
         level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
     )
 
+    if use_gpu:
+        if torch.cuda.is_available():
+            logger.info("Using GPU in upcoming processes")
+        else:
+            logger.warning("CUDA is not available. Running on CPU instead")
+            use_gpu = False
+
     # Load models
     logger.info("Loading models...")
-    nlp = spacy.load(nlp_model)
     tokenizer, model = load_models(model_type, sentence=False)
+    if use_gpu:
+        model.to("cuda")
+        spacy.require_gpu()
+    nlp = spacy.load(nlp_model)
     layers = LinkerModel.str2layers(layers_spec)
 
     # Load properties
