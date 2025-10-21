@@ -100,7 +100,7 @@ def run(
             use_gpu = False
 
     # Load models
-    logger.info("Loading models...")
+    logger.info(f"Loading models: {model_type} and {nlp_model}")
     tokenizer, model = load_models(model_type, sentence=False)
     if use_gpu:
         model.to("cuda")
@@ -113,6 +113,7 @@ def run(
         props = [p for p in f.read().split("\n") if p]
 
     logger.info(f"Loaded {len(props)} properties")
+    logger.info(f"Layers are set to {layers}")
 
     # Detect file format and headers
     file_format = _detect_file_format(input_text_table_path)

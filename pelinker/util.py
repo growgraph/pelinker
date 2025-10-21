@@ -84,15 +84,14 @@ def text_to_tokens_embeddings(texts: list[str], tokenizer, model):
         for k in ["input_ids", "token_type_ids", "attention_mask"]
     }
 
-    with torch.no_grad():
+    with torch.inference_mode():
         outputs = model(output_hidden_states=True, **inputs)
-
-    # n_layers x n_batch x n_len x n_emb
-    tt = torch.stack(outputs.hidden_states)
+        # n_layers x n_batch x n_len x n_emb
+        tt = torch.stack([x.detach().to("cpu") for x in outputs.hidden_states])
 
     # fill with zeros latent vectors for padded tokens
     mask = encoding["attention_mask"]
-    mask = mask.unsqueeze(-1).unsqueeze(0).to(device)
+    mask = mask.unsqueeze(-1).unsqueeze(0)
     tt = tt.masked_fill(mask.logical_not(), 0)
 
     # nb x n_len x 2
@@ -101,7 +100,7 @@ def text_to_tokens_embeddings(texts: list[str], tokenizer, model):
         [(x, y) for x, y in sublist if x != y] for sublist in offsets.tolist()
     ]
 
-    return tt.cpu(), enu_offsets
+    return tt, enu_offsets
 
 
 def map_spans_to_spans_basic(
