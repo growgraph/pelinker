@@ -44,7 +44,7 @@ import pathlib
 import pyarrow as pa
 import pyarrow.parquet as pq
 import logging
-from pelinker.writer import ParquetWriter
+from pelinker.io.parquet import ParquetWriter
 
 # Set up logging for tests
 logging.basicConfig(level=logging.INFO)

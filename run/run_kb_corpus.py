@@ -10,7 +10,7 @@ from pelinker.ops import _detect_file_format, _detect_headers_and_columns
 from pelinker.util import load_models, extract_and_embed_mentions
 from pelinker.onto import WordGrouping
 from pelinker.model import LinkerModel
-from pelinker.writer import ParquetWriter
+from pelinker.io.parquet import ParquetWriter
 
 logger = logging.getLogger(__name__)
 
