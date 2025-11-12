@@ -37,7 +37,7 @@ def tokenizer_model_scibert():
 @pytest.fixture(scope="module")
 def phrase_vb_0():
     return (
-        "TAMs can also secrete in the TME a number of immunosuppressive cytokines, such as IL-6, TGF-β, "
+        "TAMs was also secreting in the TME a number of immunosuppressive cytokines, such as IL-6, TGF-β, "
         "and IL-10 that are able to suppress CD8+ T-cell function (76)."
     )
 
@@ -98,3 +98,54 @@ def texts(text, text2):
 @pytest.fixture()
 def batched_texts(texts):
     return [split_text_into_batches(s, max_length=20) for s in texts]
+
+
+@pytest.fixture
+def sentence():
+    return "TAMs can also secrete in the TME a number of immunosuppressive cytokines, such as IL-6, TGF-β, and IL-10 that are able to suppress CD8+ T-cell function."
+
+
+@pytest.fixture
+def token_bounds() -> list[tuple[int, int]]:
+    bnds = [
+        [0, 4],
+        [5, 8],
+        [9, 13],
+        [14, 21],
+        [22, 24],
+        [25, 28],
+        [29, 32],
+        [33, 34],
+        [35, 41],
+        [42, 44],
+        [45, 62],
+        [63, 72],
+        [72, 73],
+        [74, 78],
+        [79, 81],
+        [82, 84],
+        [84, 85],
+        [85, 86],
+        [86, 87],
+        [88, 91],
+        [91, 92],
+        [92, 93],
+        [93, 94],
+        [95, 98],
+        [99, 101],
+        [101, 102],
+        [102, 104],
+        [105, 109],
+        [110, 113],
+        [114, 118],
+        [119, 121],
+        [122, 130],
+        [131, 134],
+        [134, 135],
+        [136, 137],
+        [137, 138],
+        [138, 142],
+        [143, 151],
+        [151, 152],
+    ]
+    return [tuple(item) for item in bnds]

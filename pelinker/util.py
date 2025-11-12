@@ -1,17 +1,33 @@
 # pylint: disable=E1120
 
 import re
+
 from string import punctuation, whitespace
+from typing import List
+
+import tqdm
 from transformers import AutoModel, AutoTokenizer
 from sentence_transformers import SentenceTransformer
 import faiss
 import torch
 import pandas as pd
 from sklearn.metrics import accuracy_score
-
 from functools import reduce
+import logging
 
-from pelinker.onto import MAX_LENGTH, ChunkMapper, WordGrouping
+from pelinker.onto import (
+    MAX_LENGTH,
+    ChunkMapper,
+    WordGrouping,
+    SimplifiedToken,
+    Expression,
+    ExpressionHolder,
+    ExpressionHolderBatch,
+    ReportBatch,
+    _wg_for_property,
+)
+
+logger = logging.getLogger(__name__)
 
 
 def load_models(model_type, sentence=False):
@@ -23,6 +39,10 @@ def load_models(model_type, sentence=False):
         spec = "neuml/pubmedbert-base-embeddings"
     elif model_type == "biobert-stsb":
         spec = "pritamdeka/BioBERT-mnli-snli-scinli-scitail-mednli-stsb"
+    elif model_type == "bert":
+        spec = "google-bert/bert-base-uncased"
+    elif model_type == "bluebert":
+        spec = "bionlp/bluebert_pubmed_mimic_uncased_L-12_H-768_A-12"
     else:
         raise ValueError(f"{model_type} unsupported")
     if sentence:
@@ -54,13 +74,20 @@ def text_to_tokens_embeddings(texts: list[str], tokenizer, model):
         truncation=True,
     )
 
-    inputs = {k: encoding[k] for k in ["input_ids", "token_type_ids", "attention_mask"]}
+    if model.device.type == "cuda":
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    else:
+        device = "cpu"
 
-    with torch.no_grad():
+    inputs = {
+        k: encoding[k].to(device)
+        for k in ["input_ids", "token_type_ids", "attention_mask"]
+    }
+
+    with torch.inference_mode():
         outputs = model(output_hidden_states=True, **inputs)
-
-    # n_layers x n_batch x n_len x n_emb
-    tt = torch.stack(outputs.hidden_states)
+        # n_layers x n_batch x n_len x n_emb
+        tt = torch.stack([x.detach().to("cpu") for x in outputs.hidden_states])
 
     # fill with zeros latent vectors for padded tokens
     mask = encoding["attention_mask"]
@@ -73,17 +100,17 @@ def text_to_tokens_embeddings(texts: list[str], tokenizer, model):
         [(x, y) for x, y in sublist if x != y] for sublist in offsets.tolist()
     ]
 
-    return tt.cpu(), enu_offsets
+    return tt, enu_offsets
 
 
-def map_word_indexes_to_token_indexes(
+def map_spans_to_spans_basic(
     words_boundaries, token_boundaries
 ) -> dict[tuple[int, int], list[int]]:
     """
         given two lists of word bounds and token bounds (in character indexes)
         [ it is implied that the two lists are sorted ]
         the list of token boundaries is meant to cover the text (to be complete),
-        on the other hand word boundaries might be no `continuous`
+        on the other hand word boundaries might be not `continuous`
 
         find the correspondence: (wa, wb) -> [index of token]
 
@@ -96,20 +123,20 @@ def map_word_indexes_to_token_indexes(
                 value: list of corresponding tokens
     """
 
-    map_ix_words_jx_tokens = {}
+    map_ix_jx = {}
 
     pnt_tokens = 0
 
     for ix_word in words_boundaries:
         wa, wb = ix_word
-        map_ix_words_jx_tokens[ix_word] = []
+        map_ix_jx[ix_word] = []
         while (
             pnt_tokens < len(token_boundaries) and token_boundaries[pnt_tokens][1] <= wb
         ):
             if token_boundaries[pnt_tokens][0] >= wa:
-                map_ix_words_jx_tokens[ix_word] += [pnt_tokens]
+                map_ix_jx[ix_word] += [pnt_tokens]
             pnt_tokens += 1
-    return map_ix_words_jx_tokens
+    return map_ix_jx
 
 
 def aggregate_token_groups(nlp, text, extra_context=False):
@@ -154,13 +181,30 @@ def aggregate_token_groups(nlp, text, extra_context=False):
     return token_groups
 
 
-def get_vb_spans(nlp, text, extra_context=False):
+def get_vb_spans(nlp, text, extra_context=False) -> list[tuple[int, int]]:
     token_groups = aggregate_token_groups(nlp, text, extra_context)
     spans = transform_tokens2spans(token_groups)
     return spans
 
 
-def transform_tokens2spans(token_groups):
+def text_to_tokens(nlp, text) -> list[SimplifiedToken]:
+    stokens = [
+        SimplifiedToken(
+            **{
+                "lemma": token.lemma_,
+                "text": token.text,
+                "tag": token.tag_,
+                "ix": token.idx,
+                "ix_end": token.idx + len(token),
+            }
+        )
+        for token in nlp(text)
+    ]
+
+    return stokens
+
+
+def transform_tokens2spans(token_groups) -> list[tuple[int, int]]:
     spans = [(group[0].idx, group[-1].idx + len(group[-1])) for group in token_groups]
     return spans
 
@@ -189,7 +233,7 @@ def process_text(batched_texts: list[list[str]], tokenizer, model) -> ChunkMappe
     flattened_chunks: list[str] = [s for group in batched_texts for s in group]
 
     it_ic = [
-        (i_c, i_t) for i_t, sl in enumerate(batched_texts) for i_c, _ in enumerate(sl)
+        (i_t, i_c) for i_t, sl in enumerate(batched_texts) for i_c, _ in enumerate(sl)
     ]
 
     chunk_cumlens = [
@@ -200,52 +244,41 @@ def process_text(batched_texts: list[list[str]], tokenizer, model) -> ChunkMappe
     tt, offsets = text_to_tokens_embeddings(flattened_chunks, tokenizer, model)
 
     return ChunkMapper(
-        tt=tt,
-        flattened_chunks=flattened_chunks,
-        token_bounds=offsets,
+        tensor=tt,
+        chunks=flattened_chunks,
+        token_spans_list=offsets,
         it_ic=it_ic,
-        chunk_cumlens=chunk_cumlens,
+        cumulative_lens=chunk_cumlens,
     )
 
 
-def compute_spans(
-    token_bnds: list[list[tuple[int, int]]], word_bnds: list[list[tuple[int, int]]]
-):
-    sent_spans = [
-        map_char_spans_2_token_spans(t_bnds, w_bnds)
-        for t_bnds, w_bnds in zip(token_bnds, word_bnds)
-    ]
-
-    char_spans: list[list[tuple[int, int]]] = [x for x, _ in sent_spans]
-    token_spans: list[list[tuple[int, int]]] = [x for _, x in sent_spans]
-    return token_spans, char_spans
-
-
-def sentence_ix(
-    sent: str,
-    token_offsets: torch.tensor,  # 2D
+def map_words_to_tokens(
+    text_token_spans: list[tuple[int, int]], text_word_spans: list[tuple[int, int]]
 ) -> tuple[list[tuple[int, int]], list[tuple[int, int]]]:
-    ix_words = get_word_boundaries(sent)
+    """
+    given text token and word spans,
 
-    miti0 = map_word_indexes_to_token_indexes(ix_words, token_offsets)
+        words : [...(start_pos_i, end_pos_i)...]
+        tokens : [...(start_pos_i, end_pos_i)...]
 
-    # sanitize
-    miti0 = {k: v for k, v in miti0.items() if v}
-    char_spans = [x for x in miti0.keys()]
-    itoken_spans = [(y[0], y[-1] + 1) for y in miti0.values()]
-    return char_spans, itoken_spans
+    we define work -> token spans, i.e. a mapping of which tokens belong to words groups
+
+    if there is a positive overlap between word i and token j spans,
+        we consider that token j belongs to work i group
+
+    return a list of work -> token bounds : [...(start_token_i, end_token_i)...]
+    and a refreshed
 
 
-def map_char_spans_2_token_spans(
-    token_bounds: list[tuple[int, int]], word_bounds: list[tuple[int, int]]
-) -> tuple[list[tuple[int, int]], list[tuple[int, int]]]:
-    miti0 = map_word_indexes_to_token_indexes(word_bounds, token_bounds)
+    """
+
+    map_ix_jx = map_spans_to_spans_basic(text_word_spans, text_token_spans)
 
     # sanitize token offsets
-    miti0 = {k: v for k, v in miti0.items() if v}
-    char_spans = [x for x in miti0.keys()]
-    itoken_spans = [(y[0], y[-1] + 1) for y in miti0.values()]
-    return char_spans, itoken_spans
+    map_ix_jx = {k: v for k, v in map_ix_jx.items() if v}
+    text_word_spans = [x for x in map_ix_jx.keys()]
+    token_word_spans = [(y[0], y[-1] + 1) for y in map_ix_jx.values()]
+    return text_word_spans, token_word_spans
 
 
 def tt_aggregate_normalize(tt: torch.Tensor, ls):
@@ -270,16 +303,20 @@ def tt_aggregate_normalize(tt: torch.Tensor, ls):
     return tt_norm
 
 
-def tt_normalize(
-    tt: torch.Tensor, ls, ix_tokens: list[list[tuple[int, int]]]
-) -> list[list[torch.tensor]]:
-    tt_norm = tt[ls].mean(0)
+def tt_normalize(cm: ChunkMapper, layers) -> list[list[torch.Tensor]]:
+    """
+
+    :param cm:
+    :param layers:
+    :return:
+    """
+    tt_norm = cm.tensor[layers].mean(0)
     tt_r = []
-    for js, (ix_tokens, tt_sent) in enumerate(zip(ix_tokens, tt_norm)):
+    for js, (ix_tokens, tt_sent) in enumerate(zip(cm.token_word_spans_list, tt_norm)):
         tt_words_list = []
         for a, b in ix_tokens:
             rr = tt_sent[a:b].mean(0)
-            rr = rr / rr.norm(dim=-1).unsqueeze(-1)
+            # rr = rr / rr.norm(dim=-1).unsqueeze(-1)
             tt_words_list += [rr]
         tt_r += [tt_words_list]
     return tt_r
@@ -420,91 +457,52 @@ def get_word_boundaries(text) -> list[tuple[int, int]]:
     return ix_words
 
 
-def render_tensor_per_group(chunk_mapper: ChunkMapper, layers, token_spans):
-    mapping_table = []
-    for (ichunk, (ichunk_local, itext)), chsp in zip(
-        enumerate(chunk_mapper.it_ic), chunk_mapper.char_spans
-    ):
-        chunk_offset = chunk_mapper.chunk_cumlens[itext][ichunk_local]
-        for a, b in chsp:
-            mapping_table += [
-                (itext, ichunk, (a, b), (a + chunk_offset, b + chunk_offset))
-            ]
-
-    ll_tt = tt_normalize(chunk_mapper.tt, layers, chunk_mapper.token_spans)
-    ll_tt_stacked = torch.stack([t for sl in ll_tt for t in sl])
-    return ll_tt_stacked, mapping_table
-
-
 def render_elementary_tensor_table(
-    chunk_mapper, word_int_bounds: list[list[tuple[int, int]]], layers
-):
-    token_spans, char_spans = compute_spans(chunk_mapper.token_bounds, word_int_bounds)
-    chunk_mapper.token_spans = token_spans
-    chunk_mapper.char_spans = char_spans
+    chunk_mapper: ChunkMapper, text_word_spans: list[list[tuple[int, int]]], layers
+) -> None:
+    """
 
-    mapping_table = []
-    for (ichunk, (ichunk_local, itext)), chsp in zip(
-        enumerate(chunk_mapper.it_ic), chunk_mapper.char_spans
-    ):
-        chunk_offset = chunk_mapper.chunk_cumlens[itext][ichunk_local]
-        for a, b in chsp:
-            mapping_table += [
-                (itext, ichunk, (a, b), (a + chunk_offset, b + chunk_offset))
-            ]
+    Args:
+        chunk_mapper:
+        text_word_spans:
+        layers:
 
-    ll_tt = tt_normalize(chunk_mapper.tt, layers, chunk_mapper.token_spans)
-    ll_tt_stacked = torch.stack([t for sl in ll_tt for t in sl])
-    return ll_tt_stacked, mapping_table
+    Returns:
 
-    # for itext, ichunk, (_a, _b), (a, b) in mapping_table:
-    #     print(texts[itext][a:b], chunk_mapper.flattened_chunks[ichunk][_a:_b])
-    #     assert texts[itext][a:b] == chunk_mapper.flattened_chunks[ichunk][_a:_b]
+    """
 
-# deprecate ?
-def batched_texts_to_vrep(
-    batched_texts: list[list[str]],
-    tokenizer,
-    model,
-    word_spans: list[list[tuple[int, int]]],
-    layers_spec,
-):
-    chunk_mapper: ChunkMapper = process_text(
-        batched_texts,
-        tokenizer,
-        model,
-    )
+    chunk_mapper.set_token_word_spans(text_word_spans)
+    chunk_mapper.set_mapping_table()
 
-    ll_tt_stacked, mapping_table = render_elementary_tensor_table(
-        chunk_mapper, word_spans, layers_spec
-    )
-    return ll_tt_stacked, mapping_table
+    ll_tt = tt_normalize(chunk_mapper, layers)
+    chunk_mapper.tt_expressions = [
+        torch.stack([t for t in sl]) if sl else torch.tensor([]) for sl in ll_tt
+    ]
 
 
-def texts_to_vrep_preparatory(
+def build_expression_container(
+    cm: ChunkMapper, expression_lists_per_chunk, word_grouping: WordGrouping
+) -> ExpressionHolderBatch:
+    texts = []
+    for itext, ichunks in cm.text_chunk_map.items():
+        expressions = reduce(
+            lambda a, b: a + b, [expression_lists_per_chunk[i] for i in ichunks]
+        )
+        tt_merged = torch.cat([cm.tt_expressions[i] for i in ichunks])
+        texts.append(ExpressionHolder(tt=tt_merged, expressions=expressions))
+
+    return ExpressionHolderBatch(expression_data=texts, word_grouping=word_grouping)
+
+
+def texts_to_vrep(
     texts: list[str],
     tokenizer,
     model,
     layers_spec,
-    word_mode: WordGrouping,
+    word_modes: list[WordGrouping],
     max_length=MAX_LENGTH,
     nlp=None,
-) -> tuple[ChunkMapper, list[list[tuple[int, int]]], list[int], list[str]]:
-    """
-        take a list of texts and provide embeddings based on `word_mode`
-
-    :param texts: list of strings
-    :param tokenizer: hf tokenizer
-    :param model: hf emb model
-    :param layers_spec:
-    :param word_mode: mode to render word boundaries: VERBAL or WORD moving window or SENTENCE
-    :param max_length:
-    :param nlp:
-    :return:
-    """
-
-    word_bounds_kinds: list[list[list[tuple[int, int]]]] = []
-
+) -> ReportBatch:
     batched_texts: list[list[str]] = [
         split_text_into_batches(s, max_length=max_length) for s in texts
     ]
@@ -515,93 +513,61 @@ def texts_to_vrep_preparatory(
         model,
     )
 
-    if word_mode in {WordGrouping.VERBAL_STRICT, WordGrouping.VERBAL}:
-        if nlp is None:
-            raise TypeError(f" nlp should be provided for WordGrouping {word_mode}")
-        word_bnds: list[list[tuple[int, int]]] = [
-            get_vb_spans(
-                nlp=nlp, text=s, extra_context=word_mode == WordGrouping.VERBAL
+    stoken_per_chunk: list[list[SimplifiedToken]] = [
+        text_to_tokens(nlp=nlp, text=chunk) for chunk in chunk_mapper.chunks
+    ]
+
+    # ichunk -> itext, ichunk local
+    ichunk_to_itext_ichunk_local_list = [
+        chunk_mapper.ichunk_to_itext_ichunk_local(k)
+        for k, _ in enumerate(stoken_per_chunk)
+    ]
+
+    data: list[ExpressionHolderBatch] = []
+    for word_grouping in word_modes:
+        expression_lists_per_chunk: list[list[Expression]] = [
+            token_list_with_window(
+                chunk_tokens, word_grouping, ichunk=ichunk_local, itext=itext
             )
-            for batch in batched_texts
-            for s in batch
-        ]
-        word_bounds_kinds += [word_bnds]
-    else:
-        word_bnds: list[list[tuple[int, int]]] = [
-            get_word_boundaries(s) for batch in batched_texts for s in batch
-        ]
-        if word_mode == WordGrouping.SENTENCE:
-            word_bnds = [[(bnds[0][0], bnds[-1][-1])] for bnds in word_bnds]
-            word_bounds_kinds += [word_bnds]
-        elif word_mode.isnumeric():
-            windows = [int(x) for x in word_mode]
-            for w in windows:
-                word_bnds: list[list[tuple[int, int]]] = [
-                    merge_wbs(word_boundaries=word_bnds_atom, window=w)
-                    for word_bnds_atom in word_bnds
-                ]
-                word_bounds_kinds += [word_bnds]
-        else:
-            raise ValueError(f"Unknown type of WordGrouping {word_mode}")
-    return chunk_mapper, word_bounds_kinds, layers_spec, texts
-
-
-def final_mapping(
-    chunk_mapper, word_bnds, layers_spec, texts
-) -> tuple[dict, torch.tensor]:
-    ll_tt_stacked, mapping_table = render_elementary_tensor_table(
-        chunk_mapper, word_bnds, layers_spec
-    )
-
-    report = []
-    for row in mapping_table:
-        itext, ichunk, _, (span_a, span_b) = row
-        report += [
-            {
-                "itext": itext,
-                "a": span_a,
-                "b": span_b,
-                "mention": texts[itext][span_a:span_b],
-            }
+            for chunk_tokens, (itext, ichunk_local) in zip(
+                stoken_per_chunk, ichunk_to_itext_ichunk_local_list
+            )
         ]
 
-    return report, ll_tt_stacked
+        word_spans: list[list[tuple[int, int]]] = [
+            [(e.a, e.b) for e in batch] for batch in expression_lists_per_chunk
+        ]
+
+        render_elementary_tensor_table(chunk_mapper, word_spans, layers_spec)
+
+        # adjust expressions
+        filtered_expression_lists_per_chunk: list[list[Expression]] = []
+        for exprs, word_spans in zip(
+            expression_lists_per_chunk, chunk_mapper.text_word_spans_list
+        ):
+            ix_start = {a for a, _ in word_spans}
+            filtered_expression_lists_per_chunk.append(
+                [e for e in exprs if e.a in ix_start]
+            )
+
+        data += [
+            build_expression_container(
+                chunk_mapper,
+                filtered_expression_lists_per_chunk,
+                word_grouping=word_grouping,
+            )
+        ]
+    return ReportBatch(chunk_mapper=chunk_mapper, texts=texts, _data=data)
 
 
-def texts_to_vrep(
-    texts: list[str],
-    tokenizer,
-    model,
-    layers_spec,
-    word_mode: WordGrouping,
-    max_length=MAX_LENGTH,
-    nlp=None
-):
-    chunk_mapper, word_bnds_kinds, layers_spec, texts = texts_to_vrep_preparatory(
-        texts,
-        tokenizer,
-        model,
-        layers_spec,
-        word_mode,
-        max_length=max_length,
-        nlp=nlp,
-    )
-
-    reports, tts = [], []
-    for word_bnds in word_bnds_kinds:
-        report, ll_tt_stacked = final_mapping(
-            chunk_mapper, word_bnds, layers_spec, texts
-        )
-        reports += report
-        tts += [ll_tt_stacked]
-
-    f_tt_stacked = torch.concat(tts)
-    return {"entities": reports, "tensor": f_tt_stacked, "normalized_text": texts}
-
-
-def report2kb(report):
-    vocabulary = report["entities"]
-    tt_basis = report["tensor"]
+def report2kb(report, wg):
+    wg_current = report["word_groupings"][wg]
+    tt_list = []
+    vocabulary = []
+    for sentence in wg_current:
+        tt_list += [t for _, t in sentence]
+        vocabulary += [item["mention"] for item, _ in sentence]
+    tt_basis = torch.concat(tt_list)
     index = faiss.IndexFlatIP(tt_basis.shape[1])
     index.add(tt_basis)
     return vocabulary, index
@@ -612,3 +578,120 @@ def merge_wbs(word_boundaries, window) -> list[tuple[int, int]]:
         (wa, wb)
         for (wa, _), (_, wb) in zip(word_boundaries, word_boundaries[window - 1 :])
     ]
+
+
+def token_list_with_window(
+    tokens: list[SimplifiedToken], window: WordGrouping, itext=None, ichunk=None
+) -> list[Expression]:
+    agg = []
+    w = int(window.value)
+    for k in range(len(tokens) - w + 1):
+        agg.append(Expression(tokens=tokens[k : k + w], itext=itext, ichunk=ichunk))
+    return agg
+
+
+def map_words_to_tokens_list(
+    text_token_spans_list: list[list[tuple[int, int]]],
+    text_word_spans_list: list[list[tuple[int, int]]],
+):
+    """
+    take a batch of token spans and a batch of word spans
+
+    return a batch of work to token maps
+        and also an updated batch of word spans
+            (some words can not be mapped to tokens, so they are excluded)
+
+
+    """
+
+    text_word_spans_list_: list[list[tuple[int, int]]] = []
+    token_work_spans_list: list[list[tuple[int, int]]] = []
+
+    for text_token_spans, text_word_spans in zip(
+        text_token_spans_list, text_word_spans_list
+    ):
+        text_word_spans, token_word_spans = map_words_to_tokens(
+            text_token_spans, text_word_spans
+        )
+        text_word_spans_list_ += [text_word_spans]
+        token_work_spans_list += [token_word_spans]
+
+    return token_work_spans_list, text_word_spans_list_
+
+
+def extract_and_embed_mentions(
+    props: list[str],
+    data: list[str],
+    pmids: list[str],
+    tokenizer,
+    model,
+    nlp,
+    layers,
+    batch_size,
+    word_modes=(WordGrouping.W1, WordGrouping.W2, WordGrouping.W3),
+) -> List[dict]:
+    """
+    Modified to return list of dicts instead of DataFrame for better memory management
+    and consistent schema handling.
+    """
+    data_pmids = pmids
+
+    data_batched = [data[i : i + batch_size] for i in range(0, len(data), batch_size)]
+    data_pmids_batched = [
+        data_pmids[i : i + batch_size] for i in range(0, len(data), batch_size)
+    ]
+
+    # Pre-tokenize properties for lemma matching
+    prop_tokens = {p: text_to_tokens(nlp=nlp, text=p) for p in props}
+
+    rows = []
+    for ibatch, text_batch in enumerate((pbar := tqdm.tqdm(data_batched))):
+        report_batch = texts_to_vrep(
+            text_batch,
+            tokenizer=tokenizer,
+            model=model,
+            layers_spec=layers,
+            word_modes=list(word_modes),
+            nlp=nlp,
+        )
+
+        batch_pmids = data_pmids_batched[ibatch]
+
+        # For each property, pick the matching word grouping and aggregate matches
+        for p in props:
+            pe = prop_tokens[p]
+            wg = _wg_for_property(p)
+            if wg is None:
+                continue
+            if wg not in report_batch.available_groupings():
+                continue
+
+            expression_container = report_batch[wg]
+            for itext, (text, expr_holder) in enumerate(
+                zip(report_batch.texts, expression_container.expression_data)
+            ):
+                expr_lemma_match = expr_holder.filter_on_lemmas(pe)
+                if not expr_lemma_match:
+                    continue
+
+                offsets = [
+                    report_batch.chunk_mapper.map_chunk_to_text(e.itext, e.ichunk)
+                    for e, _ in expr_lemma_match
+                ]
+
+                for (e, tt), offset in zip(expr_lemma_match, offsets):
+                    mention = text[offset + e.a : offset + e.b]
+                    # Convert numpy array to list for consistent Parquet schema
+                    embed_list = tt.numpy().tolist()
+                    rows.append(
+                        {
+                            "pmid": batch_pmids[itext],
+                            "property": p,
+                            "mention": mention,
+                            "embed": embed_list,  # Now a Python list, not numpy array
+                        }
+                    )
+
+        pbar.set_description(f"Entities added in chunk : {len(rows)}")
+
+    return rows

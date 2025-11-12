@@ -2,19 +2,11 @@ fail_fast: false
 
 repos:
 -   repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.6.4
+    rev: v0.8.1
     hooks:
     -   id: ruff
         args: [--fix, --ignore, E722]
     -   id: ruff-format
--   repo: local
-    hooks:
-    -   id: pylint
-        name: pylint
-        entry: pylint
-        language: system
-        types: [python]
-        args: ["-rn", "-sn", "--output-format=colorized", "--errors-only", "--jobs", "4", "--rcfile=.pylintrc"]
 -   repo: https://github.com/macisamuele/language-formatters-pre-commit-hooks
     rev: v2.14.0
     hooks:
@@ -32,7 +24,7 @@ repos:
     -   id: pretty-format-toml
         args: [--autofix]
 -   repo: https://github.com/pappasam/toml-sort
-    rev: v0.23.1
+    rev: v0.24.2
     hooks:
     -   id: toml-sort
         args: [-ia]
