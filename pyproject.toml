@@ -27,6 +27,8 @@ dependencies = [
   "plotly>=6.2.0,<7",
   "pyarrow>=20.0.0,<21",
   "rdflib>=7.0.0,<8",
+  "rich>=14.1.0",
+  "scikit-optimize>=0.10.2",
   "sentence-transformers>=3.0.1,<4",
   "spacy>=3.7.5,<4",
   "torch",

@@ -4,37 +4,50 @@ import torch
 import umap
 from matplotlib import pyplot as plt
 from plotly import express as px, graph_objects as go
-from scipy.optimize import differential_evolution
 from sklearn.cluster import HDBSCAN
 from sklearn.metrics import silhouette_score
 from torch.nn import functional as F
 
+from skopt import gp_minimize
 
-def compute_optimal_min_cluster_size(dfr2, umap_columns):
+
+def compute_optimal_min_cluster_size(dfr2, umap_columns, tol=0.05, bounds=None):
+    if bounds is None:
+        bounds = [(5, 200)]  # min_cluster_size range
+
+    # Cache to avoid recomputing the same cluster sizes
+    cache = {}
+
     def objective(size):
         size = int(size[0])
+
+        # Check cache first
+        if size in cache:
+            score = cache[size]
+            return -score
+
         clusterer = HDBSCAN(min_cluster_size=size, metric="cosine")
         labels = clusterer.fit_predict(dfr2[umap_columns])
 
-        if len(set(labels)) <= 1 or len(set(labels)) == len(labels):
-            return -1  # invalid clustering → low score
+        if len(set(labels)) <= 2:
+            score = 1e-2  # invalid clustering → low score
+        else:
+            score = silhouette_score(dfr2[umap_columns], labels)
 
-        score = silhouette_score(dfr2[umap_columns], labels)
-        print(f"size = {size}, score = {score:.3f}")
+        cache[size] = score
         return -score
 
-    bounds = [(5, 200)]  # min_cluster_size range
-
-    result = differential_evolution(objective, bounds, maxiter=20, seed=42)
-    best_size = int(round(result.x[0]))
+    result = gp_minimize(objective, bounds, n_calls=15, random_state=42)
+    best_size = int(result.x[0])
+    best_score = -result.fun  # Convert back from negative
 
     clusterer = HDBSCAN(min_cluster_size=best_size, metric="cosine")
     labels = clusterer.fit_predict(dfr2[umap_columns])
     dfr2["class"] = pd.DataFrame(labels, columns=["class"], index=dfr2.index)
-    return best_size, dfr2
+    return best_size, best_score, dfr2
 
 
-def plot_metrics(df: pd.DataFrame, fname="figs/cl.silhouette.png"):
+def plot_metrics(df: pd.DataFrame, fname):
     fig, ax1 = plt.subplots(figsize=(8, 5))
 
     color1 = "tab:blue"
@@ -52,7 +65,7 @@ def plot_metrics(df: pd.DataFrame, fname="figs/cl.silhouette.png"):
     # Add a second y-axis for icm
     ax2 = ax1.twinx()
     color2 = "tab:orange"
-    ax2.set_yscale("log")
+    # ax2.set_yscale("log")
     ax2.set_ylabel("ICM", color=color2)
     ax2.plot(
         df["min_cluster_size"],
@@ -67,7 +80,7 @@ def plot_metrics(df: pd.DataFrame, fname="figs/cl.silhouette.png"):
     # Add a second y-axis for icm
     ax3 = ax1.twinx()
     color2 = "tab:green"
-    ax3.set_yscale("log")
+    # ax3.set_yscale("log")
     ax3.set_ylabel("n_clusters", color=color2)
     ax3.plot(
         df["min_cluster_size"],
@@ -87,7 +100,7 @@ def plot_metrics(df: pd.DataFrame, fname="figs/cl.silhouette.png"):
     plt.savefig(fname, bbox_inches="tight", dpi=300)
 
 
-def plot_umap_viz(df):
+def plot_umap_viz(df, output_path="umap.html"):
     df["show_label"] = df["property"]
     show_rate = max(len(df) // 20, 1)
     df.loc[df.index % show_rate != 0, "show_label"] = ""
@@ -134,7 +147,7 @@ def plot_umap_viz(df):
         margin=dict(l=0, r=0, b=0, t=30),
     )
 
-    fig.write_html("umap.html")
+    fig.write_html(output_path)
 
 
 def umap_it(df, umap_dim=15):
