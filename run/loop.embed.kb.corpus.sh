@@ -6,7 +6,7 @@ layers=("1" "2" "3")
 
 for model in "${mtypes[@]}"; do
     for layer in "${layers[@]}"; do
-	python run/run_kb_corpus.py --input-text-table-path data/jamshid/bio_mag_100K.tsv.gz \
+	python run/embed_kb_corpus.py --input-text-table-path data/jamshid/bio_mag_100K.tsv.gz \
 	       --output-parquet-path data/jamshid/res_${model}_${layer}.parquet \
 	       --properties-txt-path data/jamshid/verbial_props.txt \
 	       --model-type $model \
