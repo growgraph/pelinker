@@ -56,7 +56,6 @@ def estimate_model(
 
     Returns:
         ClusteringReport or None: Report containing clustering results, or None if processing failed
-        ClusteringReport or None: Report containing clustering results, or None if processing failed
     """
     # Simple check: if file doesn't exist (handles broken symlinks), skip it
     if not file_path.exists():
@@ -175,16 +174,10 @@ def parse_filename(filename: str):
     help="Directory containing parquet files",
 )
 @click.option(
-    "--output-path",
+    "--output-dir",
     type=click.Path(path_type=pathlib.Path),
     default=None,
-    help="Output CSV path for results (default: input_dir/results.csv)",
-)
-@click.option(
-    "--heatmap-path",
-    type=click.Path(path_type=pathlib.Path),
-    default=None,
-    help="Output path for heatmap figure (default: input_dir/heatmap.png)",
+    help="Output directory for all results (default: input_dir)",
 )
 @click.option(
     "--umap-dim",
@@ -236,8 +229,7 @@ def parse_filename(filename: str):
 )
 def main(
     input_dir: pathlib.Path,
-    output_path: pathlib.Path,
-    heatmap_path: pathlib.Path,
+    output_dir: pathlib.Path,
     umap_dim: int,
     min_class_size: int,
     tol: float,
@@ -257,9 +249,12 @@ def main(
     console = Console(force_terminal=True, width=120, legacy_windows=False)
     input_dir = input_dir.expanduser()
 
-    # Plot metrics with error bars for each (model, layer) combination
-    figs_dir = pathlib.Path("figs")
-    figs_dir.mkdir(exist_ok=True)
+    # Set up output directory
+    if output_dir is None:
+        output_dir = input_dir
+    else:
+        output_dir = output_dir.expanduser()
+    output_dir.mkdir(parents=True, exist_ok=True)
 
     # Find all parquet files matching the pattern
     parquet_files = sorted(input_dir.glob("res_*.parquet"))
@@ -413,11 +408,11 @@ def main(
                 if len(file_metrics) > 1:
                     # Use lineplot with error bars for multiple samples
                     plot_metrics_with_error_bars(
-                        file_metrics, figs_dir / f"{model}_{layer}_error_bars.png"
+                        file_metrics, output_dir / f"{model}_{layer}_error_bars.png"
                     )
                 else:
                     # Use original plot for single sample
-                    plot_metrics(file_metrics[0], figs_dir / f"{model}_{layer}.png")
+                    plot_metrics(file_metrics[0], output_dir / f"{model}_{layer}.png")
 
     # Create results dataframe
     if not results:
@@ -428,19 +423,11 @@ def main(
     df_results = df_results.sort_values(["model", "layer"])
 
     # Save results
-    if output_path is None:
-        output_path = figs_dir / "results.csv"
-    else:
-        output_path = output_path.expanduser()
-
+    output_path = output_dir / "results.csv"
     df_results.to_csv(output_path, index=False)
 
     # Create heatmap
-    if heatmap_path is None:
-        heatmap_path = figs_dir / "heatmap.png"
-    else:
-        heatmap_path = heatmap_path.expanduser()
-
+    heatmap_path = output_dir / "model.perf.heatmap.png"
     plot_heatmap(df_results, heatmap_path)
 
     console.print("\n[bold green]Results Summary[/bold green]")
@@ -486,7 +473,7 @@ def main(
     if best_report is not None:
         from pelinker.analysis import plot_umap_viz
 
-        umap_viz_path = figs_dir / "umap_best.html"
+        umap_viz_path = output_dir / "umap_best.html"
         console.print(
             "[green]✓[/green] Generating UMAP visualization for best model..."
         )
