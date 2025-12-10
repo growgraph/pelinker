@@ -619,6 +619,51 @@ def map_words_to_tokens_list(
     return token_work_spans_list, text_word_spans_list_
 
 
+def embed_texts(
+    phrases: list[str],
+    tokenizer,
+    model,
+    layers,
+    nlp: object | None = None,
+) -> list[torch.Tensor]:
+    """
+    Embed a list of text phrases using texts_to_vrep.
+
+    Args:
+        phrases: List of text phrases to embed
+        tokenizer: Tokenizer for the model
+        model: Model for embedding
+        layers: Layer specification
+        nlp: Optional spaCy NLP object
+
+    Returns:
+        List of embedding tensors, one per phrase
+    """
+    from pelinker.onto import WordGrouping
+
+    phrases_list = [str(p).strip() for p in phrases if pd.notna(p) and str(p).strip()]
+
+    if not phrases_list:
+        return []
+
+    # Use texts_to_vrep for embedding
+    report = texts_to_vrep(
+        phrases_list,
+        tokenizer=tokenizer,
+        model=model,
+        layers_spec=layers,
+        word_modes=[
+            WordGrouping.W1
+        ],  # Minimal word grouping for sentence-level embeddings
+        nlp=nlp,
+    )
+
+    # Extract text-level embeddings using the new method
+    text_embeddings = report.get_text_embeddings(layers)
+
+    return text_embeddings
+
+
 def extract_and_embed_mentions(
     props: list[str],
     data: list[str],

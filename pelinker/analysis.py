@@ -194,3 +194,380 @@ def cosine_similarity_std(tensor):
     std_dev = torch.std(cos_similarities)
 
     return std_dev
+
+
+def adjust_cluster_count(
+    df_umap: pd.DataFrame,
+    umap_columns: list[str],
+    current_n_clusters: int,
+    target_n_clusters: int,
+    base_min_cluster_size: int,
+) -> tuple[pd.DataFrame, int]:
+    """
+    Adjust HDBSCAN clustering to get closer to target number of clusters.
+
+    Args:
+        df_umap: DataFrame with UMAP-reduced embeddings
+        umap_columns: List of column names for UMAP dimensions
+        current_n_clusters: Current number of clusters
+        target_n_clusters: Desired number of clusters
+        base_min_cluster_size: Base min_cluster_size to adjust from
+
+    Returns:
+        tuple: (clustered_dataframe, final_n_clusters)
+    """
+    if current_n_clusters == target_n_clusters:
+        return df_umap, current_n_clusters
+
+    best_n_clusters = current_n_clusters
+    best_df = df_umap.copy()
+
+    # Try increasing min_cluster_size to reduce number of clusters
+    if current_n_clusters > target_n_clusters:
+        for size_mult in [1.2, 1.5, 2.0, 2.5]:
+            test_size = int(base_min_cluster_size * size_mult)
+            if test_size >= len(df_umap):
+                continue
+            clusterer = HDBSCAN(min_cluster_size=test_size, metric="cosine")
+            labels = clusterer.fit_predict(df_umap[umap_columns])
+            test_n_clusters = len(set(labels)) - (1 if -1 in labels else 0)
+            if abs(test_n_clusters - target_n_clusters) < abs(
+                best_n_clusters - target_n_clusters
+            ):
+                best_n_clusters = test_n_clusters
+                df_test = df_umap.copy()
+                df_test["class"] = labels
+                best_df = df_test
+                if best_n_clusters == target_n_clusters:
+                    break
+
+    # Try decreasing min_cluster_size to increase number of clusters
+    elif current_n_clusters < target_n_clusters:
+        for size_mult in [0.8, 0.6, 0.5, 0.4]:
+            test_size = max(2, int(base_min_cluster_size * size_mult))
+            clusterer = HDBSCAN(min_cluster_size=test_size, metric="cosine")
+            labels = clusterer.fit_predict(df_umap[umap_columns])
+            test_n_clusters = len(set(labels)) - (1 if -1 in labels else 0)
+            if abs(test_n_clusters - target_n_clusters) < abs(
+                best_n_clusters - target_n_clusters
+            ):
+                best_n_clusters = test_n_clusters
+                df_test = df_umap.copy()
+                df_test["class"] = labels
+                best_df = df_test
+                if best_n_clusters == target_n_clusters:
+                    break
+
+    return best_df, best_n_clusters
+
+
+def cluster_with_target_count(
+    df_umap: pd.DataFrame,
+    umap_columns: list[str],
+    target_n_clusters: int,
+    base_min_cluster_size: int | None = None,
+) -> tuple[pd.DataFrame, int, float]:
+    """
+    Cluster data to get approximately target number of clusters and compute silhouette score.
+
+    Args:
+        df_umap: DataFrame with UMAP-reduced embeddings
+        umap_columns: List of column names for UMAP dimensions
+        target_n_clusters: Desired number of clusters
+        base_min_cluster_size: Starting min_cluster_size (if None, estimates from data size)
+
+    Returns:
+        tuple: (clustered_dataframe, actual_n_clusters, silhouette_score)
+    """
+    if base_min_cluster_size is None:
+        # Estimate starting point: aim for clusters of roughly equal size
+        base_min_cluster_size = max(2, len(df_umap) // (target_n_clusters * 3))
+
+    # Start with estimated size
+    clusterer = HDBSCAN(min_cluster_size=base_min_cluster_size, metric="cosine")
+    labels = clusterer.fit_predict(df_umap[umap_columns])
+    current_n_clusters = len(set(labels)) - (1 if -1 in labels else 0)
+
+    # Adjust to get closer to target
+    df_clustered, final_n_clusters = adjust_cluster_count(
+        df_umap,
+        umap_columns,
+        current_n_clusters,
+        target_n_clusters,
+        base_min_cluster_size,
+    )
+
+    # Compute silhouette score
+    labels = df_clustered["class"].values
+    unique_labels = set(labels)
+    n_clusters = len(unique_labels) - (1 if -1 in unique_labels else 0)
+
+    if n_clusters < 2:
+        score = 0.0  # Invalid clustering
+    else:
+        score = silhouette_score(df_umap[umap_columns], labels)
+
+    return df_clustered, final_n_clusters, score
+
+
+def get_word_frequencies_from_library(
+    language: str = "en",
+    wordlist: str = "best",
+) -> object | None:
+    """
+    Get word frequency lookup object from wordfreq library.
+
+    Args:
+        language: Language code (default: "en" for English)
+        wordlist: Wordlist size - "best", "large", or "small" (default: "best")
+
+    Returns:
+        WordFrequencyLookup object with .get() method, or None if library not available
+    """
+    try:
+        from wordfreq import word_frequency  # type: ignore
+
+        # Return a callable that looks up frequencies
+        # We'll use a lazy lookup approach
+        class WordFrequencyLookup:
+            def __init__(self, lang: str, wlist: str):
+                self.lang = lang
+                self.wlist = wlist
+                self._cache: dict[str, float] = {}
+
+            def get(self, word: str, default: float = 0.0) -> float:
+                word_lower = word.lower()
+                if word_lower not in self._cache:
+                    try:
+                        self._cache[word_lower] = word_frequency(
+                            word_lower, self.lang, wordlist=self.wlist
+                        )
+                    except (KeyError, ValueError):
+                        self._cache[word_lower] = default
+                return self._cache[word_lower]
+
+            def __getitem__(self, word: str) -> float:
+                return self.get(word)
+
+        return WordFrequencyLookup(language, wordlist)  # type: ignore
+    except ImportError:
+        return None
+
+
+def _measure_label_complexity(
+    label: str,
+    word_frequencies: dict[str, float] | object | None = None,
+) -> dict[str, int | float]:
+    """
+    Measure complexity of a label using multiple metrics.
+
+    Args:
+        label: Label string to measure
+        word_frequencies: Optional dictionary or lookup object with .get() method
+                         mapping words to their frequencies.
+                         If None, uses word length as a proxy for frequency.
+
+    Returns:
+        Dictionary with complexity metrics: char_count, word_count, simplicity_score
+        simplicity_score: Higher = simpler (based on word frequency harmonic mean, penalized by word count)
+    """
+    words = label.lower().split()
+    word_count = len(words)
+    char_count = len(label)
+
+    # Calculate simplicity score based on word frequencies
+    if word_frequencies:
+        # Use harmonic mean of word frequencies (penalizes rare words)
+        # Higher frequency = simpler, so we use frequencies directly
+        # Handle both dict-like objects and our WordFrequencyLookup object
+        if hasattr(word_frequencies, "get"):
+            word_freqs = [word_frequencies.get(word, 0.0) for word in words if word]
+        else:
+            # Fallback: try dict access
+            word_freqs = [
+                word_frequencies.get(word, 0.0)
+                if hasattr(word_frequencies, "get")
+                else 0.0
+                for word in words
+                if word
+            ]
+
+        if word_freqs and all(f > 0 for f in word_freqs):
+            # Harmonic mean of frequencies
+            harmonic_mean_freq = len(word_freqs) / sum(1.0 / f for f in word_freqs)
+        else:
+            # If any word is missing or has zero frequency, use minimum
+            harmonic_mean_freq = min(word_freqs) if word_freqs else 0.0
+    else:
+        # Fallback: use inverse word length as proxy for frequency
+        # Shorter words tend to be more common/simpler
+        # Use harmonic mean of inverse word lengths
+        word_lengths = [len(word) for word in words if word]
+        if word_lengths:
+            # Harmonic mean of inverse lengths = n / sum(lengths)
+            # This gives higher scores for shorter words
+            total_length = sum(max(1, length) for length in word_lengths)
+            harmonic_mean_freq = len(word_lengths) / total_length
+        else:
+            harmonic_mean_freq = 0.0
+
+    # Penalize by number of words (more words = less simple)
+    # Apply square root penalty to avoid over-penalizing
+    word_count_penalty = 1.0 / (1.0 + (word_count - 1) * 0.1)
+    simplicity_score = harmonic_mean_freq * word_count_penalty
+
+    return {
+        "char_count": char_count,
+        "word_count": word_count,
+        "simplicity_score": simplicity_score,
+    }
+
+
+def find_cluster_centers(
+    df_clustered: pd.DataFrame,
+    umap_columns: list[str],
+    id_column: str = "id",
+    label_column: str = "label",
+    method: str = "center",
+    min_cluster_size: int = 5,
+    max_complexity_chars: int | None = None,
+    max_complexity_words: int | None = None,
+    min_simplicity_score: float | None = None,
+    word_frequencies: dict[str, float] | object | None = None,
+) -> list[dict]:
+    """
+    Find a representative item for each cluster, filtering by size and complexity.
+
+    Args:
+        df_clustered: DataFrame with cluster assignments in 'class' column
+        umap_columns: List of column names for UMAP dimensions
+        id_column: Name of column containing item IDs
+        label_column: Name of column containing item labels
+        method: Selection method - "center" (closest to cluster center) or "simplest" (shortest label)
+        min_cluster_size: Minimum number of members required (default: 5)
+        max_complexity_chars: Maximum character count for simplest example (None = no limit)
+        max_complexity_words: Maximum word count for simplest example (None = no limit)
+        min_simplicity_score: Minimum simplicity score (based on word frequency harmonic mean)
+                             Higher = simpler. None = no limit.
+        word_frequencies: Optional dictionary mapping words to frequencies for simplicity calculation.
+                         If None, uses word length as proxy.
+
+    Returns:
+        List of dictionaries with cluster_id, cluster_size, center_id, center_label
+    """
+    cluster_results = []
+
+    for cluster_id in sorted(set(df_clustered["class"].values)):
+        if cluster_id == -1:  # Skip noise
+            continue
+
+        cluster_data = df_clustered[df_clustered["class"] == cluster_id]
+        cluster_size = len(cluster_data)
+
+        # Filter by minimum cluster size
+        if cluster_size < min_cluster_size:
+            continue
+
+        # Find item with shortest label (simplest example)
+        simplest_idx = cluster_data[label_column].apply(len).idxmin()
+        selected_row = cluster_data.loc[simplest_idx]
+
+        # Check complexity of the simplest example in cluster
+        # (even if method is "center", we check the simplest for filtering)
+        simplest_label = cluster_data[label_column].apply(len).idxmin()
+        simplest_row = cluster_data.loc[simplest_label]
+        complexity = _measure_label_complexity(
+            str(simplest_row[label_column]), word_frequencies=word_frequencies
+        )
+
+        # Filter by complexity thresholds
+        if (
+            max_complexity_chars is not None
+            and complexity["char_count"] > max_complexity_chars
+        ):
+            continue
+        if (
+            max_complexity_words is not None
+            and complexity["word_count"] > max_complexity_words
+        ):
+            continue
+        if (
+            min_simplicity_score is not None
+            and complexity["simplicity_score"] < min_simplicity_score
+        ):
+            continue
+
+        cluster_results.append(
+            {
+                "cluster_id": cluster_id,
+                "cluster_size": cluster_size,
+                "center_id": selected_row[id_column],
+                "center_label": selected_row[label_column],
+            }
+        )
+
+    # Sort by cluster size (largest first)
+    cluster_results.sort(key=lambda x: x["cluster_size"], reverse=True)
+    return cluster_results
+
+
+def compute_silhouette_after_filtering(
+    df_clustered: pd.DataFrame,
+    umap_columns: list[str],
+    valid_cluster_ids: set[int],
+) -> float:
+    """
+    Compute silhouette score after filtering out perplex clusters.
+
+    Args:
+        df_clustered: DataFrame with cluster assignments
+        umap_columns: List of UMAP column names
+        valid_cluster_ids: Set of cluster IDs to keep
+
+    Returns:
+        Silhouette score for filtered clusters
+    """
+    from sklearn.metrics import silhouette_score
+
+    # Filter to only valid clusters (exclude noise and filtered-out clusters)
+    df_filtered = df_clustered[df_clustered["class"].isin(valid_cluster_ids)].copy()
+
+    if len(df_filtered) == 0:
+        return 0.0
+
+    labels = df_filtered["class"].values
+    unique_labels = set(labels)
+    n_clusters = len(unique_labels)
+
+    if n_clusters < 2:
+        return 0.0
+
+    return silhouette_score(df_filtered[umap_columns], labels)
+
+
+def embeddings_dict_to_dataframe(
+    embeddings_dict: dict[str, tuple[str, torch.Tensor | np.ndarray]],
+) -> pd.DataFrame:
+    """
+    Convert embeddings dictionary to DataFrame format expected by umap_it.
+
+    Args:
+        embeddings_dict: Dictionary mapping id -> (label, embedding)
+
+    Returns:
+        DataFrame with columns: id, label, embed
+    """
+    embeddings_list = []
+    id_list = []
+    label_list = []
+
+    for id_val, (label, emb) in embeddings_dict.items():
+        if isinstance(emb, torch.Tensor):
+            emb_np = emb.detach().cpu().numpy()
+        else:
+            emb_np = np.array(emb)
+        embeddings_list.append(emb_np)
+        id_list.append(id_val)
+        label_list.append(label)
+
+    return pd.DataFrame({"id": id_list, "label": label_list, "embed": embeddings_list})

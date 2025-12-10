@@ -1,0 +1,11 @@
+entity_id,label,cluster_id,cluster_size
+PEL.000028,provokes,2,136
+BFO.0000050,part of,5,63
+PEL.000033,shuts,3,59
+PEL.000021,is,0,32
+RO.0002263,acts upstream of,1,28
+PEL.000007,degrades,10,26
+PEL.000032,secretes,7,18
+RO.0015012,reciprocal of,8,14
+RO.0002461,partner in,12,14
+RO.0002084,during which ends,13,14

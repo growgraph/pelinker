@@ -151,6 +151,50 @@ class ReportBatch(BaseDataclass):
     def available_groupings(self):
         return [item.word_grouping for item in self._data]
 
+    def get_text_embeddings(self, layers_spec):
+        """
+        Extract sentence-level embeddings for each text in the batch.
+
+        Args:
+            layers_spec: Layer specification (list of layer indices or "sent")
+
+        Returns:
+            list[torch.Tensor]: List of embeddings, one per text in self.texts
+        """
+        from pelinker.util import tt_aggregate_normalize
+
+        # Extract chunk-level embeddings from chunk_mapper.tensor
+        # chunk_mapper.tensor has shape: n_layers x n_chunks x n_tokens x n_emb
+        chunk_embeddings = tt_aggregate_normalize(self.chunk_mapper.tensor, layers_spec)
+
+        # Map chunks back to texts
+        # Group chunks by text index
+        text_chunks = {}
+        for ichunk, (itext, ichunk_local) in enumerate(self.chunk_mapper.it_ic):
+            if itext not in text_chunks:
+                text_chunks[itext] = []
+            text_chunks[itext].append(ichunk)
+
+        # Aggregate embeddings for each text (average if multiple chunks)
+        text_embeddings = []
+        for itext in range(len(self.texts)):
+            chunk_indices = text_chunks.get(itext, [])
+            if chunk_indices:
+                # Get embeddings for all chunks of this text
+                chunk_embs = chunk_embeddings[chunk_indices]
+                # Average over chunks if multiple chunks
+                if len(chunk_indices) > 1:
+                    text_emb = chunk_embs.mean(dim=0)
+                else:
+                    text_emb = chunk_embs[0]
+                text_embeddings.append(text_emb)
+            else:
+                # Fallback: create zero embedding if no chunks found
+                # This shouldn't happen, but handle it gracefully
+                text_embeddings.append(torch.zeros_like(chunk_embeddings[0]))
+
+        return text_embeddings
+
 
 def _wg_for_property(prop: str) -> WordGrouping | None:
     n = len(prop.split())
