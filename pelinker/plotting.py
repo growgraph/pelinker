@@ -120,17 +120,27 @@ def plot_metrics_with_error_bars(
     plt.close()
 
 
-def plot_heatmap(df_results: pd.DataFrame, output_path: pathlib.Path):
+def plot_heatmap(
+    df_results: pd.DataFrame,
+    output_path: pathlib.Path,
+    metric: str = "best_score",
+    metric_label: str | None = None,
+):
     """
     Create a heatmap with model (rows) and layer (columns).
-    Color represents best_score, text shows best_size.
+    Color represents the specified metric, text shows best_size and metric name.
 
     Args:
-        df_results: DataFrame with columns: model, layer, best_size, best_score
+        df_results: DataFrame with columns: model, layer, best_size, and the metric column
         output_path: Path to save the heatmap figure
+        metric: Column name for the metric to display as color (default: "best_score")
+        metric_label: Label for the metric (default: uses metric column name)
     """
+    if metric_label is None:
+        metric_label = metric.replace("_", " ").title()
+
     # Create pivot tables
-    score_pivot = df_results.pivot(index="model", columns="layer", values="best_score")
+    score_pivot = df_results.pivot(index="model", columns="layer", values=metric)
     size_pivot = df_results.pivot(index="model", columns="layer", values="best_size")
 
     # Create figure
@@ -141,19 +151,19 @@ def plot_heatmap(df_results: pd.DataFrame, output_path: pathlib.Path):
         )
     )
 
-    # Create heatmap with best_score as color
+    # Create heatmap with metric as color
     sns.heatmap(
         score_pivot,
         annot=False,  # We'll add custom annotations
         fmt=".3f",
         cmap="viridis",
-        cbar_kws={"label": "Best Score"},
+        cbar_kws={"label": metric_label},
         ax=ax,
         linewidths=0.5,
         linecolor="gray",
     )
 
-    # Add best_size as text annotations
+    # Add best_size and metric name as text annotations
     # Calculate mean score for text color threshold
     valid_scores = score_pivot.values[~pd.isna(score_pivot.values)]
     mean_score = valid_scores.mean() if len(valid_scores) > 0 else 0
@@ -166,19 +176,27 @@ def plot_heatmap(df_results: pd.DataFrame, output_path: pathlib.Path):
             if not pd.isna(score_val) and not pd.isna(size_val):
                 # Use white text for darker cells (lower scores), black for lighter cells
                 text_color = "white" if score_val < mean_score else "black"
-                # Add text annotation with best_size
+                # Format metric value based on its magnitude
+                if abs(score_val) < 0.01:
+                    metric_str = f"{score_val:.2e}"
+                elif abs(score_val) < 1:
+                    metric_str = f"{score_val:.3f}"
+                else:
+                    metric_str = f"{score_val:.2f}"
+                # Add text annotation with best_size and metric value
                 ax.text(
                     j + 0.5,
                     i + 0.5,
-                    f"{int(size_val)}",
+                    f"{int(size_val)}\n{metric_str}",
                     ha="center",
                     va="center",
                     color=text_color,
                     fontweight="bold",
-                    fontsize=9,
+                    fontsize=8,
+                    linespacing=1.2,
                 )
 
-    ax.set_title("Clustering Results: Best Score (color) and Best Size (text)")
+    ax.set_title(f"Clustering Results: {metric_label} (color) and Best Size (text)")
     ax.set_xlabel("Layer")
     ax.set_ylabel("Model")
 

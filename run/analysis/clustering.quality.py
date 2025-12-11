@@ -458,6 +458,11 @@ def main(
                 best_sizes = [r.best_size for r in file_reports]
                 best_scores = [r.best_score for r in file_reports]
                 number_properties_list = [r.number_properties for r in file_reports]
+                hungarian_accuracies = [
+                    r.hungarian_accuracy
+                    for r in file_reports
+                    if r.hungarian_accuracy is not None
+                ]
 
                 avg_best_size = np.mean(best_sizes)
                 std_best_size = np.std(best_sizes) if len(best_sizes) > 1 else 0.0
@@ -472,6 +477,15 @@ def main(
                     else 0.0
                 )
 
+                avg_hungarian_accuracy = (
+                    np.mean(hungarian_accuracies) if hungarian_accuracies else None
+                )
+                std_hungarian_accuracy = (
+                    np.std(hungarian_accuracies)
+                    if len(hungarian_accuracies) > 1
+                    else 0.0
+                )
+
                 results.append(
                     {
                         "model": model,
@@ -482,6 +496,8 @@ def main(
                         "number_properties_std": std_number_properties,
                         "best_score": avg_best_score,
                         "best_score_std": std_best_score,
+                        "hungarian_accuracy": avg_hungarian_accuracy,
+                        "hungarian_accuracy_std": std_hungarian_accuracy,
                     }
                 )
 
@@ -519,9 +535,24 @@ def main(
     output_path = output_dir / "results.csv"
     df_results.to_csv(output_path, index=False)
 
-    # Create heatmap
+    # Create heatmaps
     heatmap_path = output_dir / "model.perf.heatmap.png"
-    plot_heatmap(df_results, heatmap_path)
+    plot_heatmap(
+        df_results, heatmap_path, metric="best_score", metric_label="Best Score"
+    )
+
+    # Create Hungarian accuracy heatmap if available
+    if (
+        "hungarian_accuracy" in df_results.columns
+        and df_results["hungarian_accuracy"].notna().any()
+    ):
+        hungarian_heatmap_path = output_dir / "model.hungarian_accuracy.heatmap.png"
+        plot_heatmap(
+            df_results,
+            hungarian_heatmap_path,
+            metric="hungarian_accuracy",
+            metric_label="Hungarian Accuracy",
+        )
 
     console.print("\n[bold green]Results Summary[/bold green]")
     table = Table(show_header=True, header_style="bold magenta")

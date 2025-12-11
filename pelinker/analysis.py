@@ -529,7 +529,6 @@ def compute_silhouette_after_filtering(
     Returns:
         Silhouette score for filtered clusters
     """
-    from sklearn.metrics import silhouette_score
 
     # Filter to only valid clusters (exclude noise and filtered-out clusters)
     df_filtered = df_clustered[df_clustered["class"].isin(valid_cluster_ids)].copy()
