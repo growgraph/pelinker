@@ -7,6 +7,8 @@ from plotly import express as px, graph_objects as go
 from sklearn.cluster import HDBSCAN
 from sklearn.metrics import silhouette_score
 from torch.nn import functional as F
+from collections.abc import Mapping
+from typing import Iterable
 
 from skopt import gp_minimize
 
@@ -354,70 +356,58 @@ def get_word_frequencies_from_library(
         return None
 
 
-def _measure_label_complexity(
+def _measure_label_simplicity(
     label: str,
-    word_frequencies: dict[str, float] | object | None = None,
+    word_frequencies: Mapping[str, float],
+    stopwords: Iterable[str] = ("is", "of", "the", "a", "an", "to", "for", "or", "in"),
+    zero_freq_penalty: float = 1e-8,
+    multiword_penalty: float = 0.15,
+    stopword_penalty: float = 0.3,
 ) -> dict[str, int | float]:
-    """
-    Measure complexity of a label using multiple metrics.
+    """..."""
 
-    Args:
-        label: Label string to measure
-        word_frequencies: Optional dictionary or lookup object with .get() method
-                         mapping words to their frequencies.
-                         If None, uses word length as a proxy for frequency.
+    text = label.strip().lower()
 
-    Returns:
-        Dictionary with complexity metrics: char_count, word_count, simplicity_score
-        simplicity_score: Higher = simpler (based on word frequency harmonic mean, penalized by word count)
-    """
-    words = label.lower().split()
+    # Handle empty labels
+    if not text:
+        return {"char_count": 0, "word_count": 0, "simplicity_score": 0.0}
+
+    words = text.split()
     word_count = len(words)
-    char_count = len(label)
 
-    # Calculate simplicity score based on word frequencies
-    if word_frequencies:
-        # Use harmonic mean of word frequencies (penalizes rare words)
-        # Higher frequency = simpler, so we use frequencies directly
-        # Handle both dict-like objects and our WordFrequencyLookup object
-        if hasattr(word_frequencies, "get"):
-            word_freqs = [word_frequencies.get(word, 0.0) for word in words if word]
-        else:
-            # Fallback: try dict access
-            word_freqs = [
-                word_frequencies.get(word, 0.0)
-                if hasattr(word_frequencies, "get")
-                else 0.0
-                for word in words
-                if word
-            ]
+    stopword_set = set(stopwords)
+    content_words = [w for w in words if w not in stopword_set]
+    stopword_count = word_count - len(content_words)
 
-        if word_freqs and all(f > 0 for f in word_freqs):
-            # Harmonic mean of frequencies
-            harmonic_mean_freq = len(word_freqs) / sum(1.0 / f for f in word_freqs)
-        else:
-            # If any word is missing or has zero frequency, use minimum
-            harmonic_mean_freq = min(word_freqs) if word_freqs else 0.0
-    else:
-        # Fallback: use inverse word length as proxy for frequency
-        # Shorter words tend to be more common/simpler
-        # Use harmonic mean of inverse word lengths
-        word_lengths = [len(word) for word in words if word]
-        if word_lengths:
-            # Harmonic mean of inverse lengths = n / sum(lengths)
-            # This gives higher scores for shorter words
-            total_length = sum(max(1, length) for length in word_lengths)
-            harmonic_mean_freq = len(word_lengths) / total_length
-        else:
-            harmonic_mean_freq = 0.0
+    # Handle labels with only stopwords
+    if not content_words:
+        return {
+            "char_count": len(text),
+            "word_count": word_count,
+            "simplicity_score": zero_freq_penalty,
+        }
 
-    # Penalize by number of words (more words = less simple)
-    # Apply square root penalty to avoid over-penalizing
-    word_count_penalty = 1.0 / (1.0 + (word_count - 1) * 0.1)
-    simplicity_score = harmonic_mean_freq * word_count_penalty
+    # Get frequencies for content words
+    content_freqs = [word_frequencies.get(w, zero_freq_penalty) for w in content_words]
+
+    # Harmonic mean
+    harmonic_mean_freq = len(content_freqs) / sum(
+        1.0 / max(f, zero_freq_penalty) for f in content_freqs
+    )
+
+    # Apply penalties multiplicatively (but ensure they don't go negative)
+    penalty_factor = 1.0
+
+    if word_count > 1:
+        penalty_factor *= max(0.0, 1.0 - multiword_penalty * (word_count - 1))
+
+    if stopword_count > 0 and word_count > 1:
+        penalty_factor *= max(0.0, 1.0 - stopword_penalty * stopword_count)
+
+    simplicity_score = harmonic_mean_freq * penalty_factor
 
     return {
-        "char_count": char_count,
+        "char_count": len(text),
         "word_count": word_count,
         "simplicity_score": simplicity_score,
     }
@@ -425,77 +415,89 @@ def _measure_label_complexity(
 
 def find_cluster_centers(
     df_clustered: pd.DataFrame,
-    umap_columns: list[str],
     id_column: str = "id",
     label_column: str = "label",
-    method: str = "center",
     min_cluster_size: int = 5,
     max_complexity_chars: int | None = None,
     max_complexity_words: int | None = None,
     min_simplicity_score: float | None = None,
-    word_frequencies: dict[str, float] | object | None = None,
+    max_word_length: int | None = None,
+    word_frequencies: dict[str, float] | None = None,
 ) -> list[dict]:
     """
     Find a representative item for each cluster, filtering by size and complexity.
 
     Args:
         df_clustered: DataFrame with cluster assignments in 'class' column
-        umap_columns: List of column names for UMAP dimensions
         id_column: Name of column containing item IDs
         label_column: Name of column containing item labels
-        method: Selection method - "center" (closest to cluster center) or "simplest" (shortest label)
         min_cluster_size: Minimum number of members required (default: 5)
-        max_complexity_chars: Maximum character count for simplest example (None = no limit)
-        max_complexity_words: Maximum word count for simplest example (None = no limit)
+        max_complexity_chars: Maximum character count for candidates (None = no limit)
+        max_complexity_words: Maximum word count for candidates (None = no limit)
         min_simplicity_score: Minimum simplicity score (based on word frequency harmonic mean)
                              Higher = simpler. None = no limit.
+        max_word_length: Maximum length for any word in the label (None = no limit)
         word_frequencies: Optional dictionary mapping words to frequencies for simplicity calculation.
-                         If None, uses word length as proxy.
 
     Returns:
-        List of dictionaries with cluster_id, cluster_size, center_id, center_label
+        List of dictionaries with cluster_id, cluster_size, center_id, center_label,
+        sorted by cluster_size (descending)
     """
     cluster_results = []
 
-    for cluster_id in sorted(set(df_clustered["class"].values)):
-        if cluster_id == -1:  # Skip noise
-            continue
+    # Filter out noise points and group by cluster
+    df_valid = df_clustered[df_clustered["class"] != -1].copy()
 
-        cluster_data = df_clustered[df_clustered["class"] == cluster_id]
+    for cluster_id, cluster_data in df_valid.groupby("class"):
         cluster_size = len(cluster_data)
 
-        # Filter by minimum cluster size
+        # Skip small clusters
         if cluster_size < min_cluster_size:
             continue
 
-        # Find item with shortest label (simplest example)
-        simplest_idx = cluster_data[label_column].apply(len).idxmin()
-        selected_row = cluster_data.loc[simplest_idx]
+        # Compute simplicity scores and filter candidates in one pass
+        valid_candidates = []
 
-        # Check complexity of the simplest example in cluster
-        # (even if method is "center", we check the simplest for filtering)
-        simplest_label = cluster_data[label_column].apply(len).idxmin()
-        simplest_row = cluster_data.loc[simplest_label]
-        complexity = _measure_label_complexity(
-            str(simplest_row[label_column]), word_frequencies=word_frequencies
-        )
+        for idx, row in cluster_data.iterrows():
+            label = str(row[label_column])
 
-        # Filter by complexity thresholds
-        if (
-            max_complexity_chars is not None
-            and complexity["char_count"] > max_complexity_chars
-        ):
+            # Apply quick filters first (before expensive simplicity calculation)
+            if max_word_length is not None:
+                if any(len(word) > max_word_length for word in label.split()):
+                    continue
+
+            # Compute simplicity metrics
+            complexity = _measure_label_simplicity(
+                label, word_frequencies=word_frequencies
+            )
+
+            # Apply complexity filters
+            if (
+                max_complexity_chars is not None
+                and complexity["char_count"] > max_complexity_chars
+            ):
+                continue
+            if (
+                max_complexity_words is not None
+                and complexity["word_count"] > max_complexity_words
+            ):
+                continue
+            if (
+                min_simplicity_score is not None
+                and complexity["simplicity_score"] < min_simplicity_score
+            ):
+                continue
+
+            # This candidate passes all filters
+            valid_candidates.append((idx, complexity["simplicity_score"]))
+
+        # Skip cluster if no valid candidates
+        if not valid_candidates:
             continue
-        if (
-            max_complexity_words is not None
-            and complexity["word_count"] > max_complexity_words
-        ):
-            continue
-        if (
-            min_simplicity_score is not None
-            and complexity["simplicity_score"] < min_simplicity_score
-        ):
-            continue
+
+        # Select the candidate with the highest simplicity score
+        best_idx, _ = max(valid_candidates, key=lambda x: x[1])
+        selected_row = cluster_data.loc[best_idx]
 
         cluster_results.append(
             {

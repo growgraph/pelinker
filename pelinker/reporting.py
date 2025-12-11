@@ -15,6 +15,9 @@ class ClusteringReport:
         pd.DataFrame
     )  # DataFrame with columns: min_cluster_size, icm, n_clusters, silhouette
     df: pd.DataFrame  # DataFrame with UMAP embeddings and cluster labels
+    hungarian_accuracy: float | None = (
+        None  # Hungarian matching accuracy (None if not computed)
+    )
 
 
 def log_clustering_scores(results: list[dict], logger: logging.Logger) -> None:

@@ -11,7 +11,8 @@ from pelinker.plotting import plot_metrics_with_error_bars, plot_heatmap
 from pelinker.reporting import ClusteringReport
 from sklearn.cluster import HDBSCAN
 
-from sklearn.metrics import silhouette_score
+from sklearn.metrics import silhouette_score, confusion_matrix
+from scipy.optimize import linear_sum_assignment
 from rich.console import Console
 from rich.progress import (
     Progress,
@@ -31,6 +32,42 @@ from pelinker.analysis import (
 from pelinker.io import read_batches
 
 
+def compute_hungarian_accuracy(y_true: np.ndarray, y_pred: np.ndarray) -> float:
+    """
+    Compute clustering accuracy using Hungarian algorithm to optimally match
+    predicted cluster labels to true labels.
+
+    Args:
+        y_true: True labels (e.g., property names)
+        y_pred: Predicted cluster labels
+
+    Returns:
+        Accuracy score between 0 and 1
+    """
+    # Filter out noise points (label -1) for accuracy computation
+    valid_mask = y_pred != -1
+    if not valid_mask.any():
+        return 0.0
+
+    y_true_valid = y_true[valid_mask]
+    y_pred_valid = y_pred[valid_mask]
+
+    if len(y_true_valid) == 0:
+        return 0.0
+
+    # Compute confusion matrix
+    cm = confusion_matrix(y_true_valid, y_pred_valid)
+
+    # Use Hungarian algorithm to find optimal assignment
+    # We negate the matrix because linear_sum_assignment minimizes cost
+    row_ind, col_ind = linear_sum_assignment(-cm)
+
+    # Compute accuracy based on optimal assignment
+    accuracy = cm[row_ind, col_ind].sum() / cm.sum()
+
+    return float(accuracy)
+
+
 def estimate_model(
     file_path: pathlib.Path,
     rns: RandomState,
@@ -40,6 +77,7 @@ def estimate_model(
     frac: float = 0.1,
     head: int | None = None,
     batch_size: int = 1000,
+    selected_labels: set[str] | None = None,
 ) -> ClusteringReport | None:
     """
     Estimate optimal cluster size for a single model/layer file.
@@ -53,6 +91,7 @@ def estimate_model(
         frac: Fraction of dataset to sample
         head: Number of batches to take (None for all)
         batch_size: Batch size for reading
+        selected_labels: Optional set of labels from selected labels KB to filter by
 
     Returns:
         ClusteringReport or None: Report containing clustering results, or None if processing failed
@@ -79,6 +118,12 @@ def estimate_model(
     dfr = pd.concat(agg)
 
     umap_columns = [f"u_{j:02d}" for j in range(umap_dim)]
+
+    # Filter by selected labels if provided
+    if selected_labels is not None:
+        dfr = dfr.loc[dfr["property"].isin(selected_labels)].copy()
+        if len(dfr) == 0:
+            return None
 
     # trim rare mentions
     mention_count = dfr["property"].value_counts()
@@ -137,12 +182,22 @@ def estimate_model(
         dfr2, umap_columns, tol=tol, bounds=bounds
     )
 
+    # Compute Hungarian matching accuracy
+    # Use property column as true labels and class column as predicted clusters
+    hungarian_acc = None
+    if "property" in dfr2_final.columns and "class" in dfr2_final.columns:
+        # Convert property labels to numeric for confusion matrix
+        property_labels = dfr2_final["property"].astype("category").cat.codes.values
+        cluster_labels = dfr2_final["class"].values
+        hungarian_acc = compute_hungarian_accuracy(property_labels, cluster_labels)
+
     return ClusteringReport(
         best_size=best_size,
         best_score=best_score,
         number_properties=number_properties,
         metrics_df=dfm,
         df=dfr2_final,
+        hungarian_accuracy=hungarian_acc,
     )
 
 
@@ -227,6 +282,12 @@ def parse_filename(filename: str):
     default=1,
     help="Number of samples/runs per (model, layer) combination",
 )
+@click.option(
+    "--selected-labels-kb-path",
+    type=click.Path(path_type=pathlib.Path),
+    default=None,
+    help="Optional path to selected labels KB CSV file. If provided, clustering will only use labels from this KB.",
+)
 def main(
     input_dir: pathlib.Path,
     output_dir: pathlib.Path,
@@ -238,6 +299,7 @@ def main(
     head: int,
     batch_size: int,
     n_sample: int,
+    selected_labels_kb_path: pathlib.Path | None,
 ):
     """
     Process multiple parquet files and compute optimal cluster sizes.
@@ -248,6 +310,36 @@ def main(
     # Use legacy_windows=False and force_terminal to ensure progress bars work
     console = Console(force_terminal=True, width=120, legacy_windows=False)
     input_dir = input_dir.expanduser()
+
+    # Load selected labels KB if provided
+    selected_labels: set[str] | None = None
+    if selected_labels_kb_path is not None:
+        selected_labels_kb_path = selected_labels_kb_path.expanduser()
+        if not selected_labels_kb_path.exists():
+            console.print(
+                f"[red]Selected labels KB file not found: {selected_labels_kb_path}[/red]"
+            )
+            return
+
+        console.print(
+            f"[cyan]Loading selected labels KB from {selected_labels_kb_path}[/cyan]"
+        )
+        try:
+            df_selected = pd.read_csv(selected_labels_kb_path)
+            # Extract labels from the selected labels KB
+            # The file should have a 'label' column
+            if "label" not in df_selected.columns:
+                console.print(
+                    f"[red]Selected labels KB file must have a 'label' column. Found columns: {list(df_selected.columns)}[/red]"
+                )
+                return
+            selected_labels = set(df_selected["label"].dropna().astype(str))
+            console.print(
+                f"[green]Loaded {len(selected_labels)} labels from selected labels KB[/green]"
+            )
+        except Exception as e:
+            console.print(f"[red]Error loading selected labels KB: {e}[/red]")
+            return
 
     # Set up output directory
     if output_dir is None:
@@ -341,6 +433,7 @@ def main(
                     frac=frac,
                     head=head,
                     batch_size=batch_size,
+                    selected_labels=selected_labels,
                 )
 
                 if report is not None:

@@ -33,6 +33,7 @@ def _perform_clustering_analysis(
     max_chars: int | None = 30,
     max_words: int | None = 4,
     min_simplicity_score: float | None = 5e-8,
+    max_word_length: int | None = 22,
     results_dir: pathlib.Path | None = None,
     sem_div_kb_path: pathlib.Path | None = None,
 ) -> dict:
@@ -48,6 +49,7 @@ def _perform_clustering_analysis(
         max_chars: Maximum characters for simplest example
         max_words: Maximum words for simplest example
         min_simplicity_score: Minimum simplicity score threshold
+        max_word_length: Maximum length for any word in the label (None = no limit)
         results_dir: Output directory for saving JSON report (None = don't save)
         sem_div_kb_path: Path for saving reduced KB dataframe (None = don't save)
 
@@ -55,7 +57,7 @@ def _perform_clustering_analysis(
         Dictionary with report data
     """
     if target_cluster_counts is None:
-        target_cluster_counts = [5, 10, 15, 20]
+        target_cluster_counts = [5, 10, 15, 20, 30]
 
     logger.info("Performing clustering analysis...")
 
@@ -101,12 +103,11 @@ def _perform_clustering_analysis(
         # Find valid clusters after filtering
         cluster_results = find_cluster_centers(
             df_clustered,
-            umap_columns,
-            method="simplest",
             min_cluster_size=min_cluster_size,
             max_complexity_chars=max_chars,
             max_complexity_words=max_words,
             min_simplicity_score=min_simplicity_score,
+            max_word_length=max_word_length,
             word_frequencies=word_frequencies,
         )
         valid_cluster_ids = {cr["cluster_id"] for cr in cluster_results}
@@ -141,7 +142,10 @@ def _perform_clustering_analysis(
 
     # Output detailed results for the best scoring clustering (or 15 clusters if available)
     best_result = max(results, key=lambda x: x["score_after_filtering"])
-    default_result = next((r for r in results if r["target_count"] == 15), best_result)
+    default_result = next(
+        (r for r in results if r["target_count"] == max(target_cluster_counts)),
+        best_result,
+    )
 
     logger.info(
         "\nShowing cluster details for %d clusters (score after filtering: %.4f)...",
@@ -287,7 +291,7 @@ def _perform_clustering_analysis(
 @click.option(
     "--max-words",
     type=click.INT,
-    default=4,
+    default=2,
     show_default=True,
     help="Maximum word count for simplest example in cluster.",
 )
@@ -297,6 +301,13 @@ def _perform_clustering_analysis(
     default=5e-8,
     show_default=True,
     help="Minimum simplicity score (based on word frequency harmonic mean).",
+)
+@click.option(
+    "--max-word-length",
+    type=click.INT,
+    default=22,
+    show_default=True,
+    help="Maximum length for any word in the label (labels with words longer than this are discarded).",
 )
 @click.option(
     "--results-dir",
@@ -321,6 +332,7 @@ def run(
     max_chars,
     max_words,
     min_simplicity_score,
+    max_word_length,
     results_dir,
     sem_div_kb_path,
 ):
@@ -420,6 +432,7 @@ def run(
         max_chars=max_chars,
         max_words=max_words,
         min_simplicity_score=min_simplicity_score,
+        max_word_length=max_word_length,
         results_dir=results_dir,
         sem_div_kb_path=sem_div_kb_path,
     )
