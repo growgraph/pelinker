@@ -1,18 +1,10 @@
 import click
 import pathlib
-import re
 import numpy as np
-
-import torch
 
 import pandas as pd
 from numpy.random import RandomState
 from pelinker.plotting import plot_metrics_with_error_bars, plot_heatmap
-from pelinker.reporting import ClusteringReport
-from sklearn.cluster import HDBSCAN
-
-from sklearn.metrics import silhouette_score, confusion_matrix
-from scipy.optimize import linear_sum_assignment
 from rich.console import Console
 from rich.progress import (
     Progress,
@@ -24,201 +16,14 @@ from rich.progress import (
 from rich.table import Table
 
 from pelinker.analysis import (
-    compute_optimal_min_cluster_size,
     plot_metrics,
-    umap_it,
-    cosine_similarity_std,
+    estimate_model_clustering,
 )
-from pelinker.io import read_batches
+from pelinker.ops import parse_model_filename
 
 
-def compute_hungarian_accuracy(y_true: np.ndarray, y_pred: np.ndarray) -> float:
-    """
-    Compute clustering accuracy using Hungarian algorithm to optimally match
-    predicted cluster labels to true labels.
-
-    Args:
-        y_true: True labels (e.g., property names)
-        y_pred: Predicted cluster labels
-
-    Returns:
-        Accuracy score between 0 and 1
-    """
-    # Filter out noise points (label -1) for accuracy computation
-    valid_mask = y_pred != -1
-    if not valid_mask.any():
-        return 0.0
-
-    y_true_valid = y_true[valid_mask]
-    y_pred_valid = y_pred[valid_mask]
-
-    if len(y_true_valid) == 0:
-        return 0.0
-
-    # Compute confusion matrix
-    cm = confusion_matrix(y_true_valid, y_pred_valid)
-
-    # Use Hungarian algorithm to find optimal assignment
-    # We negate the matrix because linear_sum_assignment minimizes cost
-    row_ind, col_ind = linear_sum_assignment(-cm)
-
-    # Compute accuracy based on optimal assignment
-    accuracy = cm[row_ind, col_ind].sum() / cm.sum()
-
-    return float(accuracy)
-
-
-def estimate_model(
-    file_path: pathlib.Path,
-    rns: RandomState,
-    umap_dim: int = 15,
-    min_class_size: int = 20,
-    tol: float = 0.05,
-    frac: float = 0.1,
-    head: int | None = None,
-    batch_size: int = 1000,
-    selected_labels: set[str] | None = None,
-) -> ClusteringReport | None:
-    """
-    Estimate optimal cluster size for a single model/layer file.
-
-    Args:
-        file_path: Path to parquet file
-        rns: RandomState object for reproducible sampling
-        umap_dim: UMAP dimensionality
-        min_class_size: Minimum class size for filtering
-        tol: Tolerance for optimization
-        frac: Fraction of dataset to sample
-        head: Number of batches to take (None for all)
-        batch_size: Batch size for reading
-        selected_labels: Optional set of labels from selected labels KB to filter by
-
-    Returns:
-        ClusteringReport or None: Report containing clustering results, or None if processing failed
-    """
-    # Simple check: if file doesn't exist (handles broken symlinks), skip it
-    if not file_path.exists():
-        return None
-    agg = []
-
-    try:
-        for i, batch in enumerate(
-            read_batches(file_path.as_posix(), batch_size=batch_size)
-        ):
-            sample = batch.sample(frac=frac, random_state=rns)
-            agg += [sample]
-            if head is not None and i >= head - 1:
-                break
-    except Exception:
-        return None
-
-    if not agg:
-        return None
-
-    dfr = pd.concat(agg)
-
-    umap_columns = [f"u_{j:02d}" for j in range(umap_dim)]
-
-    # Filter by selected labels if provided
-    if selected_labels is not None:
-        dfr = dfr.loc[dfr["property"].isin(selected_labels)].copy()
-        if len(dfr) == 0:
-            return None
-
-    # trim rare mentions
-    mention_count = dfr["property"].value_counts()
-    low_count_properties = mention_count[
-        ~(mention_count >= min_class_size)
-    ].index.to_list()
-
-    dfr = dfr.loc[~dfr["property"].isin(low_count_properties)].copy()
-
-    if len(dfr) == 0:
-        return None
-
-    # Get number of unique properties before UMAP
-    number_properties = dfr["property"].nunique()
-
-    dfr2 = umap_it(dfr, umap_dim=umap_dim)
-
-    sizes = list(np.arange(int(0.5 * min_class_size), int(5 * min_class_size), 5)) + [
-        int(2 * number_properties)
-    ]
-
-    metrics = []
-    for size in sizes:
-        clusterer = HDBSCAN(min_cluster_size=size, metric="cosine")
-        labels = clusterer.fit_predict(dfr2[umap_columns])
-        dfr2_temp = dfr2.copy()
-        dfr2_temp["class"] = pd.DataFrame(
-            labels, columns=["class"], index=dfr2_temp.index
-        )
-
-        ic = []
-        for ix, group in dfr2_temp.groupby("class"):
-            if ix == -1:  # Skip noise points
-                continue
-            tgroup = torch.from_numpy(group[umap_columns].values)
-            st = cosine_similarity_std(tgroup)
-            ic += [st]
-
-        icm = np.mean(ic) if ic else np.nan
-
-        # Only compute silhouette score if we have valid clusters (at least 2 clusters, excluding noise)
-        unique_labels = set(labels)
-        n_clusters = len(unique_labels) - (1 if -1 in unique_labels else 0)
-
-        if n_clusters > 2:
-            score = silhouette_score(dfr2[umap_columns], labels)
-            metrics += [(size, icm, n_clusters, score)]
-
-    dfm = pd.DataFrame(
-        metrics, columns=["min_cluster_size", "icm", "n_clusters", "silhouette"]
-    )
-
-    # Find optimal cluster size
-    bounds = [(int(0.5 * min_class_size), int(5 * min_class_size))]
-    best_size, best_score, dfr2_final = compute_optimal_min_cluster_size(
-        dfr2, umap_columns, tol=tol, bounds=bounds
-    )
-
-    # Compute Hungarian matching accuracy
-    # Use property column as true labels and class column as predicted clusters
-    hungarian_acc = None
-    if "property" in dfr2_final.columns and "class" in dfr2_final.columns:
-        # Convert property labels to numeric for confusion matrix
-        property_labels = dfr2_final["property"].astype("category").cat.codes.values
-        cluster_labels = dfr2_final["class"].values
-        hungarian_acc = compute_hungarian_accuracy(property_labels, cluster_labels)
-
-    return ClusteringReport(
-        best_size=best_size,
-        best_score=best_score,
-        number_properties=number_properties,
-        metrics_df=dfm,
-        df=dfr2_final,
-        hungarian_accuracy=hungarian_acc,
-    )
-
-
-def parse_filename(filename: str):
-    """
-    Parse filename like 'res_bert_1.parquet' to extract model and layer.
-
-    Args:
-        filename: Filename to parse
-
-    Returns:
-        tuple: (model, layer) or (None, None) if pattern doesn't match
-    """
-    # Pattern: res_<model>_<layer>.parquet
-    pattern = r"res_([^_]+)_(\d+)\.parquet"
-    match = re.match(pattern, filename)
-    if match:
-        model = match.group(1)
-        layer = int(match.group(2))
-        return model, layer
-    return None, None
+# estimate_model is now estimate_model_clustering in pelinker.analysis
+# parse_filename is now parse_model_filename in pelinker.ops
 
 
 @click.command()
@@ -363,7 +168,7 @@ def main(
         if not file_path.exists():
             continue
 
-        model, layer = parse_filename(file_path.name)
+        model, layer = parse_model_filename(file_path.name)
         if model is None or layer is None:
             continue
 
@@ -424,7 +229,7 @@ def main(
 
                 progress.update(task, description=" | ".join(status_parts))
 
-                report = estimate_model(
+                report = estimate_model_clustering(
                     file_path=file_path,
                     rns=rns,
                     umap_dim=umap_dim,
