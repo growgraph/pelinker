@@ -89,3 +89,24 @@ def _detect_headers_and_columns(
         # First row might be headers, use column names
         logger.info("Headers detected, using column names")
         return True, sample_df.columns[0], sample_df.columns[1]
+
+
+def load_dataframe(table_path: pathlib.Path) -> pd.DataFrame:
+    """
+    Load a dataframe from CSV/TSV file.
+
+    Args:
+        table_path: Path to the CSV/TSV file (optionally gzipped)
+
+    Returns:
+        Loaded DataFrame
+    """
+    table_path = table_path.expanduser()
+    if not table_path.exists():
+        raise FileNotFoundError(f"Input table not found at {table_path}")
+
+    file_format = _detect_file_format(table_path)
+    compression = "gzip" if table_path.suffix.endswith(".gz") else None
+    sep = "\t" if file_format == "tsv" else ","
+
+    return pd.read_csv(table_path, sep=sep, compression=compression)

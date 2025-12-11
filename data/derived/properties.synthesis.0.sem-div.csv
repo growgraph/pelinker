@@ -1,0 +1,21 @@
+entity_id,label,cluster_id,cluster_size
+BFO.0000050,part of,12,64
+BFO.0000051,has part,3,59
+BFO.0000067,contains process,19,29
+RO.0002566,causally influences,1,28
+RO.0002213,positively regulates,29,26
+RO.0002331,involved in,6,24
+RO.0002200,has phenotype,31,23
+RO.0002089,starts before,7,22
+RO.0002490,existence overlaps,8,14
+RO.0015012,reciprocal of,17,14
+RO.0002083,before,2,12
+RO.0002326,contributes to,18,12
+PEL.000013,forces,4,10
+RO.0009003,immersed in,0,9
+RO.0002461,partner in,16,9
+RO.0002019,has ligand,32,8
+RO.0002578,directly regulates,10,7
+RO.0002434,interacts with,11,7
+RO.0002456,pollinated by,15,7
+RO.0002503,towards,5,5

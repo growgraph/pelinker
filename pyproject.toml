@@ -34,7 +34,8 @@ dependencies = [
   "torch",
   "transformers>=4.41.2,<5",
   "umap-learn>=0.5.9.post2,<0.6",
-  "waitress>=3.0.2,<4"
+  "waitress>=3.0.2,<4",
+  "wordfreq>=3.1.1"
 ]
 description = "bio / sci property entity linker"
 name = "pelinker"
