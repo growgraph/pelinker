@@ -1,4 +1,5 @@
 import pathlib
+import re
 from typing import Tuple
 import logging
 
@@ -110,3 +111,23 @@ def load_dataframe(table_path: pathlib.Path) -> pd.DataFrame:
     sep = "\t" if file_format == "tsv" else ","
 
     return pd.read_csv(table_path, sep=sep, compression=compression)
+
+
+def parse_model_filename(filename: str) -> tuple[str | None, int | None]:
+    """
+    Parse filename like 'res_bert_1.parquet' to extract model and layer.
+
+    Args:
+        filename: Filename to parse
+
+    Returns:
+        tuple: (model, layer) or (None, None) if pattern doesn't match
+    """
+    # Pattern: res_<model>_<layer>.parquet
+    pattern = r"res_([^_]+)_(\d+)\.parquet"
+    match = re.match(pattern, filename)
+    if match:
+        model = match.group(1)
+        layer = int(match.group(2))
+        return model, layer
+    return None, None

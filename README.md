@@ -41,7 +41,7 @@ python run/testing/run_pel_test.py --text-path ./data/ground_truth/sample.0.gt.j
 "Train" a model on a corpus
 
 
-- `poetry run python run/save_model.py`
+- `uv run python run/save_model.py`
 
 ### Run server
 
