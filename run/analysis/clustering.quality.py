@@ -4,7 +4,12 @@ import numpy as np
 
 import pandas as pd
 from numpy.random import RandomState
-from pelinker.plotting import plot_metrics_with_error_bars, plot_heatmap
+from pelinker.plotting import (
+    plot_metrics_with_error_bars,
+    plot_heatmap,
+    plot_umap_viz,
+    plot_metrics,
+)
 from rich.console import Console
 from rich.progress import (
     Progress,
@@ -16,7 +21,6 @@ from rich.progress import (
 from rich.table import Table
 
 from pelinker.analysis import (
-    plot_metrics,
     estimate_model_clustering,
 )
 from pelinker.ops import parse_model_filename
@@ -400,8 +404,6 @@ def main(
 
     # Generate UMAP visualization for the best model
     if best_report is not None:
-        from pelinker.analysis import plot_umap_viz
-
         umap_viz_path = output_dir / "umap_best.html"
         console.print(
             "[green]✓[/green] Generating UMAP visualization for best model..."

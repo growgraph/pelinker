@@ -3,6 +3,7 @@ import pathlib
 import pandas as pd
 import seaborn as sns
 from matplotlib import pyplot as plt
+from plotly import express as px, graph_objects as go
 
 
 def plot_metrics_with_error_bars(
@@ -203,3 +204,106 @@ def plot_heatmap(
     plt.tight_layout()
     plt.savefig(output_path, dpi=300, bbox_inches="tight")
     plt.close()
+
+
+def plot_umap_viz(df, output_path="umap.html"):
+    df["show_label"] = df["property"]
+    show_rate = max(len(df) // 20, 1)
+    df.loc[df.index % show_rate != 0, "show_label"] = ""
+
+    # Ensure class is treated as categorical
+    df["class"] = df["class"].astype(str)
+
+    # Base scatter plot
+    fig = px.scatter_3d(
+        df,
+        x="uviz_00",
+        y="uviz_01",
+        z="uviz_02",
+        color="class",
+        color_discrete_sequence=px.colors.qualitative.Vivid,
+        hover_name="property",
+        labels={"uviz_00": "Dim 1", "uviz_01": "Dim 2", "uviz_02": "Dim 3"},
+    )
+
+    # Add text labels as a separate trace
+    df_labels = df[df["show_label"] != ""]
+    text_trace = go.Scatter3d(
+        x=df_labels["uviz_00"],
+        y=df_labels["uviz_01"],
+        z=df_labels["uviz_02"],
+        mode="text",
+        text=df_labels["show_label"],
+        textposition="top center",
+        showlegend=False,
+        hoverinfo="skip",
+        textfont=dict(size=10, color="black"),
+    )
+    fig.add_trace(text_trace)
+
+    # Update layout
+    fig.update_layout(
+        title="3D Scatter Plot of Embeddings",
+        scene=dict(
+            xaxis_title="uviz_00",
+            yaxis_title="uviz_01",
+            zaxis_title="uviz_02",
+        ),
+        height=700,
+        margin=dict(l=0, r=0, b=0, t=30),
+    )
+
+    fig.write_html(output_path)
+
+
+def plot_metrics(df: pd.DataFrame, fname):
+    fig, ax1 = plt.subplots(figsize=(8, 5))
+
+    color1 = "tab:blue"
+    ax1.set_xlabel("min_cluster_size")
+    ax1.set_ylabel("Silhouette score", color=color1)
+    ax1.plot(
+        df["min_cluster_size"],
+        df["silhouette"],
+        marker="o",
+        color=color1,
+        label="Silhouette",
+    )
+    ax1.tick_params(axis="y", labelcolor=color1)
+
+    # Add a second y-axis for icm
+    ax2 = ax1.twinx()
+    color2 = "tab:orange"
+    # ax2.set_yscale("log")
+    ax2.set_ylabel("ICM", color=color2)
+    ax2.plot(
+        df["min_cluster_size"],
+        df["icm"],
+        marker="s",
+        linestyle="--",
+        color=color2,
+        label="ICM",
+    )
+    ax2.tick_params(axis="y", labelcolor=color2)
+
+    # Add a second y-axis for icm
+    ax3 = ax1.twinx()
+    color2 = "tab:green"
+    # ax3.set_yscale("log")
+    ax3.set_ylabel("n_clusters", color=color2)
+    ax3.plot(
+        df["min_cluster_size"],
+        df["n_clusters"],
+        marker="s",
+        linestyle="--",
+        color=color2,
+        label="ICM",
+    )
+
+    ax3.tick_params(axis="y", labelcolor=color2)
+
+    # Titles and layout
+    plt.title("Clustering metrics vs. min_cluster_size (HDBSCAN)")
+    fig.tight_layout()
+
+    plt.savefig(fname, bbox_inches="tight", dpi=300)
