@@ -210,6 +210,7 @@ def main(
             # Accumulate metrics across runs for this file
             file_metrics = []
             file_reports = []
+            all_metrics_dfs = []  # Accumulate metrics across samples for aggregation
 
             rns = RandomState(seed=seed)
 
@@ -243,11 +244,18 @@ def main(
                     head=head,
                     batch_size=batch_size,
                     selected_labels=selected_labels,
+                    all_metrics_dfs=all_metrics_dfs,
+                    optimization_method="mean",
                 )
 
                 if report is not None:
+                    # Collect metrics for plotting (function already updated all_metrics_dfs)
                     file_metrics.append(report.metrics_df)
                     file_reports.append(report)
+
+                    # Ensure all_metrics_dfs is initialized for next iteration
+                    if all_metrics_dfs is None:
+                        all_metrics_dfs = [report.metrics_df]
 
                     # Track the absolute best report (highest score)
                     if (

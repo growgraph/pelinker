@@ -12,40 +12,151 @@ from collections.abc import Mapping
 from typing import Iterable
 from numpy.random import RandomState
 
-from skopt import gp_minimize
 
+def evaluate_cluster_size_grid(
+    dfr2: pd.DataFrame,
+    umap_columns: list[str],
+    sizes: list[int],
+) -> pd.DataFrame:
+    """
+    Evaluate clustering metrics on a grid of min_cluster_size values.
 
-def compute_optimal_min_cluster_size(dfr2, umap_columns, tol=0.05, bounds=None):
-    # Cache to avoid recomputing the same cluster sizes
-    cache = {}
+    Args:
+        dfr2: DataFrame with UMAP-reduced embeddings
+        umap_columns: List of UMAP column names
+        sizes: List of min_cluster_size values to evaluate
 
-    def objective(size):
-        size = int(size[0])
-
-        # Check cache first
-        if size in cache:
-            score = cache[size]
-            return -score
-
+    Returns:
+        DataFrame with columns: min_cluster_size, icm, n_clusters, silhouette
+    """
+    metrics = []
+    for size in sizes:
         clusterer = HDBSCAN(min_cluster_size=size, metric="cosine")
         labels = clusterer.fit_predict(dfr2[umap_columns])
+        dfr2_temp = dfr2.copy()
+        dfr2_temp["class"] = pd.DataFrame(
+            labels, columns=["class"], index=dfr2_temp.index
+        )
 
-        if len(set(labels)) <= 2:
-            score = 1e-2  # invalid clustering → low score
-        else:
+        ic = []
+        for ix, group in dfr2_temp.groupby("class"):
+            if ix == -1:  # Skip noise points
+                continue
+            tgroup = torch.from_numpy(group[umap_columns].values)
+            st = cosine_similarity_std(tgroup)
+            ic += [st]
+
+        icm = np.mean(ic) if ic else np.nan
+
+        # Only compute silhouette score if we have valid clusters (at least 2 clusters, excluding noise)
+        unique_labels = set(labels)
+        n_clusters = len(unique_labels) - (1 if -1 in unique_labels else 0)
+
+        if n_clusters > 2:
             score = silhouette_score(dfr2[umap_columns], labels)
+            metrics += [(size, icm, n_clusters, score)]
 
-        cache[size] = score
-        return -score
+    return pd.DataFrame(
+        metrics, columns=["min_cluster_size", "icm", "n_clusters", "silhouette"]
+    )
 
-    result = gp_minimize(objective, bounds, n_calls=15, random_state=42)
-    best_size = int(result.x[0])
-    best_score = -result.fun  # Convert back from negative
 
-    clusterer = HDBSCAN(min_cluster_size=best_size, metric="cosine")
-    labels = clusterer.fit_predict(dfr2[umap_columns])
-    dfr2["class"] = pd.DataFrame(labels, columns=["class"], index=dfr2.index)
-    return best_size, best_score, dfr2
+def aggregate_grid_metrics(
+    all_metrics_dfs: list[pd.DataFrame],
+) -> pd.DataFrame:
+    """
+    Aggregate grid evaluation metrics across multiple samples.
+
+    Args:
+        all_metrics_dfs: List of metrics DataFrames from multiple samples
+
+    Returns:
+        DataFrame with columns:
+        - min_cluster_size
+        - silhouette_mean, silhouette_std, silhouette_count
+        - icm_mean, n_clusters_mean
+    """
+    if not all_metrics_dfs:
+        return pd.DataFrame()
+
+    combined = pd.concat(all_metrics_dfs, ignore_index=True)
+
+    aggregated = (
+        combined.groupby("min_cluster_size")
+        .agg(
+            {
+                "silhouette": ["mean", "std", "count"],
+                "icm": "mean",
+                "n_clusters": "mean",
+            }
+        )
+        .reset_index()
+    )
+
+    # Flatten column names
+    aggregated.columns = [
+        "min_cluster_size",
+        "silhouette_mean",
+        "silhouette_std",
+        "silhouette_count",
+        "icm_mean",
+        "n_clusters_mean",
+    ]
+
+    # Fill NaN std with 0 (single sample case)
+    aggregated["silhouette_std"] = aggregated["silhouette_std"].fillna(0.0)
+
+    return aggregated
+
+
+def find_optimal_from_grid(
+    aggregated_metrics: pd.DataFrame,
+    method: str = "mean",
+    uncertainty_penalty: float = 1.0,
+) -> tuple[int, float, float]:
+    """
+    Find optimal min_cluster_size from aggregated grid metrics.
+
+    Args:
+        aggregated_metrics: DataFrame from aggregate_grid_metrics()
+        method: How to select optimum:
+            - "mean": Use mean silhouette score (default)
+            - "lower_bound": Use mean - uncertainty_penalty * std (conservative)
+            - "weighted": Weight by inverse variance (more samples = more weight)
+        uncertainty_penalty: Multiplier for std when using "lower_bound" method
+
+    Returns:
+        (best_size, best_score_mean, best_score_std)
+    """
+    if len(aggregated_metrics) == 0:
+        raise ValueError("No aggregated metrics provided")
+
+    sizes = aggregated_metrics["min_cluster_size"].values
+    means = aggregated_metrics["silhouette_mean"].values
+    stds = aggregated_metrics["silhouette_std"].values
+
+    if method == "mean":
+        scores = means
+    elif method == "lower_bound":
+        # Conservative: prefer points with lower uncertainty
+        scores = means - uncertainty_penalty * stds
+    elif method == "weighted":
+        # Weight by inverse variance (more reliable = higher weight)
+        weights = 1.0 / (stds + 1e-8)  # Add small epsilon to avoid division by zero
+        # Normalize weights
+        weights = weights / weights.sum()
+        # Weighted average (but we still need to pick a discrete point)
+        # So we'll use weighted mean as score
+        scores = means * weights
+    else:
+        raise ValueError(f"Unknown method: {method}")
+
+    best_idx = np.argmax(scores)
+    best_size = int(sizes[best_idx])
+    best_score_mean = float(means[best_idx])
+    best_score_std = float(stds[best_idx])
+
+    return best_size, best_score_mean, best_score_std
 
 
 def umap_it(df, umap_dim=15):
@@ -482,6 +593,8 @@ def estimate_model_clustering(
     head: int | None = None,
     batch_size: int = 1000,
     selected_labels: set[str] | None = None,
+    all_metrics_dfs: list[pd.DataFrame] | None = None,
+    optimization_method: str = "mean",
 ):
     """
     Estimate optimal cluster size for a single model/layer file.
@@ -491,11 +604,15 @@ def estimate_model_clustering(
         rns: RandomState object for reproducible sampling
         umap_dim: UMAP dimensionality
         min_class_size: Minimum class size for filtering
-        tol: Tolerance for optimization
+        tol: Tolerance for optimization (deprecated, kept for compatibility)
         frac: Fraction of dataset to sample
         head: Number of batches to take (None for all)
         batch_size: Batch size for reading
         selected_labels: Optional set of labels from selected labels KB to filter by
+        all_metrics_dfs: Optional list of metrics DataFrames from previous samples.
+                         If provided, will aggregate and find optimum from grid.
+                         If None, evaluates grid for this sample only.
+        optimization_method: Method for finding optimum ("mean", "lower_bound", "weighted")
 
     Returns:
         ClusteringReport or None: Report containing clustering results, or None if processing failed
@@ -548,46 +665,36 @@ def estimate_model_clustering(
 
     dfr2 = umap_it(dfr, umap_dim=umap_dim)
 
+    # Grid evaluation
     sizes = list(np.arange(int(0.5 * min_class_size), int(4 * min_class_size), 5))
 
     if int(2 * number_properties) > sizes[-1]:
         sizes += [int(2 * number_properties)]
 
-    metrics = []
-    for size in sizes:
-        clusterer = HDBSCAN(min_cluster_size=size, metric="cosine")
-        labels = clusterer.fit_predict(dfr2[umap_columns])
-        dfr2_temp = dfr2.copy()
-        dfr2_temp["class"] = pd.DataFrame(
-            labels, columns=["class"], index=dfr2_temp.index
-        )
-
-        ic = []
-        for ix, group in dfr2_temp.groupby("class"):
-            if ix == -1:  # Skip noise points
-                continue
-            tgroup = torch.from_numpy(group[umap_columns].values)
-            st = cosine_similarity_std(tgroup)
-            ic += [st]
-
-        icm = np.mean(ic) if ic else np.nan
-
-        # Only compute silhouette score if we have valid clusters (at least 2 clusters, excluding noise)
-        unique_labels = set(labels)
-        n_clusters = len(unique_labels) - (1 if -1 in unique_labels else 0)
-
-        if n_clusters > 2:
-            score = silhouette_score(dfr2[umap_columns], labels)
-            metrics += [(size, icm, n_clusters, score)]
-
-    dfm = pd.DataFrame(
-        metrics, columns=["min_cluster_size", "icm", "n_clusters", "silhouette"]
-    )
+    metrics_df = evaluate_cluster_size_grid(dfr2, umap_columns, sizes)
 
     # Find optimal cluster size
-    bounds = [(int(0.5 * min_class_size), int(5 * min_class_size))]
-    best_size, best_score, dfr2_final = compute_optimal_min_cluster_size(
-        dfr2, umap_columns, tol=tol, bounds=bounds
+    if all_metrics_dfs is not None:
+        # Aggregate with previous samples and find optimum from grid
+        all_metrics_dfs.append(metrics_df)
+        aggregated = aggregate_grid_metrics(all_metrics_dfs)
+        best_size, best_score, best_score_std = find_optimal_from_grid(
+            aggregated, method=optimization_method
+        )
+    else:
+        # Single sample: just use max from this sample
+        if len(metrics_df) == 0:
+            return None
+        best_idx = metrics_df["silhouette"].idxmax()
+        best_size = int(metrics_df.loc[best_idx, "min_cluster_size"])
+        best_score = float(metrics_df.loc[best_idx, "silhouette"])
+
+    # Apply final clustering with best size
+    clusterer = HDBSCAN(min_cluster_size=best_size, metric="cosine")
+    labels = clusterer.fit_predict(dfr2[umap_columns])
+    dfr2_final = dfr2.copy()
+    dfr2_final["class"] = pd.DataFrame(
+        labels, columns=["class"], index=dfr2_final.index
     )
 
     # Compute Hungarian matching accuracy
@@ -603,7 +710,7 @@ def estimate_model_clustering(
         best_size=best_size,
         best_score=best_score,
         number_properties=number_properties,
-        metrics_df=dfm,
+        metrics_df=metrics_df,
         df=dfr2_final,
         hungarian_accuracy=hungarian_acc,
     )
