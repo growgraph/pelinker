@@ -24,6 +24,7 @@ from pelinker.analysis import (
     estimate_model_clustering,
 )
 from pelinker.ops import parse_model_filename
+from pelinker.transform import TransformConfig
 
 
 # estimate_model is now estimate_model_clustering in pelinker.analysis
@@ -46,8 +47,14 @@ from pelinker.ops import parse_model_filename
 @click.option(
     "--umap-dim",
     type=click.INT,
-    default=15,
-    help="UMAP dimensionality",
+    default=8,
+    help="UMAP dimensionality for clustering (range: 3-5)",
+)
+@click.option(
+    "--pca-components",
+    type=click.INT,
+    default=100,
+    help="Number of PCA components for dimensionality reduction",
 )
 @click.option(
     "--min-class-size",
@@ -97,10 +104,18 @@ from pelinker.ops import parse_model_filename
     default=None,
     help="Optional path to selected labels KB CSV file. If provided, clustering will only use labels from this KB.",
 )
+@click.option(
+    "--max-scale",
+    type=click.INT,
+    default=120,
+    show_default=True,
+    help="Maximum value for grid evaluation of min_cluster_size",
+)
 def main(
     input_dir: pathlib.Path,
     output_dir: pathlib.Path,
     umap_dim: int,
+    pca_components: int,
     min_class_size: int,
     tol: float,
     seed: int,
@@ -109,6 +124,7 @@ def main(
     batch_size: int,
     n_sample: int,
     selected_labels_kb_path: pathlib.Path | None,
+    max_scale: int,
 ):
     """
     Process multiple parquet files and compute optimal cluster sizes.
@@ -156,6 +172,12 @@ def main(
     else:
         output_dir = output_dir.expanduser()
     output_dir.mkdir(parents=True, exist_ok=True)
+
+    # Create transform config from CLI options
+    transform_config = TransformConfig(
+        pca_components=pca_components,
+        umap_components=umap_dim,
+    )
 
     # Find all parquet files matching the pattern
     parquet_files = sorted(input_dir.glob("res_*.parquet"))
@@ -237,8 +259,9 @@ def main(
                 report = estimate_model_clustering(
                     file_path=file_path,
                     rns=rns,
-                    umap_dim=umap_dim,
+                    transform_config=transform_config,
                     min_class_size=min_class_size,
+                    max_scale=max_scale,
                     tol=tol,
                     frac=frac,
                     head=head,

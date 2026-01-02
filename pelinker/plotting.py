@@ -14,7 +14,7 @@ def plot_metrics_with_error_bars(
     Plot metrics across multiple runs with error bars using seaborn lineplot.
 
     Args:
-        metrics_list: List of DataFrames, each with columns: min_cluster_size, icm, n_clusters, silhouette
+        metrics_list: List of DataFrames, each with columns: min_cluster_size, icm, n_clusters, dbcv
         output_path: Path to save the figure
     """
     # Combine all metrics DataFrames, adding a run_id column
@@ -41,11 +41,11 @@ def plot_metrics_with_error_bars(
     # Color palette for different plots
     colors = ["#2E86AB", "#A23B72", "#F18F01"]  # Blue, Purple, Orange
 
-    # Plot silhouette score with error bars
+    # Plot DBCV score with error bars
     sns.lineplot(
         data=df_combined,
         x="min_cluster_size",
-        y="silhouette",
+        y="dbcv",
         ax=axes[0],
         errorbar="sd",  # Standard deviation error bars
         marker="o",
@@ -55,12 +55,8 @@ def plot_metrics_with_error_bars(
         err_kws={"alpha": 0.3, "linewidth": 1.5},
     )
     axes[0].set_xlabel("min_cluster_size", fontsize=12, fontweight="bold")
-    axes[0].set_ylabel(
-        "Silhouette score", fontsize=12, fontweight="bold", color=colors[0]
-    )
-    axes[0].set_title(
-        "Silhouette Score vs. min_cluster_size", fontsize=13, fontweight="bold"
-    )
+    axes[0].set_ylabel("DBCV Score", fontsize=12, fontweight="bold", color=colors[0])
+    axes[0].set_title("DBCV Score vs. min_cluster_size", fontsize=13, fontweight="bold")
     axes[0].grid(True, alpha=0.3, linestyle="--")
     axes[0].tick_params(axis="y", labelcolor=colors[0])
     axes[0].spines["top"].set_visible(False)
@@ -153,15 +149,18 @@ def plot_heatmap(
     )
 
     # Create heatmap with metric as color
+    # Use RdBu_r (Red-Blue reversed) for clear visual distinction: red=high, blue=low
     sns.heatmap(
         score_pivot,
         annot=False,  # We'll add custom annotations
         fmt=".3f",
-        cmap="viridis",
-        cbar_kws={"label": metric_label},
+        cmap="RdBu_r",
+        center=None,  # Center colormap at the median for better contrast
+        cbar_kws={"label": metric_label, "shrink": 0.8},
         ax=ax,
         linewidths=0.5,
-        linecolor="gray",
+        linecolor="white",
+        square=False,
     )
 
     # Add best_size and metric name as text annotations
@@ -261,13 +260,13 @@ def plot_metrics(df: pd.DataFrame, fname):
 
     color1 = "tab:blue"
     ax1.set_xlabel("min_cluster_size")
-    ax1.set_ylabel("Silhouette score", color=color1)
+    ax1.set_ylabel("DBCV Score", color=color1)
     ax1.plot(
         df["min_cluster_size"],
-        df["silhouette"],
+        df["dbcv"],
         marker="o",
         color=color1,
-        label="Silhouette",
+        label="DBCV",
     )
     ax1.tick_params(axis="y", labelcolor=color1)
 

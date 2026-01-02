@@ -3,14 +3,15 @@ import pathlib
 import numpy as np
 import pandas as pd
 import torch
-import umap
-from sklearn.cluster import HDBSCAN
-from sklearn.metrics import silhouette_score, confusion_matrix
+import hdbscan
+from sklearn.metrics import confusion_matrix
 from scipy.optimize import linear_sum_assignment
 from torch.nn import functional as F
 from collections.abc import Mapping
 from typing import Iterable
 from numpy.random import RandomState
+
+from pelinker.transform import TransformConfig, get_umap_columns, transform_embeddings
 
 
 def evaluate_cluster_size_grid(
@@ -21,17 +22,19 @@ def evaluate_cluster_size_grid(
     """
     Evaluate clustering metrics on a grid of min_cluster_size values.
 
+    Uses DBCV (Density-Based Clustering Validation) metric.
+
     Args:
         dfr2: DataFrame with UMAP-reduced embeddings
         umap_columns: List of UMAP column names
         sizes: List of min_cluster_size values to evaluate
 
     Returns:
-        DataFrame with columns: min_cluster_size, icm, n_clusters, silhouette
+        DataFrame with columns: min_cluster_size, icm, n_clusters, dbcv
     """
     metrics = []
     for size in sizes:
-        clusterer = HDBSCAN(min_cluster_size=size, metric="cosine")
+        clusterer = hdbscan.HDBSCAN(min_cluster_size=size, gen_min_span_tree=True)
         labels = clusterer.fit_predict(dfr2[umap_columns])
         dfr2_temp = dfr2.copy()
         dfr2_temp["class"] = pd.DataFrame(
@@ -48,16 +51,22 @@ def evaluate_cluster_size_grid(
 
         icm = np.mean(ic) if ic else np.nan
 
-        # Only compute silhouette score if we have valid clusters (at least 2 clusters, excluding noise)
+        # Compute DBCV score
         unique_labels = set(labels)
         n_clusters = len(unique_labels) - (1 if -1 in unique_labels else 0)
 
-        if n_clusters > 2:
-            score = silhouette_score(dfr2[umap_columns], labels)
-            metrics += [(size, icm, n_clusters, score)]
+        # DBCV is available as relative_validity_ attribute
+        if n_clusters >= 2 and hasattr(clusterer, "relative_validity_"):
+            dbcv = float(clusterer.relative_validity_)
+        else:
+            dbcv = np.nan
+
+        # Only record if we have at least one valid cluster
+        if n_clusters >= 1:
+            metrics += [(size, icm, n_clusters, dbcv)]
 
     return pd.DataFrame(
-        metrics, columns=["min_cluster_size", "icm", "n_clusters", "silhouette"]
+        metrics, columns=["min_cluster_size", "icm", "n_clusters", "dbcv"]
     )
 
 
@@ -73,7 +82,7 @@ def aggregate_grid_metrics(
     Returns:
         DataFrame with columns:
         - min_cluster_size
-        - silhouette_mean, silhouette_std, silhouette_count
+        - dbcv_mean, dbcv_std, dbcv_count
         - icm_mean, n_clusters_mean
     """
     if not all_metrics_dfs:
@@ -85,7 +94,7 @@ def aggregate_grid_metrics(
         combined.groupby("min_cluster_size")
         .agg(
             {
-                "silhouette": ["mean", "std", "count"],
+                "dbcv": ["mean", "std", "count"],
                 "icm": "mean",
                 "n_clusters": "mean",
             }
@@ -96,15 +105,15 @@ def aggregate_grid_metrics(
     # Flatten column names
     aggregated.columns = [
         "min_cluster_size",
-        "silhouette_mean",
-        "silhouette_std",
-        "silhouette_count",
+        "dbcv_mean",
+        "dbcv_std",
+        "dbcv_count",
         "icm_mean",
         "n_clusters_mean",
     ]
 
     # Fill NaN std with 0 (single sample case)
-    aggregated["silhouette_std"] = aggregated["silhouette_std"].fillna(0.0)
+    aggregated["dbcv_std"] = aggregated["dbcv_std"].fillna(0.0)
 
     return aggregated
 
@@ -117,23 +126,25 @@ def find_optimal_from_grid(
     """
     Find optimal min_cluster_size from aggregated grid metrics.
 
+    Uses DBCV (Density-Based Clustering Validation) as the metric (maximize).
+
     Args:
         aggregated_metrics: DataFrame from aggregate_grid_metrics()
         method: How to select optimum:
-            - "mean": Use mean silhouette score (default)
+            - "mean": Use mean DBCV score (default)
             - "lower_bound": Use mean - uncertainty_penalty * std (conservative)
             - "weighted": Weight by inverse variance (more samples = more weight)
         uncertainty_penalty: Multiplier for std when using "lower_bound" method
 
     Returns:
-        (best_size, best_score_mean, best_score_std)
+        (best_size, best_score_mean, best_score_std) where score is DBCV
     """
     if len(aggregated_metrics) == 0:
         raise ValueError("No aggregated metrics provided")
 
     sizes = aggregated_metrics["min_cluster_size"].values
-    means = aggregated_metrics["silhouette_mean"].values
-    stds = aggregated_metrics["silhouette_std"].values
+    means = aggregated_metrics["dbcv_mean"].values
+    stds = aggregated_metrics["dbcv_std"].values
 
     if method == "mean":
         scores = means
@@ -157,22 +168,6 @@ def find_optimal_from_grid(
     best_score_std = float(stds[best_idx])
 
     return best_size, best_score_mean, best_score_std
-
-
-def umap_it(df, umap_dim=15):
-    embedding_vectors = np.stack(df["embed"].values)
-    reduced = umap.UMAP(n_components=umap_dim, metric="cosine").fit_transform(
-        embedding_vectors
-    )
-    df_reduced = pd.DataFrame(
-        reduced, index=df.index, columns=[f"u_{j:02d}" for j in range(umap_dim)]
-    )
-    reduced_viz = umap.UMAP(n_components=3, metric="cosine").fit_transform(reduced)
-    df_reduced_viz = pd.DataFrame(
-        reduced_viz, index=df.index, columns=[f"uviz_{j:02d}" for j in range(3)]
-    )
-    df = pd.concat([df, df_reduced, df_reduced_viz], axis=1)
-    return df
 
 
 def cosine_similarity_std(tensor):
@@ -211,7 +206,7 @@ def adjust_cluster_count(
     current_n_clusters: int,
     target_n_clusters: int,
     base_min_cluster_size: int,
-) -> tuple[pd.DataFrame, int]:
+) -> tuple[pd.DataFrame, int, hdbscan.HDBSCAN]:
     """
     Adjust HDBSCAN clustering to get closer to target number of clusters.
 
@@ -223,13 +218,22 @@ def adjust_cluster_count(
         base_min_cluster_size: Base min_cluster_size to adjust from
 
     Returns:
-        tuple: (clustered_dataframe, final_n_clusters)
+        tuple: (clustered_dataframe, final_n_clusters, clusterer)
     """
+    # Initial clusterer
+    initial_clusterer = hdbscan.HDBSCAN(
+        min_cluster_size=base_min_cluster_size, gen_min_span_tree=True
+    )
+    initial_labels = initial_clusterer.fit_predict(df_umap[umap_columns])
+
     if current_n_clusters == target_n_clusters:
-        return df_umap, current_n_clusters
+        initial_df = df_umap.copy()
+        initial_df["class"] = initial_labels
+        return initial_df, current_n_clusters, initial_clusterer
 
     best_n_clusters = current_n_clusters
     best_df = df_umap.copy()
+    best_clusterer = initial_clusterer
 
     # Try increasing min_cluster_size to reduce number of clusters
     if current_n_clusters > target_n_clusters:
@@ -237,7 +241,9 @@ def adjust_cluster_count(
             test_size = int(base_min_cluster_size * size_mult)
             if test_size >= len(df_umap):
                 continue
-            clusterer = HDBSCAN(min_cluster_size=test_size, metric="cosine")
+            clusterer = hdbscan.HDBSCAN(
+                min_cluster_size=test_size, gen_min_span_tree=True
+            )
             labels = clusterer.fit_predict(df_umap[umap_columns])
             test_n_clusters = len(set(labels)) - (1 if -1 in labels else 0)
             if abs(test_n_clusters - target_n_clusters) < abs(
@@ -247,6 +253,7 @@ def adjust_cluster_count(
                 df_test = df_umap.copy()
                 df_test["class"] = labels
                 best_df = df_test
+                best_clusterer = clusterer
                 if best_n_clusters == target_n_clusters:
                     break
 
@@ -254,7 +261,9 @@ def adjust_cluster_count(
     elif current_n_clusters < target_n_clusters:
         for size_mult in [0.8, 0.6, 0.5, 0.4]:
             test_size = max(2, int(base_min_cluster_size * size_mult))
-            clusterer = HDBSCAN(min_cluster_size=test_size, metric="cosine")
+            clusterer = hdbscan.HDBSCAN(
+                min_cluster_size=test_size, gen_min_span_tree=True
+            )
             labels = clusterer.fit_predict(df_umap[umap_columns])
             test_n_clusters = len(set(labels)) - (1 if -1 in labels else 0)
             if abs(test_n_clusters - target_n_clusters) < abs(
@@ -264,10 +273,11 @@ def adjust_cluster_count(
                 df_test = df_umap.copy()
                 df_test["class"] = labels
                 best_df = df_test
+                best_clusterer = clusterer
                 if best_n_clusters == target_n_clusters:
                     break
 
-    return best_df, best_n_clusters
+    return best_df, best_n_clusters, best_clusterer
 
 
 def cluster_with_target_count(
@@ -277,7 +287,7 @@ def cluster_with_target_count(
     base_min_cluster_size: int | None = None,
 ) -> tuple[pd.DataFrame, int, float]:
     """
-    Cluster data to get approximately target number of clusters and compute silhouette score.
+    Cluster data to get approximately target number of clusters and compute DBCV score.
 
     Args:
         df_umap: DataFrame with UMAP-reduced embeddings
@@ -286,19 +296,21 @@ def cluster_with_target_count(
         base_min_cluster_size: Starting min_cluster_size (if None, estimates from data size)
 
     Returns:
-        tuple: (clustered_dataframe, actual_n_clusters, silhouette_score)
+        tuple: (clustered_dataframe, actual_n_clusters, dbcv_score)
     """
     if base_min_cluster_size is None:
         # Estimate starting point: aim for clusters of roughly equal size
         base_min_cluster_size = max(2, len(df_umap) // (target_n_clusters * 3))
 
     # Start with estimated size
-    clusterer = HDBSCAN(min_cluster_size=base_min_cluster_size, metric="cosine")
+    clusterer = hdbscan.HDBSCAN(
+        min_cluster_size=base_min_cluster_size, gen_min_span_tree=True
+    )
     labels = clusterer.fit_predict(df_umap[umap_columns])
     current_n_clusters = len(set(labels)) - (1 if -1 in labels else 0)
 
     # Adjust to get closer to target
-    df_clustered, final_n_clusters = adjust_cluster_count(
+    df_clustered, final_n_clusters, final_clusterer = adjust_cluster_count(
         df_umap,
         umap_columns,
         current_n_clusters,
@@ -306,17 +318,13 @@ def cluster_with_target_count(
         base_min_cluster_size,
     )
 
-    # Compute silhouette score
-    labels = df_clustered["class"].values
-    unique_labels = set(labels)
-    n_clusters = len(unique_labels) - (1 if -1 in unique_labels else 0)
-
-    if n_clusters < 2:
-        score = 0.0  # Invalid clustering
+    # Compute DBCV score from the final clusterer
+    if hasattr(final_clusterer, "relative_validity_"):
+        dbcv = float(final_clusterer.relative_validity_)
     else:
-        score = silhouette_score(df_umap[umap_columns], labels)
+        dbcv = 0.0  # Invalid clustering
 
-    return df_clustered, final_n_clusters, score
+    return df_clustered, final_n_clusters, dbcv
 
 
 def get_word_frequencies_from_library(
@@ -520,13 +528,13 @@ def find_cluster_centers(
     return cluster_results
 
 
-def compute_silhouette_after_filtering(
+def compute_dbcv_after_filtering(
     df_clustered: pd.DataFrame,
     umap_columns: list[str],
     valid_cluster_ids: set[int],
 ) -> float:
     """
-    Compute silhouette score after filtering out perplex clusters.
+    Compute DBCV score after filtering out perplex clusters.
 
     Args:
         df_clustered: DataFrame with cluster assignments
@@ -534,7 +542,7 @@ def compute_silhouette_after_filtering(
         valid_cluster_ids: Set of cluster IDs to keep
 
     Returns:
-        Silhouette score for filtered clusters
+        DBCV score for filtered clusters
     """
 
     # Filter to only valid clusters (exclude noise and filtered-out clusters)
@@ -543,8 +551,17 @@ def compute_silhouette_after_filtering(
     if len(df_filtered) < 2:
         return 0.0
 
-    labels = df_filtered["class"].values
-    return silhouette_score(df_filtered[umap_columns], labels)
+    # Re-fit HDBSCAN on filtered data to get DBCV
+    # We need to estimate min_cluster_size - use a reasonable default
+    min_size = max(
+        2, len(df_filtered) // 20
+    )  # At least 2, but aim for ~20 points per cluster
+    clusterer = hdbscan.HDBSCAN(min_cluster_size=min_size, gen_min_span_tree=True)
+
+    if hasattr(clusterer, "relative_validity_"):
+        return float(clusterer.relative_validity_)
+    else:
+        return 0.0
 
 
 def compute_hungarian_accuracy(y_true: np.ndarray, y_pred: np.ndarray) -> float:
@@ -586,8 +603,10 @@ def compute_hungarian_accuracy(y_true: np.ndarray, y_pred: np.ndarray) -> float:
 def estimate_model_clustering(
     file_path: pathlib.Path,
     rns: RandomState,
-    umap_dim: int = 15,
+    transform_config: TransformConfig,
+    *,
     min_class_size: int = 20,
+    max_scale: int = 120,
     tol: float = 0.05,
     frac: float = 0.1,
     head: int | None = None,
@@ -602,8 +621,9 @@ def estimate_model_clustering(
     Args:
         file_path: Path to parquet file
         rns: RandomState object for reproducible sampling
-        umap_dim: UMAP dimensionality
+        transform_config: TransformConfig instance specifying transformation parameters
         min_class_size: Minimum class size for filtering
+        max_scale: Maximum value for grid evaluation of min_cluster_size (default: 120)
         tol: Tolerance for optimization (deprecated, kept for compatibility)
         frac: Fraction of dataset to sample
         head: Number of batches to take (None for all)
@@ -641,7 +661,7 @@ def estimate_model_clustering(
 
     dfr = pd.concat(agg)
 
-    umap_columns = [f"u_{j:02d}" for j in range(umap_dim)]
+    umap_columns = get_umap_columns(transform_config)
 
     # Filter by selected labels if provided
     if selected_labels is not None:
@@ -660,16 +680,13 @@ def estimate_model_clustering(
     if len(dfr) == 0:
         return None
 
-    # Get number of unique properties before UMAP
+    # Get number of unique properties before transformation
     number_properties = dfr["property"].nunique()
 
-    dfr2 = umap_it(dfr, umap_dim=umap_dim)
+    dfr2 = transform_embeddings(dfr, config=transform_config, embed_column="embed")
 
     # Grid evaluation
-    sizes = list(np.arange(int(0.5 * min_class_size), int(4 * min_class_size), 5))
-
-    if int(2 * number_properties) > sizes[-1]:
-        sizes += [int(2 * number_properties)]
+    sizes = list(np.arange(int(0.5 * min_class_size), max_scale, 5))
 
     metrics_df = evaluate_cluster_size_grid(dfr2, umap_columns, sizes)
 
@@ -682,15 +699,15 @@ def estimate_model_clustering(
             aggregated, method=optimization_method
         )
     else:
-        # Single sample: just use max from this sample
+        # Single sample: just use max DBCV from this sample
         if len(metrics_df) == 0:
             return None
-        best_idx = metrics_df["silhouette"].idxmax()
+        best_idx = metrics_df["dbcv"].idxmax()
         best_size = int(metrics_df.loc[best_idx, "min_cluster_size"])
-        best_score = float(metrics_df.loc[best_idx, "silhouette"])
+        best_score = float(metrics_df.loc[best_idx, "dbcv"])
 
     # Apply final clustering with best size
-    clusterer = HDBSCAN(min_cluster_size=best_size, metric="cosine")
+    clusterer = hdbscan.HDBSCAN(min_cluster_size=best_size, gen_min_span_tree=True)
     labels = clusterer.fit_predict(dfr2[umap_columns])
     dfr2_final = dfr2.copy()
     dfr2_final["class"] = pd.DataFrame(
@@ -720,7 +737,7 @@ def embeddings_dict_to_dataframe(
     embeddings_dict: dict[str, tuple[str, torch.Tensor | np.ndarray]],
 ) -> pd.DataFrame:
     """
-    Convert embeddings dictionary to DataFrame format expected by umap_it.
+    Convert embeddings dictionary to DataFrame format expected by transform_embeddings.
 
     Args:
         embeddings_dict: Dictionary mapping id -> (label, embedding)

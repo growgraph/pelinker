@@ -11,13 +11,13 @@ from pelinker.model import LinkerModel
 from pelinker.ops import load_dataframe
 from pelinker.util import load_models, embed_texts
 from pelinker.analysis import (
-    umap_it,
     cluster_with_target_count,
     find_cluster_centers,
     embeddings_dict_to_dataframe,
     get_word_frequencies_from_library,
-    compute_silhouette_after_filtering,
+    compute_dbcv_after_filtering,
 )
+from pelinker.transform import TransformConfig, get_umap_columns, transform_embeddings
 from pelinker.reporting import log_clustering_scores, log_clustering_results
 
 logger = logging.getLogger(__name__)
@@ -27,8 +27,9 @@ def _perform_clustering_analysis(
     embeddings_dict: dict[str, tuple[str, torch.Tensor]],
     id_column: str,
     label_column: str,
+    transform_config: TransformConfig,
+    *,
     target_cluster_counts: list[int] | None = None,
-    umap_dim: int = 15,
     min_cluster_size: int = 5,
     max_chars: int | None = 30,
     max_words: int | None = 4,
@@ -42,9 +43,10 @@ def _perform_clustering_analysis(
 
     Args:
         embeddings_dict: Dictionary mapping id -> (label, embedding)
-        logger: Logger instance for output
+        id_column: Name of column containing item IDs
+        label_column: Name of column containing item labels
+        transform_config: TransformConfig instance specifying transformation parameters
         target_cluster_counts: List of target cluster counts to evaluate (default: [5, 10, 15, 20])
-        umap_dim: UMAP dimensionality (default: 15)
         min_cluster_size: Minimum cluster size for filtering
         max_chars: Maximum characters for simplest example
         max_words: Maximum words for simplest example
@@ -64,10 +66,16 @@ def _perform_clustering_analysis(
     # Convert embeddings to dataframe format
     df_emb = embeddings_dict_to_dataframe(embeddings_dict)
 
-    # Apply UMAP reduction
-    logger.info("Applying UMAP reduction to %d dimensions...", umap_dim)
-    df_umap = umap_it(df_emb, umap_dim=umap_dim)
-    umap_columns = [f"u_{j:02d}" for j in range(umap_dim)]
+    # Apply PCA -> UMAP reduction pipeline
+    logger.info(
+        "Applying PCA(%d) -> UMAP(%d) reduction pipeline...",
+        transform_config.pca_components,
+        transform_config.umap_components,
+    )
+    df_umap = transform_embeddings(
+        df_emb, config=transform_config, embed_column="embed"
+    )
+    umap_columns = get_umap_columns(transform_config)
 
     # Get word frequencies from external library for better simplicity scoring
     logger.info("Loading word frequencies from wordfreq library...")
@@ -112,8 +120,8 @@ def _perform_clustering_analysis(
         )
         valid_cluster_ids = {cr["cluster_id"] for cr in cluster_results}
 
-        # Compute silhouette score after filtering
-        filtered_score = compute_silhouette_after_filtering(
+        # Compute DBCV score after filtering
+        filtered_score = compute_dbcv_after_filtering(
             df_clustered, umap_columns, valid_cluster_ids
         )
 
@@ -321,6 +329,20 @@ def _perform_clustering_analysis(
     default=None,
     help="Path for saving semantically divergent KB dataframe (selected labels). Supports .csv",
 )
+@click.option(
+    "--umap-dim",
+    type=click.INT,
+    default=4,
+    show_default=True,
+    help="UMAP dimensionality for clustering (range: 3-5).",
+)
+@click.option(
+    "--pca-components",
+    type=click.INT,
+    default=50,
+    show_default=True,
+    help="Number of PCA components for dimensionality reduction.",
+)
 def run(
     input_table_path,
     label_column,
@@ -335,6 +357,8 @@ def run(
     max_word_length,
     results_dir,
     sem_div_kb_path,
+    umap_dim,
+    pca_components,
 ):
     logging.basicConfig(
         level=logging.INFO,
@@ -423,11 +447,18 @@ def run(
         if idx >= 2:
             break
 
+    # Create transform config from CLI options
+    transform_config = TransformConfig(
+        pca_components=pca_components,
+        umap_components=umap_dim,
+    )
+
     # Perform clustering
     _ = _perform_clustering_analysis(
         result,
         label_column=label_column,
         id_column=id_column,
+        transform_config=transform_config,
         min_cluster_size=min_cluster_size,
         max_chars=max_chars,
         max_words=max_words,
