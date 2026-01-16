@@ -99,11 +99,8 @@ def plot_metrics_with_error_bars(
         markersize=8,
         err_kws={"alpha": 0.3, "linewidth": 1.5},
     )
-    # axes[2].set_yscale("log")
     axes[1].set_xlabel("min_cluster_size", fontsize=12, fontweight="bold")
-    axes[1].set_ylabel(
-        "n_clusters (log scale)", fontsize=12, fontweight="bold", color=colors[2]
-    )
+    axes[1].set_ylabel("n clusters", fontsize=12, fontweight="bold", color=colors[2])
     axes[1].set_title(
         "Number of Clusters vs. min_cluster_size", fontsize=13, fontweight="bold"
     )

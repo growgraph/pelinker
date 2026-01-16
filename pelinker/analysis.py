@@ -233,6 +233,7 @@ def adjust_cluster_count(
 
     best_n_clusters = current_n_clusters
     best_df = df_umap.copy()
+    best_df["class"] = initial_labels  # Ensure best_df always has "class" column
     best_clusterer = initial_clusterer
 
     # Try increasing min_cluster_size to reduce number of clusters
@@ -374,9 +375,20 @@ def get_word_frequencies_from_library(
 def _measure_label_simplicity(
     label: str,
     word_frequencies: Mapping[str, float],
-    stopwords: Iterable[str] = ("is", "of", "the", "a", "an", "to", "for", "or", "in"),
+    stopwords: Iterable[str] = (
+        "is",
+        "of",
+        "the",
+        "a",
+        "an",
+        "to",
+        "for",
+        "or",
+        "in",
+        "has",
+    ),
     zero_freq_penalty: float = 1e-8,
-    multiword_penalty: float = 0.15,
+    multiword_penalty: float = 0.2,
     stopword_penalty: float = 0.3,
 ) -> dict[str, int | float]:
     """..."""
@@ -435,7 +447,6 @@ def find_cluster_centers(
     min_cluster_size: int = 5,
     max_complexity_chars: int | None = None,
     max_complexity_words: int | None = None,
-    min_simplicity_score: float | None = None,
     max_word_length: int | None = None,
     word_frequencies: dict[str, float] | None = None,
 ) -> list[dict]:
@@ -449,8 +460,6 @@ def find_cluster_centers(
         min_cluster_size: Minimum number of members required (default: 5)
         max_complexity_chars: Maximum character count for candidates (None = no limit)
         max_complexity_words: Maximum word count for candidates (None = no limit)
-        min_simplicity_score: Minimum simplicity score (based on word frequency harmonic mean)
-                             Higher = simpler. None = no limit.
         max_word_length: Maximum length for any word in the label (None = no limit)
         word_frequencies: Optional dictionary mapping words to frequencies for simplicity calculation.
 
@@ -497,11 +506,6 @@ def find_cluster_centers(
                 and complexity["word_count"] > max_complexity_words
             ):
                 continue
-            if (
-                min_simplicity_score is not None
-                and complexity["simplicity_score"] < min_simplicity_score
-            ):
-                continue
 
             # This candidate passes all filters
             valid_candidates.append((idx, complexity["simplicity_score"]))
@@ -530,7 +534,6 @@ def find_cluster_centers(
 
 def compute_dbcv_after_filtering(
     df_clustered: pd.DataFrame,
-    umap_columns: list[str],
     valid_cluster_ids: set[int],
 ) -> float:
     """
@@ -538,7 +541,6 @@ def compute_dbcv_after_filtering(
 
     Args:
         df_clustered: DataFrame with cluster assignments
-        umap_columns: List of UMAP column names
         valid_cluster_ids: Set of cluster IDs to keep
 
     Returns:
@@ -551,12 +553,18 @@ def compute_dbcv_after_filtering(
     if len(df_filtered) < 2:
         return 0.0
 
+    # Detect UMAP columns (columns starting with "u_")
+    umap_columns = [col for col in df_filtered.columns if col.startswith("u_")]
+    if not umap_columns:
+        return 0.0
+
     # Re-fit HDBSCAN on filtered data to get DBCV
     # We need to estimate min_cluster_size - use a reasonable default
     min_size = max(
         2, len(df_filtered) // 20
     )  # At least 2, but aim for ~20 points per cluster
     clusterer = hdbscan.HDBSCAN(min_cluster_size=min_size, gen_min_span_tree=True)
+    clusterer.fit(df_filtered[umap_columns])
 
     if hasattr(clusterer, "relative_validity_"):
         return float(clusterer.relative_validity_)
@@ -759,3 +767,475 @@ def embeddings_dict_to_dataframe(
         label_list.append(label)
 
     return pd.DataFrame({"id": id_list, "label": label_list, "embed": embeddings_list})
+
+
+def farthest_point_sampling(
+    embeddings: np.ndarray,
+    n_samples: int,
+    metric: str = "cosine",
+    random_state: int | None = None,
+) -> np.ndarray:
+    """
+    Select n_samples points using farthest point sampling (FPS) for maximum diversity.
+
+    FPS is a deterministic greedy algorithm that selects points that are maximally
+    distant from already selected points. This ensures semantic diversity.
+
+    Args:
+        embeddings: Array of shape (n_points, n_features) containing embeddings
+        n_samples: Number of points to select
+        metric: Distance metric ('cosine' or 'euclidean')
+        random_state: Random seed for selecting the first point (None = use first point)
+
+    Returns:
+        Array of indices of selected points, shape (n_samples,)
+    """
+    from sklearn.metrics.pairwise import cosine_distances, euclidean_distances
+
+    n_points = embeddings.shape[0]
+    if n_samples >= n_points:
+        return np.arange(n_points)
+
+    if n_samples <= 0:
+        return np.array([], dtype=int)
+
+    # Normalize embeddings for cosine distance
+    if metric == "cosine":
+        embeddings_norm = embeddings / (
+            np.linalg.norm(embeddings, axis=1, keepdims=True) + 1e-8
+        )
+        dist_fn = cosine_distances
+    else:
+        embeddings_norm = embeddings
+        dist_fn = euclidean_distances
+
+    # Initialize: select first point (or random if random_state provided)
+    selected_indices = []
+    if random_state is not None:
+        rng = np.random.RandomState(random_state)
+        selected_indices.append(rng.randint(0, n_points))
+    else:
+        selected_indices.append(0)
+
+    # Compute distances from all points to selected points
+    selected_embeddings = embeddings_norm[selected_indices]
+    distances = dist_fn(embeddings_norm, selected_embeddings)
+    min_distances = distances.min(axis=1)  # Minimum distance to any selected point
+
+    # Iteratively select the point farthest from all selected points
+    for _ in range(n_samples - 1):
+        # Find point with maximum minimum distance
+        next_idx = np.argmax(min_distances)
+        selected_indices.append(next_idx)
+
+        # Update minimum distances
+        new_distances = dist_fn(embeddings_norm, embeddings_norm[[next_idx]])
+        min_distances = np.minimum(min_distances, new_distances.ravel())
+
+    return np.array(selected_indices)
+
+
+def farthest_point_sampling_weighted(
+    embeddings: np.ndarray,
+    weights: np.ndarray,
+    n_samples: int,
+    metric: str = "cosine",
+    diversity_weight: float = 0.7,
+    random_state: int | None = None,
+) -> np.ndarray:
+    """
+    Select n_samples points using weighted farthest point sampling.
+
+    Combines semantic diversity (FPS) with preference weights (e.g., simplicity).
+    Higher weights are preferred when distances are similar.
+
+    Args:
+        embeddings: Array of shape (n_points, n_features) containing embeddings
+        weights: Array of shape (n_points,) with preference weights (higher = better)
+        n_samples: Number of points to select
+        metric: Distance metric ('cosine' or 'euclidean')
+        diversity_weight: Weight for diversity vs preference (0.0 = pure preference, 1.0 = pure FPS)
+        random_state: Random seed for selecting the first point
+
+    Returns:
+        Array of indices of selected points, shape (n_samples,)
+    """
+    from sklearn.metrics.pairwise import cosine_distances, euclidean_distances
+
+    n_points = embeddings.shape[0]
+    if n_samples >= n_points:
+        return np.arange(n_points)
+
+    if n_samples <= 0:
+        return np.array([], dtype=int)
+
+    # Normalize weights to [0, 1] range
+    if weights.max() > weights.min():
+        weights_norm = (weights - weights.min()) / (weights.max() - weights.min())
+    else:
+        weights_norm = np.ones_like(weights)
+
+    # Normalize embeddings for cosine distance
+    if metric == "cosine":
+        embeddings_norm = embeddings / (
+            np.linalg.norm(embeddings, axis=1, keepdims=True) + 1e-8
+        )
+        dist_fn = cosine_distances
+    else:
+        embeddings_norm = embeddings
+        dist_fn = euclidean_distances
+
+    # Initialize: select first point (or random if random_state provided)
+    selected_indices = []
+    if random_state is not None:
+        rng = np.random.RandomState(random_state)
+        selected_indices.append(rng.randint(0, n_points))
+    else:
+        # Start with highest weighted point
+        selected_indices.append(np.argmax(weights_norm))
+
+    # Compute distances from all points to selected points
+    selected_embeddings = embeddings_norm[selected_indices]
+    distances = dist_fn(embeddings_norm, selected_embeddings)
+    min_distances = distances.min(axis=1)  # Minimum distance to any selected point
+
+    # Normalize distances to [0, 1] for combination with weights
+    if min_distances.max() > min_distances.min():
+        dist_norm = (min_distances - min_distances.min()) / (
+            min_distances.max() - min_distances.min()
+        )
+    else:
+        dist_norm = np.ones_like(min_distances)
+
+    # Iteratively select points using weighted combination
+    for _ in range(n_samples - 1):
+        # Combine diversity (distance) with preference (weight)
+        # Higher score = better candidate
+        combined_scores = (
+            diversity_weight * dist_norm + (1 - diversity_weight) * weights_norm
+        )
+
+        # Don't select already selected points
+        combined_scores[selected_indices] = -np.inf
+
+        # Find point with maximum combined score
+        next_idx = np.argmax(combined_scores)
+        selected_indices.append(next_idx)
+
+        # Update minimum distances
+        new_distances = dist_fn(embeddings_norm, embeddings_norm[[next_idx]])
+        min_distances = np.minimum(min_distances, new_distances.ravel())
+
+        # Re-normalize distances for next iteration
+        if min_distances.max() > min_distances.min():
+            dist_norm = (min_distances - min_distances.min()) / (
+                min_distances.max() - min_distances.min()
+            )
+        else:
+            dist_norm = np.ones_like(min_distances)
+
+    return np.array(selected_indices)
+
+
+def is_specific_term(
+    label: str,
+    word_frequencies: Mapping[str, float] | None = None,
+    max_word_length: int = 18,
+    min_word_freq: float = 1e-6,
+) -> bool:
+    """
+    Check if a label represents a very specific/technical term.
+
+    Args:
+        label: Label text to check
+        word_frequencies: Optional word frequency mapping
+        max_word_length: Maximum length for a word before considered specific
+        min_word_freq: Minimum word frequency to be considered generic
+
+    Returns:
+        True if the label appears to be very specific/technical
+    """
+    words = label.strip().lower().split()
+
+    # Check for very long words (likely technical compounds)
+    if any(len(word) > max_word_length for word in words):
+        return True
+
+    # Check word frequencies if available
+    if word_frequencies is not None:
+        content_words = [w for w in words if len(w) > 2]  # Ignore very short words
+        if content_words:
+            # If most content words are rare, it's likely specific
+            rare_count = sum(
+                1 for w in content_words if word_frequencies.get(w, 0) < min_word_freq
+            )
+            if rare_count > len(content_words) * 0.5:  # More than 50% rare words
+                return True
+
+    # Check for common technical patterns
+    technical_patterns = [
+        "transferase",
+        "phosphatase",
+        "kinase",
+        "synthase",
+        "reductase",
+        "oxidase",
+        "hydrolase",
+        "activity",
+        "specific",
+    ]
+    label_lower = label.lower()
+    if any(pattern in label_lower for pattern in technical_patterns):
+        # But allow common terms like "has activity" or "specific to"
+        if not any(
+            phrase in label_lower
+            for phrase in ["has activity", "specific to", "specific for"]
+        ):
+            return True
+
+    return False
+
+
+def compute_kb_generality_scores(
+    embeddings: np.ndarray,
+    labels: list[str],
+    k_neighbors: int = 10,
+    metric: str = "cosine",
+    word_frequencies: Mapping[str, float] | None = None,
+    density_weight: float = 0.5,
+) -> np.ndarray:
+    """
+    Compute generality scores for entities based on KB statistics.
+
+    Combines embedding-space density with label simplicity to identify generic vs specific terms.
+    Generic terms tend to have:
+    - Many similar neighbors (high density)
+    - High average similarity to neighbors
+    - Shorter, simpler labels (fewer words, common words)
+    - Central position in semantic space
+
+    Args:
+        embeddings: Array of shape (n_points, n_features) containing embeddings
+        labels: List of labels corresponding to embeddings
+        k_neighbors: Number of nearest neighbors to consider
+        metric: Distance metric ('cosine' or 'euclidean')
+        word_frequencies: Optional word frequency mapping for simplicity scoring
+        density_weight: Weight for embedding density vs label simplicity (0.0 = pure simplicity, 1.0 = pure density)
+
+    Returns:
+        Array of generality scores (higher = more generic), shape (n_points,)
+    """
+    from sklearn.neighbors import NearestNeighbors
+
+    n_points = embeddings.shape[0]
+    k_neighbors = min(k_neighbors, n_points - 1)
+
+    if k_neighbors < 1:
+        return np.ones(n_points)
+
+    # Normalize embeddings for cosine distance
+    if metric == "cosine":
+        embeddings_norm = embeddings / (
+            np.linalg.norm(embeddings, axis=1, keepdims=True) + 1e-8
+        )
+    else:
+        embeddings_norm = embeddings
+
+    # Find k nearest neighbors for each point
+    nn = NearestNeighbors(n_neighbors=k_neighbors + 1, metric=metric)
+    nn.fit(embeddings_norm)
+    distances, indices = nn.kneighbors(embeddings_norm)
+
+    # Compute embedding-space density scores
+    density_scores = np.zeros(n_points)
+
+    for i in range(n_points):
+        # Get neighbors (excluding self)
+        neighbor_distances = distances[i, 1:]
+
+        # Convert distances to similarities (for cosine: similarity = 1 - distance)
+        if metric == "cosine":
+            similarities = 1.0 - neighbor_distances
+        else:
+            # For euclidean, use inverse distance (with smoothing)
+            similarities = 1.0 / (1.0 + neighbor_distances)
+
+        # Density = average similarity to neighbors
+        # Higher similarity means the term is in a dense region (more generic)
+        density_scores[i] = similarities.mean()
+
+    density_scores = np.log(density_scores)
+    # Normalize density scores to [0, 1] range
+    if density_scores.max() > density_scores.min():
+        density_scores_norm = (density_scores - density_scores.min()) / (
+            density_scores.max() - density_scores.min()
+        )
+    else:
+        density_scores_norm = np.ones_like(density_scores)
+
+    # Compute label simplicity scores
+    if word_frequencies is None:
+        word_frequencies = {}
+
+    simplicity_scores = np.zeros(n_points)
+    for i, label in enumerate(labels):
+        simplicity_metrics = _measure_label_simplicity(
+            str(label), word_frequencies=word_frequencies
+        )
+        simplicity_scores[i] = simplicity_metrics["simplicity_score"]
+
+    simplicity_scores = np.log(simplicity_scores)
+
+    # Normalize simplicity scores to [0, 1] range
+    if simplicity_scores.max() > simplicity_scores.min():
+        simplicity_scores_norm = (simplicity_scores - simplicity_scores.min()) / (
+            simplicity_scores.max() - simplicity_scores.min()
+        )
+    else:
+        simplicity_scores_norm = np.ones_like(simplicity_scores)
+
+    # Combine density and simplicity scores
+    # Shorter, simpler terms should be preferred even if density is similar
+    generality_scores = (
+        density_weight * density_scores_norm
+        + (1 - density_weight) * simplicity_scores_norm
+    )
+
+    return generality_scores
+
+
+def is_specific_term_kb(
+    label: str,
+    generality_score: float,
+    word_frequencies: Mapping[str, float] | None = None,
+    min_generality: float = 0.3,
+    max_word_length: int = 18,
+    min_word_freq: float = 1e-6,
+    strict_rare_word_check: bool = True,
+) -> bool:
+    """
+    Check if a label represents a very specific/technical term using KB-based criteria.
+
+    Combines KB generality score with word-level patterns and domain-specific vocabulary.
+
+    Args:
+        label: Label text to check
+        generality_score: KB-based generality score (0-1, higher = more generic)
+        word_frequencies: Optional word frequency mapping
+        min_generality: Minimum generality score to be considered generic
+        max_word_length: Maximum length for a word before considered specific
+        min_word_freq: Minimum word frequency to be considered generic
+        strict_rare_word_check: If True, filter out if ANY content word is very rare
+
+    Returns:
+        True if the label appears to be very specific/technical
+    """
+    label_lower = label.strip().lower()
+    words = label_lower.split()
+
+    # Low generality score = specific term
+    if generality_score < min_generality:
+        return True
+
+    # Check for very long words (likely technical compounds)
+    if any(len(word) > max_word_length for word in words):
+        return True
+
+    # Domain-specific vocabulary patterns (anatomy, neuroscience, etc.)
+    domain_specific_patterns = [
+        # Anatomy/neuroscience
+        "soma",
+        "dendrite",
+        "axon",
+        "synapse",
+        "neuron",
+        "muscle antagonist",
+        "muscle insertion",
+        "muscle origin",
+        "fasciculate",
+        "innervate",
+        "synapsed",
+        "synapsed to",
+        "synapsed by",
+        "synapsed in",
+        # Domain-specific processes
+        "myristoyl",
+        "ubiquitin",
+        "phosphoryl",
+        "methylat",
+        # Very specific biological terms
+        "endoparasite",
+        "ectoparasite",
+        "mesoparasite",
+        "hyperparasite",
+        "kleptoparasite",
+        "epiphyte",
+        "roost",
+        "co-roost",
+        # Ecological terms
+        "commensual",
+        "mutualistic",
+        "symbiotic",
+        "trophic",
+        # Very specific location terms
+        "soma location",
+        "dendrite location",
+        "2d boundary",
+        # Specific anatomical structures
+        "trachea",
+        "tracheate",
+        "bounding layer",
+        # Very specific temporal/spatial relations
+        "during which",
+        "existence starts",
+        "existence ends",
+        "existence overlaps",
+    ]
+
+    # Check for domain-specific patterns
+    # These are always too specific, regardless of generality score
+    for pattern in domain_specific_patterns:
+        if pattern in label_lower:
+            # Domain-specific terms are always filtered out
+            # They may have high embedding similarity but are still too niche
+            return True
+
+    # Check word frequencies if available
+    if word_frequencies is not None:
+        content_words = [w for w in words if len(w) > 2]  # Ignore very short words
+        if content_words:
+            # Strict check: if ANY key content word is very rare, filter it out
+            if strict_rare_word_check:
+                # Check for very rare words (much stricter threshold)
+                very_rare_threshold = min_word_freq * 0.1  # 10x stricter
+                for word in content_words:
+                    freq = word_frequencies.get(word, 0)
+                    if (
+                        freq < very_rare_threshold and len(word) > 4
+                    ):  # Only check longer words
+                        # This is a very rare word, likely domain-specific
+                        return True
+
+            # Also check if most content words are rare
+            rare_count = sum(
+                1 for w in content_words if word_frequencies.get(w, 0) < min_word_freq
+            )
+            if rare_count > len(content_words) * 0.5:  # More than 50% rare words
+                return True
+
+    # Check for common technical patterns (but allow if generality is high)
+    technical_patterns = [
+        "transferase",
+        "phosphatase",
+        "kinase",
+        "synthase",
+        "reductase",
+        "oxidase",
+        "hydrolase",
+    ]
+    if any(pattern in label_lower for pattern in technical_patterns):
+        # Only consider specific if generality is also low
+        if generality_score < min_generality * 1.5:  # Slightly more lenient threshold
+            return True
+
+    return False

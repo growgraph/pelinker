@@ -27,10 +27,6 @@ from pelinker.ops import parse_model_filename
 from pelinker.transform import TransformConfig
 
 
-# estimate_model is now estimate_model_clustering in pelinker.analysis
-# parse_filename is now parse_model_filename in pelinker.ops
-
-
 @click.command()
 @click.option(
     "--input-dir",

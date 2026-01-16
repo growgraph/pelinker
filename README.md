@@ -1,6 +1,7 @@
-# PELinker
+# PELinker (Property Entity LINKER)
 
-A service for entity linking of properties
+Entity linking for BERT-like models
+
 
 ## Developer notes
 
