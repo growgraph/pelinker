@@ -4,18 +4,15 @@ requires = ["hatchling"]
 
 [dependency-groups]
 dev = [
-  "jupyter>=1.0.0,<2",
   "pre-commit>=4.0.1,<5",
-  "pylint>=3.2.3,<4",
-  "pytest>=8.2.2,<9",
-  "scikit-learn>=1.5.0,<2",
+  "pytest>=9.0.2",
   "seaborn>=0.13.2,<0.14"
 ]
 
 [project]
 authors = [{email = "abelikov@gmail.com", name = "Alexander Belikov"}]
 dependencies = [
-  "dataclass-wizard>=0.35.1,<0.36",
+  "dataclass-wizard>=0.35.1",
   "faiss-cpu==1.8.0",
   "flask-compress~=1.15",
   "flask-cors>=6.0.2",
@@ -29,12 +26,13 @@ dependencies = [
   "pyarrow>=20.0.0,<21",
   "rdflib>=7.0.0,<8",
   "rich>=14.1.0",
+  "scikit-learn>=1.5.0,<2",
   "scikit-optimize>=0.10.2",
   "sentence-transformers>=3.0.1,<4",
   "spacy>=3.7.5,<4",
   "torch>=2.9.1",
   "transformers>=4.41.2,<5",
-  "umap-learn>=0.5.9.post2,<0.6",
+  "umap-learn>=0.5.11",
   "waitress>=3.0.2,<4",
   "wordfreq>=3.1.1"
 ]
