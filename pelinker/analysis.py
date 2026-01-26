@@ -4,6 +4,8 @@ import numpy as np
 import pandas as pd
 import torch
 import hdbscan
+from pelinker.io import read_batches
+from pelinker.reporting import ClusteringReport
 from sklearn.metrics import confusion_matrix
 from scipy.optimize import linear_sum_assignment
 from torch.nn import functional as F
@@ -355,7 +357,6 @@ def estimate_model_clustering(
     *,
     min_class_size: int = 20,
     max_scale: int = 120,
-    tol: float = 0.05,
     frac: float = 0.1,
     head: int | None = None,
     batch_size: int = 1000,
@@ -372,7 +373,6 @@ def estimate_model_clustering(
         transform_config: TransformConfig instance specifying transformation parameters
         min_class_size: Minimum class size for filtering
         max_scale: Maximum value for grid evaluation of min_cluster_size (default: 120)
-        tol: Tolerance for optimization (deprecated, kept for compatibility)
         frac: Fraction of dataset to sample
         head: Number of batches to take (None for all)
         batch_size: Batch size for reading
@@ -385,8 +385,6 @@ def estimate_model_clustering(
     Returns:
         ClusteringReport or None: Report containing clustering results, or None if processing failed
     """
-    from pelinker.io import read_batches
-    from pelinker.reporting import ClusteringReport
 
     # Simple check: if file doesn't exist (handles broken symlinks), skip it
     if not file_path.exists():

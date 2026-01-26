@@ -7,7 +7,7 @@ from flask_cors import cross_origin
 from flask_restful import Api
 from waitress import serve
 from importlib.resources import files
-from pelinker.util import load_models
+from pelinker.util import load_models, str2layers, layers2str
 from pelinker.onto import MAX_LENGTH
 from pelinker.model import Linker
 from pprint import pprint
@@ -69,10 +69,10 @@ def main(
 
     logger.info(f"thr_score : {thr_score}, thr_dif: {thr_dif}")
 
-    layers = Linker.str2layers(layers_spec)
+    layers = str2layers(layers_spec)
     sentence = True if layers == "sent" else False
     suffix = ".superposition" if superposition else ""
-    layers_str = Linker.layers2str(layers)
+    layers_str = layers2str(layers)
 
     model_spec = files("pelinker.store").joinpath(
         f"pelinker.model.{model_type}.{layers_str}{suffix}"

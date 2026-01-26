@@ -59,12 +59,6 @@ from pelinker.transform import TransformConfig
     help="Minimum class size for filtering",
 )
 @click.option(
-    "--tol",
-    type=click.FLOAT,
-    default=0.05,
-    help="Tolerance for optimization",
-)
-@click.option(
     "--seed",
     type=click.INT,
     default=13,
@@ -87,6 +81,12 @@ from pelinker.transform import TransformConfig
     type=click.INT,
     default=1000,
     help="Batch size for reading files",
+)
+@click.option(
+    "--prefix",
+    type=click.STRING,
+    default="res",
+    help="Optional prefix for input embedding files to differentiate between models",
 )
 @click.option(
     "--n-sample",
@@ -113,19 +113,19 @@ def main(
     umap_dim: int,
     pca_components: int,
     min_class_size: int,
-    tol: float,
     seed: int,
     frac: float,
     head: int,
     batch_size: int,
     n_sample: int,
+    prefix: str,
     selected_labels_kb_path: pathlib.Path | None,
     max_scale: int,
 ):
     """
     Process multiple parquet files and compute optimal cluster sizes.
 
-    Files should follow the pattern: res_<model>_<layer>.parquet
+    Files should follow the pattern: <prefix>_<model>_<layer>.parquet
     """
     # Configure console to work better in PyCharm and other IDEs
     # Use legacy_windows=False and force_terminal to ensure progress bars work
@@ -176,11 +176,11 @@ def main(
     )
 
     # Find all parquet files matching the pattern
-    parquet_files = sorted(input_dir.glob("res_*.parquet"))
+    parquet_files = sorted(input_dir.glob(f"{prefix}*.parquet"))
 
     if not parquet_files:
         console.print(
-            f"[red]No parquet files found matching pattern 'res_*.parquet' in {input_dir}[/red]"
+            f"[red]No parquet files found matching pattern '{prefix}*.parquet' in {input_dir}[/red]"
         )
         return
 
@@ -190,7 +190,7 @@ def main(
         if not file_path.exists():
             continue
 
-        model, layer = parse_model_filename(file_path.name)
+        model, layer = parse_model_filename(file_path.name, prefix)
         if model is None or layer is None:
             continue
 
@@ -258,7 +258,6 @@ def main(
                     transform_config=transform_config,
                     min_class_size=min_class_size,
                     max_scale=max_scale,
-                    tol=tol,
                     frac=frac,
                     head=head,
                     batch_size=batch_size,

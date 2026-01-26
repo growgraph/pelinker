@@ -4,17 +4,22 @@ from pelinker.onto import WordGrouping
 import torch
 import joblib
 import numpy as np
-from typing import Optional
+from typing import Optional, Union
 import hdbscan
 from hdbscan import approximate_predict
+import pathlib
+import pyarrow.parquet as pq
+import logging
+from numpy.random import RandomState
 
 from pelinker.transform import EmbeddingTransformer, TransformConfig
+
+logger = logging.getLogger(__name__)
 
 
 class Linker:
     def __init__(
         self,
-        vocabulary: list[str],
         layers,
         nb_nn=10,
         index: faiss.IndexFlatIP | None = None,
@@ -24,7 +29,6 @@ class Linker:
         transform_config: Optional[TransformConfig] = None,
         **kwargs,
     ):
-        # Legacy FAISS index support (for backward compatibility)
         self.index: faiss.IndexFlatIP | None = index
         # New clustering-based approach
         self.transformer: Optional[EmbeddingTransformer] = transformer
@@ -32,34 +36,10 @@ class Linker:
         self.cluster_assignments: dict[str, int] = cluster_assignments or {}
         self.transform_config: Optional[TransformConfig] = transform_config
 
-        self.vocabulary: list[str] = vocabulary
+        self.vocabulary: list[str] = []
         self.labels_map: dict[str, str] = kwargs.pop("labels_map", dict())
         self.ls = layers
         self.nb_nn = nb_nn
-
-    @classmethod
-    def layers2str(cls, layers):
-        if isinstance(layers, str):
-            layers_str = layers
-        else:
-            if any(l0 > 0 for l0 in layers):
-                raise ValueError(f" there are positive layers: {layers}")
-            alayers = sorted([abs(l0) for l0 in layers])
-            layers_str = "".join([str(l0) for l0 in alayers])
-        return layers_str
-
-    @classmethod
-    def str2layers(cls, layers_spec):
-        if "," in layers_spec:
-            layers_spec = "".join(layers_spec.split(","))
-        if layers_spec.isdigit():
-            try:
-                layers = list(set([-abs(int(x)) for x in layers_spec]))
-            except:
-                raise ValueError(f"{layers_spec} could not be parsed into layers")
-        else:
-            layers = layers_spec
-        return layers
 
     @classmethod
     def filter_report(cls, report, thr_score, thr_dif):
@@ -103,37 +83,89 @@ class Linker:
 
     def fit(
         self,
-        embeddings: np.ndarray,
-        transform_config: Optional[TransformConfig] = None,
+        embeddings: Union[np.ndarray, pathlib.Path, str],
+        transform_config: TransformConfig,
         min_cluster_size: Optional[int] = None,
+        kb_labels: Optional[set[str]] = None,
+        optimize_clustering: bool = False,
+        clustering_optimization_params: Optional[dict] = None,
     ):
         """
         Fit the Linker model with embeddings.
 
-        Args:
-            embeddings: Array of shape (n_samples, n_features) containing KB embeddings
-            transform_config: TransformConfig instance. If None, uses default.
-            min_cluster_size: Minimum cluster size for HDBSCAN. If None, uses default optimization.
-        """
-        if embeddings.ndim != 2:
-            raise ValueError(f"embeddings must be 2D, got shape {embeddings.shape}")
+        This method handles two main parts:
+        a) Loading and processing embeddings (from file or direct array)
+        b) Clustering the embeddings
 
-        if len(embeddings) != len(self.vocabulary):
-            raise ValueError(
-                f"Number of embeddings ({len(embeddings)}) must match vocabulary size ({len(self.vocabulary)})"
+        Args:
+            embeddings: Either:
+                - Array of shape (n_samples, n_features) containing KB embeddings
+                - Path to parquet file containing embeddings (with 'property' and 'embed' columns)
+            transform_config: TransformConfig instance
+            min_cluster_size: Minimum cluster size for HDBSCAN. If None and optimize_clustering=False,
+                            uses default from transform_config or 20.
+            kb_labels: Set of KB property labels to filter by (only used when embeddings is a file path)
+            optimize_clustering: If True, optimize min_cluster_size using grid search
+            clustering_optimization_params: Optional dict with optimization parameters:
+                - min_class_size: Minimum class size for filtering (default: 20)
+                - max_scale: Maximum value for grid evaluation (default: 120)
+                - rns: RandomState for reproducibility (default: RandomState(seed=13))
+                - frac: Fraction of dataset to sample (default: 1.0)
+                - head: Number of batches to take (default: None)
+                - batch_size: Batch size for reading (default: 1000)
+
+        Returns:
+            self
+        """
+        # Part a) Load and process embeddings
+        # Check if embeddings is a file path (before loading)
+        is_file_path = isinstance(embeddings, (str, pathlib.Path))
+
+        if is_file_path:
+            embeddings_path = pathlib.Path(embeddings)
+            # Part b) Optimize clustering first if requested (before loading embeddings)
+            if optimize_clustering:
+                logger.info("Optimizing clustering parameters...")
+                min_cluster_size = self._optimize_clustering(
+                    embeddings_path,
+                    transform_config,
+                    kb_labels,
+                    clustering_optimization_params,
+                )
+
+            # Load embeddings from file
+            logger.info(f"Loading embeddings from file: {embeddings_path}")
+            embeddings, entity_ids = self._load_embeddings_from_file(
+                embeddings_path, kb_labels
             )
+            # Update vocabulary to match loaded entity_ids
+            self.vocabulary = entity_ids
+        else:
+            # Direct embeddings array provided
+            if embeddings.ndim != 2:
+                raise ValueError(f"embeddings must be 2D, got shape {embeddings.shape}")
+
+            if len(embeddings) != len(self.vocabulary):
+                raise ValueError(
+                    f"Number of embeddings ({len(embeddings)}) must match vocabulary size ({len(self.vocabulary)})"
+                )
+
+            # Optimization not supported for direct embeddings array
+            if optimize_clustering:
+                logger.warning(
+                    "Clustering optimization requires file path, using provided min_cluster_size"
+                )
 
         # Set transform config
-        self.transform_config = transform_config or TransformConfig()
+        self.transform_config = transform_config
 
         # Fit transformer
         self.transformer = EmbeddingTransformer(self.transform_config)
         umap_clustering, _ = self.transformer.fit_transform(embeddings)
 
-        # Fit clusterer
+        # Use optimized or provided min_cluster_size
         if min_cluster_size is None:
-            # Use default from analysis module logic
-            min_cluster_size = 20
+            min_cluster_size = 20  # Default
 
         self.clusterer = hdbscan.HDBSCAN(
             min_cluster_size=min_cluster_size,
@@ -149,6 +181,144 @@ class Linker:
         }
 
         return self
+
+    def _load_embeddings_from_file(
+        self, embeddings_path: pathlib.Path, kb_labels: Optional[set[str]] = None
+    ) -> tuple[np.ndarray, list[str]]:
+        """
+        Load embeddings from parquet file, filter to KB entities, and aggregate per property.
+
+        Args:
+            embeddings_path: Path to parquet file with 'property' and 'embed' columns
+            kb_labels: Optional set of KB property labels to filter by
+
+        Returns:
+            Tuple of (embeddings_array, entity_ids_list)
+        """
+        logger.info("Reading embedded corpus and filtering to KB entities...")
+        parquet_table = pq.read_table(embeddings_path)
+        df_parquet = parquet_table.to_pandas()
+
+        # Filter to only KB properties if labels provided
+        if kb_labels is not None:
+            df_kb_filtered = df_parquet[df_parquet["property"].isin(kb_labels)].copy()
+            logger.info(
+                f"Filtered to {len(df_kb_filtered)} mentions from {len(df_parquet)} total mentions"
+            )
+        else:
+            df_kb_filtered = df_parquet.copy()
+            logger.info(f"Using all {len(df_kb_filtered)} mentions (no KB filter)")
+
+        if len(df_kb_filtered) == 0:
+            raise ValueError("No mentions found for KB properties in corpus")
+
+        # Aggregate embeddings per property (average)
+        logger.info("Aggregating embeddings per property...")
+        # Convert embed lists to numpy arrays for aggregation
+        df_kb_filtered["embed_array"] = df_kb_filtered["embed"].apply(np.array)
+
+        # Group by property and average embeddings
+        property_embeddings = {}
+        for prop_label, group in df_kb_filtered.groupby("property"):
+            embeddings_list = group["embed_array"].tolist()
+            # Stack and average
+            embeddings_array = np.stack(embeddings_list)
+            avg_embedding = np.mean(embeddings_array, axis=0)
+            property_embeddings[prop_label] = avg_embedding
+
+        # Map property labels to entity_ids using labels_map
+        entity_ids = []
+        embeddings_list = []
+        for prop_label in sorted(property_embeddings.keys()):
+            # Find entity_id for this property label
+            entity_id = None
+            for eid, label in self.labels_map.items():
+                if label == prop_label:
+                    entity_id = eid
+                    break
+
+            if entity_id is not None:
+                entity_ids.append(entity_id)
+                embeddings_list.append(property_embeddings[prop_label])
+            else:
+                logger.warning(
+                    f"Property label '{prop_label}' not found in labels_map, skipping"
+                )
+
+        if len(embeddings_list) == 0:
+            raise ValueError("No valid embeddings after mapping to entity_ids")
+
+        embeddings = np.stack(embeddings_list)
+
+        logger.info(
+            f"Embedded {len(embeddings)} KB properties into {embeddings.shape[1]}-dimensional vectors"
+        )
+
+        return embeddings, entity_ids
+
+    def _optimize_clustering(
+        self,
+        embeddings_path: pathlib.Path,
+        transform_config: TransformConfig,
+        kb_labels: Optional[set[str]],
+        optimization_params: Optional[dict],
+    ) -> int:
+        """
+        Optimize min_cluster_size using grid search.
+
+        Args:
+            embeddings_path: Path to parquet file
+            transform_config: TransformConfig instance
+            kb_labels: Set of KB property labels to filter by
+            optimization_params: Optional dict with optimization parameters
+
+        Returns:
+            Optimal min_cluster_size value
+        """
+        from pelinker.analysis import estimate_model_clustering
+
+        # Default optimization parameters
+        params = {
+            "min_class_size": 20,
+            "max_scale": 120,
+            "rns": RandomState(seed=13),
+            "frac": 1.0,
+            "head": None,
+            "batch_size": 1000,
+            "optimization_method": "mean",
+        }
+        if optimization_params:
+            params.update(optimization_params)
+
+        logger.info("Fitting clustering model using estimate_model_clustering...")
+
+        clustering_report = estimate_model_clustering(
+            file_path=embeddings_path,
+            rns=params["rns"],
+            transform_config=transform_config,
+            min_class_size=params["min_class_size"],
+            max_scale=params["max_scale"],
+            frac=params["frac"],
+            head=params["head"],
+            batch_size=params["batch_size"],
+            selected_labels=kb_labels,
+            all_metrics_dfs=None,
+            optimization_method=params["optimization_method"],
+        )
+
+        if clustering_report is None:
+            logger.warning(
+                "Clustering estimation failed, using default min_cluster_size"
+            )
+            return params["min_class_size"]
+
+        best_min_cluster_size = clustering_report.best_size
+        best_score = clustering_report.best_score
+        logger.info(
+            f"Optimal min_cluster_size: {best_min_cluster_size} (score: {best_score:.3f})"
+        )
+
+        return best_min_cluster_size
 
     def predict(
         self, texts, tokenizer, model, nlp, max_length, topk=None, extra_context=False
@@ -314,19 +484,6 @@ class Linker:
                 kb_item["_leading_scores"] = [score * 0.9] * min(
                     len(cluster_entities) - 1, topk
                 )
-
-            if self.labels_map:
-                kb_item["entity_label"] = (
-                    self.labels_map[predicted_entity]
-                    if predicted_entity in self.labels_map
-                    else "NA"
-                )
-                if topk is not None and "_leading_candidates" in kb_item:
-                    kb_item["_leading_candidates_labels"] = [
-                        self.labels_map[e] if e in self.labels_map else "NA"
-                        for e in kb_item["_leading_candidates"]
-                    ]
-
             kb_items += [kb_item]
 
         return kb_items

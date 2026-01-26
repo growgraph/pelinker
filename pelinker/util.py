@@ -55,6 +55,30 @@ def load_models(model_type, sentence=False):
     return tokenizer, model
 
 
+def layers2str(layers: str | list[int]) -> str:
+    if isinstance(layers, str):
+        layers_str = layers
+    else:
+        if any(l0 > 0 for l0 in layers):
+            raise ValueError(f" there are positive layers: {layers}")
+        alayers = sorted([abs(l0) for l0 in layers])
+        layers_str = "".join([str(l0) for l0 in alayers])
+    return layers_str
+
+
+def str2layers(layers_spec: str | list[int]) -> list[int]:
+    if "," in layers_spec:
+        layers_spec = "".join(layers_spec.split(","))
+    if layers_spec.isdigit():
+        try:
+            layers = list(set([-abs(int(x)) for x in layers_spec]))
+        except:
+            raise ValueError(f"{layers_spec} could not be parsed into layers")
+    else:
+        layers = layers_spec
+    return layers
+
+
 def text_to_tokens_embeddings(texts: list[str], tokenizer, model):
     """
 
@@ -665,7 +689,7 @@ def embed_texts(
 
 
 def extract_and_embed_mentions(
-    props: list[str],
+    entities: list[str],
     data: list[str],
     pmids: list[str],
     tokenizer,
@@ -687,7 +711,7 @@ def extract_and_embed_mentions(
     ]
 
     # Pre-tokenize properties for lemma matching
-    prop_tokens = {p: text_to_tokens(nlp=nlp, text=p) for p in props}
+    prop_tokens = {p: text_to_tokens(nlp=nlp, text=p) for p in entities}
 
     rows = []
     for ibatch, text_batch in enumerate((pbar := tqdm.tqdm(data_batched))):
@@ -703,7 +727,7 @@ def extract_and_embed_mentions(
         batch_pmids = data_pmids_batched[ibatch]
 
         # For each property, pick the matching word grouping and aggregate matches
-        for p in props:
+        for p in entities:
             pe = prop_tokens[p]
             wg = _wg_for_property(p)
             if wg is None:

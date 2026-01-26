@@ -113,18 +113,19 @@ def load_dataframe(table_path: pathlib.Path) -> pd.DataFrame:
     return pd.read_csv(table_path, sep=sep, compression=compression)
 
 
-def parse_model_filename(filename: str) -> tuple[str | None, int | None]:
+def parse_model_filename(filename: str, prefix: str) -> tuple[str | None, int | None]:
     """
     Parse filename like 'res_bert_1.parquet' to extract model and layer.
 
     Args:
         filename: Filename to parse
+        prefix: parsing prefix
 
     Returns:
         tuple: (model, layer) or (None, None) if pattern doesn't match
     """
-    # Pattern: res_<model>_<layer>.parquet
-    pattern = r"res_([^_]+)_(\d+)\.parquet"
+    # Pattern: <prefix]>_<model>_<layer>.parquet
+    pattern = rf"{prefix}_([^_]+)_(\d+)\.parquet"
     match = re.match(pattern, filename)
     if match:
         model = match.group(1)

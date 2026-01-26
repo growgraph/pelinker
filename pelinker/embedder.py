@@ -8,7 +8,7 @@ import logging
 from pelinker.ops import _detect_file_format, _detect_headers_and_columns
 from pelinker.util import load_models, extract_and_embed_mentions
 from pelinker.onto import WordGrouping
-from pelinker.model import Linker
+from pelinker.util import str2layers
 from pelinker.io.parquet import ParquetWriter
 
 logger = logging.getLogger(__name__)
@@ -18,7 +18,7 @@ def embed_kb_corpus(
     model_type: str,
     layers_spec: str,
     input_text_table_path: pathlib.Path,
-    properties_txt_path: pathlib.Path,
+    kb_csv_path: pathlib.Path,
     output_parquet_path: pathlib.Path,
     use_gpu: bool = False,
     chunk_size: int = 1000,
@@ -33,7 +33,7 @@ def embed_kb_corpus(
         model_type: Backbone model type for token embeddings (e.g., "biobert")
         layers_spec: String of layers; e.g., `1,2,3` corresponds to [-1,-2,-3]
         input_text_table_path: Input file (TSV/CSV, optionally gzipped) with pmid and text columns
-        properties_txt_path: Path to newline-separated list of properties/patterns
+        kb_csv_path: Path to csv file containing "entity_id" and "label" columns, where label is a property form
         output_parquet_path: Output Parquet file to append to
         use_gpu: Enable GPU acceleration if CUDA is available
         chunk_size: Chunk size for streaming input. Each chunk is split into batches and serialized
@@ -55,13 +55,12 @@ def embed_kb_corpus(
         model.to("cuda")
         spacy.require_gpu()
     nlp = spacy.load(nlp_model)
-    layers = Linker.str2layers(layers_spec)
+    layers = str2layers(layers_spec)
 
-    # Load properties
-    with open(properties_txt_path, "r") as f:
-        props = [p for p in f.read().split("\n") if p]
+    df_props = pd.read_csv(kb_csv_path)
+    entities = df_props["label"].tolist()
 
-    logger.info(f"Loaded {len(props)} properties")
+    logger.info(f"Loaded {df_props.shape[0]} properties")
     logger.info(f"Layers are set to {layers}")
 
     # Detect file format and headers
@@ -118,7 +117,7 @@ def embed_kb_corpus(
 
                 # Extract mentions and embeddings
                 rows_data = extract_and_embed_mentions(
-                    props=props,
+                    entities=entities,
                     data=chunk_texts,
                     batch_size=batch_size,
                     pmids=pmids,

@@ -27,10 +27,10 @@ logger = logging.getLogger(__name__)
     help="Input file (TSV/CSV, optionally gzipped) with pmid and text columns. Headers are auto-detected.",
 )
 @click.option(
-    "--properties-txt-path",
+    "--kb-csv-path",
     type=click.Path(path_type=pathlib.Path),
-    default=pathlib.Path("data/test/props.txt"),
-    help="Path to newline-separated list of properties/patterns.",
+    default=pathlib.Path("data/derived/properties.synthesis.2.csv"),
+    help="Path to csv with `label`, `entity_id` columns.",
 )
 @click.option(
     "--output-parquet-path",
@@ -71,7 +71,7 @@ def run(
     model_type,
     layers_spec,
     input_text_table_path,
-    properties_txt_path,
+    kb_csv_path,
     output_parquet_path,
     use_gpu,
     chunk_size,
@@ -89,7 +89,7 @@ def run(
         model_type=model_type,
         layers_spec=layers_spec,
         input_text_table_path=input_text_table_path,
-        properties_txt_path=properties_txt_path,
+        kb_csv_path=kb_csv_path,
         output_parquet_path=output_parquet_path,
         use_gpu=use_gpu,
         chunk_size=chunk_size,
