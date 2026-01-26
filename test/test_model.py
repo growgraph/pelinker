@@ -1,7 +1,7 @@
 import pytest
 
 from pelinker.onto import MAX_LENGTH
-from pelinker.model import LinkerModel
+from pelinker.model import Linker
 from importlib.resources import files
 
 
@@ -19,15 +19,15 @@ def text():
 @pytest.mark.skip("fix later")
 def test_load(text, tokenizer_model_biobert_stsb, nlp):
     layer_spec = "sent"
-    layers = LinkerModel.str2layers(layer_spec)
+    layers = Linker.str2layers(layer_spec)
 
-    layers_str = LinkerModel.layers2str(layers)
+    layers_str = Linker.layers2str(layers)
 
     file_path = files("pelinker.store").joinpath(
         f"pelinker.model.biobert-stsb.{layers_str}"
     )
-    model = LinkerModel.load(file_path)
+    model = Linker.load(file_path)
     t_tokenizer, t_model = tokenizer_model_biobert_stsb
 
-    r = model.link([text], t_tokenizer, t_model, nlp, MAX_LENGTH, True)
+    r = model.predict([text], t_tokenizer, t_model, nlp, MAX_LENGTH, True)
     assert r["entities"][-1]["mention"] == "decreased"

@@ -4,6 +4,8 @@ import numpy as np
 import pandas as pd
 import torch
 import hdbscan
+from pelinker.io import read_batches
+from pelinker.reporting import ClusteringReport
 from sklearn.metrics import confusion_matrix
 from scipy.optimize import linear_sum_assignment
 from torch.nn import functional as F
@@ -200,133 +202,6 @@ def cosine_similarity_std(tensor):
     return std_dev
 
 
-def adjust_cluster_count(
-    df_umap: pd.DataFrame,
-    umap_columns: list[str],
-    current_n_clusters: int,
-    target_n_clusters: int,
-    base_min_cluster_size: int,
-) -> tuple[pd.DataFrame, int, hdbscan.HDBSCAN]:
-    """
-    Adjust HDBSCAN clustering to get closer to target number of clusters.
-
-    Args:
-        df_umap: DataFrame with UMAP-reduced embeddings
-        umap_columns: List of column names for UMAP dimensions
-        current_n_clusters: Current number of clusters
-        target_n_clusters: Desired number of clusters
-        base_min_cluster_size: Base min_cluster_size to adjust from
-
-    Returns:
-        tuple: (clustered_dataframe, final_n_clusters, clusterer)
-    """
-    # Initial clusterer
-    initial_clusterer = hdbscan.HDBSCAN(
-        min_cluster_size=base_min_cluster_size, gen_min_span_tree=True
-    )
-    initial_labels = initial_clusterer.fit_predict(df_umap[umap_columns])
-
-    if current_n_clusters == target_n_clusters:
-        initial_df = df_umap.copy()
-        initial_df["class"] = initial_labels
-        return initial_df, current_n_clusters, initial_clusterer
-
-    best_n_clusters = current_n_clusters
-    best_df = df_umap.copy()
-    best_clusterer = initial_clusterer
-
-    # Try increasing min_cluster_size to reduce number of clusters
-    if current_n_clusters > target_n_clusters:
-        for size_mult in [1.2, 1.5, 2.0, 2.5]:
-            test_size = int(base_min_cluster_size * size_mult)
-            if test_size >= len(df_umap):
-                continue
-            clusterer = hdbscan.HDBSCAN(
-                min_cluster_size=test_size, gen_min_span_tree=True
-            )
-            labels = clusterer.fit_predict(df_umap[umap_columns])
-            test_n_clusters = len(set(labels)) - (1 if -1 in labels else 0)
-            if abs(test_n_clusters - target_n_clusters) < abs(
-                best_n_clusters - target_n_clusters
-            ):
-                best_n_clusters = test_n_clusters
-                df_test = df_umap.copy()
-                df_test["class"] = labels
-                best_df = df_test
-                best_clusterer = clusterer
-                if best_n_clusters == target_n_clusters:
-                    break
-
-    # Try decreasing min_cluster_size to increase number of clusters
-    elif current_n_clusters < target_n_clusters:
-        for size_mult in [0.8, 0.6, 0.5, 0.4]:
-            test_size = max(2, int(base_min_cluster_size * size_mult))
-            clusterer = hdbscan.HDBSCAN(
-                min_cluster_size=test_size, gen_min_span_tree=True
-            )
-            labels = clusterer.fit_predict(df_umap[umap_columns])
-            test_n_clusters = len(set(labels)) - (1 if -1 in labels else 0)
-            if abs(test_n_clusters - target_n_clusters) < abs(
-                best_n_clusters - target_n_clusters
-            ):
-                best_n_clusters = test_n_clusters
-                df_test = df_umap.copy()
-                df_test["class"] = labels
-                best_df = df_test
-                best_clusterer = clusterer
-                if best_n_clusters == target_n_clusters:
-                    break
-
-    return best_df, best_n_clusters, best_clusterer
-
-
-def cluster_with_target_count(
-    df_umap: pd.DataFrame,
-    umap_columns: list[str],
-    target_n_clusters: int,
-    base_min_cluster_size: int | None = None,
-) -> tuple[pd.DataFrame, int, float]:
-    """
-    Cluster data to get approximately target number of clusters and compute DBCV score.
-
-    Args:
-        df_umap: DataFrame with UMAP-reduced embeddings
-        umap_columns: List of column names for UMAP dimensions
-        target_n_clusters: Desired number of clusters
-        base_min_cluster_size: Starting min_cluster_size (if None, estimates from data size)
-
-    Returns:
-        tuple: (clustered_dataframe, actual_n_clusters, dbcv_score)
-    """
-    if base_min_cluster_size is None:
-        # Estimate starting point: aim for clusters of roughly equal size
-        base_min_cluster_size = max(2, len(df_umap) // (target_n_clusters * 3))
-
-    # Start with estimated size
-    clusterer = hdbscan.HDBSCAN(
-        min_cluster_size=base_min_cluster_size, gen_min_span_tree=True
-    )
-    labels = clusterer.fit_predict(df_umap[umap_columns])
-    current_n_clusters = len(set(labels)) - (1 if -1 in labels else 0)
-
-    # Adjust to get closer to target
-    df_clustered, final_n_clusters, final_clusterer = adjust_cluster_count(
-        df_umap,
-        umap_columns,
-        current_n_clusters,
-        target_n_clusters,
-        base_min_cluster_size,
-    )
-
-    # Compute DBCV score from the final clusterer
-    if hasattr(final_clusterer, "relative_validity_"):
-        dbcv = float(final_clusterer.relative_validity_)
-    else:
-        dbcv = 0.0  # Invalid clustering
-
-    return df_clustered, final_n_clusters, dbcv
-
-
 def get_word_frequencies_from_library(
     language: str = "en",
     wordlist: str = "best",
@@ -374,9 +249,20 @@ def get_word_frequencies_from_library(
 def _measure_label_simplicity(
     label: str,
     word_frequencies: Mapping[str, float],
-    stopwords: Iterable[str] = ("is", "of", "the", "a", "an", "to", "for", "or", "in"),
+    stopwords: Iterable[str] = (
+        "is",
+        "of",
+        "the",
+        "a",
+        "an",
+        "to",
+        "for",
+        "or",
+        "in",
+        "has",
+    ),
     zero_freq_penalty: float = 1e-8,
-    multiword_penalty: float = 0.15,
+    multiword_penalty: float = 0.2,
     stopword_penalty: float = 0.3,
 ) -> dict[str, int | float]:
     """..."""
@@ -428,142 +314,6 @@ def _measure_label_simplicity(
     }
 
 
-def find_cluster_centers(
-    df_clustered: pd.DataFrame,
-    id_column: str = "id",
-    label_column: str = "label",
-    min_cluster_size: int = 5,
-    max_complexity_chars: int | None = None,
-    max_complexity_words: int | None = None,
-    min_simplicity_score: float | None = None,
-    max_word_length: int | None = None,
-    word_frequencies: dict[str, float] | None = None,
-) -> list[dict]:
-    """
-    Find a representative item for each cluster, filtering by size and complexity.
-
-    Args:
-        df_clustered: DataFrame with cluster assignments in 'class' column
-        id_column: Name of column containing item IDs
-        label_column: Name of column containing item labels
-        min_cluster_size: Minimum number of members required (default: 5)
-        max_complexity_chars: Maximum character count for candidates (None = no limit)
-        max_complexity_words: Maximum word count for candidates (None = no limit)
-        min_simplicity_score: Minimum simplicity score (based on word frequency harmonic mean)
-                             Higher = simpler. None = no limit.
-        max_word_length: Maximum length for any word in the label (None = no limit)
-        word_frequencies: Optional dictionary mapping words to frequencies for simplicity calculation.
-
-    Returns:
-        List of dictionaries with cluster_id, cluster_size, center_id, center_label,
-        sorted by cluster_size (descending)
-    """
-    cluster_results = []
-
-    # Filter out noise points and group by cluster
-    df_valid = df_clustered[df_clustered["class"] != -1].copy()
-
-    for cluster_id, cluster_data in df_valid.groupby("class"):
-        cluster_size = len(cluster_data)
-
-        # Skip small clusters
-        if cluster_size < min_cluster_size:
-            continue
-
-        # Compute simplicity scores and filter candidates in one pass
-        valid_candidates = []
-
-        for idx, row in cluster_data.iterrows():
-            label = str(row[label_column])
-
-            # Apply quick filters first (before expensive simplicity calculation)
-            if max_word_length is not None:
-                if any(len(word) > max_word_length for word in label.split()):
-                    continue
-
-            # Compute simplicity metrics
-            complexity = _measure_label_simplicity(
-                label, word_frequencies=word_frequencies
-            )
-
-            # Apply complexity filters
-            if (
-                max_complexity_chars is not None
-                and complexity["char_count"] > max_complexity_chars
-            ):
-                continue
-            if (
-                max_complexity_words is not None
-                and complexity["word_count"] > max_complexity_words
-            ):
-                continue
-            if (
-                min_simplicity_score is not None
-                and complexity["simplicity_score"] < min_simplicity_score
-            ):
-                continue
-
-            # This candidate passes all filters
-            valid_candidates.append((idx, complexity["simplicity_score"]))
-
-        # Skip cluster if no valid candidates
-        if not valid_candidates:
-            continue
-
-        # Select the candidate with the highest simplicity score
-        best_idx, _ = max(valid_candidates, key=lambda x: x[1])
-        selected_row = cluster_data.loc[best_idx]
-
-        cluster_results.append(
-            {
-                "cluster_id": cluster_id,
-                "cluster_size": cluster_size,
-                "center_id": selected_row[id_column],
-                "center_label": selected_row[label_column],
-            }
-        )
-
-    # Sort by cluster size (largest first)
-    cluster_results.sort(key=lambda x: x["cluster_size"], reverse=True)
-    return cluster_results
-
-
-def compute_dbcv_after_filtering(
-    df_clustered: pd.DataFrame,
-    umap_columns: list[str],
-    valid_cluster_ids: set[int],
-) -> float:
-    """
-    Compute DBCV score after filtering out perplex clusters.
-
-    Args:
-        df_clustered: DataFrame with cluster assignments
-        umap_columns: List of UMAP column names
-        valid_cluster_ids: Set of cluster IDs to keep
-
-    Returns:
-        DBCV score for filtered clusters
-    """
-
-    # Filter to only valid clusters (exclude noise and filtered-out clusters)
-    df_filtered = df_clustered[df_clustered["class"].isin(valid_cluster_ids)].copy()
-
-    if len(df_filtered) < 2:
-        return 0.0
-
-    # Re-fit HDBSCAN on filtered data to get DBCV
-    # We need to estimate min_cluster_size - use a reasonable default
-    min_size = max(
-        2, len(df_filtered) // 20
-    )  # At least 2, but aim for ~20 points per cluster
-    clusterer = hdbscan.HDBSCAN(min_cluster_size=min_size, gen_min_span_tree=True)
-
-    if hasattr(clusterer, "relative_validity_"):
-        return float(clusterer.relative_validity_)
-    else:
-        return 0.0
-
-
 def compute_hungarian_accuracy(y_true: np.ndarray, y_pred: np.ndarray) -> float:
     """
     Compute clustering accuracy using Hungarian algorithm to optimally match
@@ -607,7 +357,6 @@ def estimate_model_clustering(
     *,
     min_class_size: int = 20,
     max_scale: int = 120,
-    tol: float = 0.05,
     frac: float = 0.1,
     head: int | None = None,
     batch_size: int = 1000,
@@ -624,7 +373,6 @@ def estimate_model_clustering(
         transform_config: TransformConfig instance specifying transformation parameters
         min_class_size: Minimum class size for filtering
         max_scale: Maximum value for grid evaluation of min_cluster_size (default: 120)
-        tol: Tolerance for optimization (deprecated, kept for compatibility)
         frac: Fraction of dataset to sample
         head: Number of batches to take (None for all)
         batch_size: Batch size for reading
@@ -637,8 +385,6 @@ def estimate_model_clustering(
     Returns:
         ClusteringReport or None: Report containing clustering results, or None if processing failed
     """
-    from pelinker.io import read_batches
-    from pelinker.reporting import ClusteringReport
 
     # Simple check: if file doesn't exist (handles broken symlinks), skip it
     if not file_path.exists():
@@ -759,3 +505,111 @@ def embeddings_dict_to_dataframe(
         label_list.append(label)
 
     return pd.DataFrame({"id": id_list, "label": label_list, "embed": embeddings_list})
+
+
+def compute_kb_generality_scores(
+    embeddings: np.ndarray,
+    labels: list[str],
+    k_neighbors: int = 10,
+    metric: str = "cosine",
+    word_frequencies: Mapping[str, float] | None = None,
+    density_weight: float = 0.5,
+) -> np.ndarray:
+    """
+    Compute generality scores for entities based on KB statistics.
+
+    Combines embedding-space density with label simplicity to identify generic vs specific terms.
+    Generic terms tend to have:
+    - Many similar neighbors (high density)
+    - High average similarity to neighbors
+    - Shorter, simpler labels (fewer words, common words)
+    - Central position in semantic space
+
+    Args:
+        embeddings: Array of shape (n_points, n_features) containing embeddings
+        labels: List of labels corresponding to embeddings
+        k_neighbors: Number of nearest neighbors to consider
+        metric: Distance metric ('cosine' or 'euclidean')
+        word_frequencies: Optional word frequency mapping for simplicity scoring
+        density_weight: Weight for embedding density vs label simplicity (0.0 = pure simplicity, 1.0 = pure density)
+
+    Returns:
+        Array of generality scores (higher = more generic), shape (n_points,)
+    """
+    from sklearn.neighbors import NearestNeighbors
+
+    n_points = embeddings.shape[0]
+    k_neighbors = min(k_neighbors, n_points - 1)
+
+    if k_neighbors < 1:
+        return np.ones(n_points)
+
+    # Normalize embeddings for cosine distance
+    if metric == "cosine":
+        embeddings_norm = embeddings / (
+            np.linalg.norm(embeddings, axis=1, keepdims=True) + 1e-8
+        )
+    else:
+        embeddings_norm = embeddings
+
+    # Find k nearest neighbors for each point
+    nn = NearestNeighbors(n_neighbors=k_neighbors + 1, metric=metric)
+    nn.fit(embeddings_norm)
+    distances, indices = nn.kneighbors(embeddings_norm)
+
+    # Compute embedding-space density scores
+    density_scores = np.zeros(n_points)
+
+    for i in range(n_points):
+        # Get neighbors (excluding self)
+        neighbor_distances = distances[i, 1:]
+
+        # Convert distances to similarities (for cosine: similarity = 1 - distance)
+        if metric == "cosine":
+            similarities = 1.0 - neighbor_distances
+        else:
+            # For euclidean, use inverse distance (with smoothing)
+            similarities = 1.0 / (1.0 + neighbor_distances)
+
+        # Density = average similarity to neighbors
+        # Higher similarity means the term is in a dense region (more generic)
+        density_scores[i] = similarities.mean()
+
+    density_scores = np.log(density_scores)
+    # Normalize density scores to [0, 1] range
+    if density_scores.max() > density_scores.min():
+        density_scores_norm = (density_scores - density_scores.min()) / (
+            density_scores.max() - density_scores.min()
+        )
+    else:
+        density_scores_norm = np.ones_like(density_scores)
+
+    # Compute label simplicity scores
+    if word_frequencies is None:
+        word_frequencies = {}
+
+    simplicity_scores = np.zeros(n_points)
+    for i, label in enumerate(labels):
+        simplicity_metrics = _measure_label_simplicity(
+            str(label), word_frequencies=word_frequencies
+        )
+        simplicity_scores[i] = simplicity_metrics["simplicity_score"]
+
+    simplicity_scores = np.log(simplicity_scores)
+
+    # Normalize simplicity scores to [0, 1] range
+    if simplicity_scores.max() > simplicity_scores.min():
+        simplicity_scores_norm = (simplicity_scores - simplicity_scores.min()) / (
+            simplicity_scores.max() - simplicity_scores.min()
+        )
+    else:
+        simplicity_scores_norm = np.ones_like(simplicity_scores)
+
+    # Combine density and simplicity scores
+    # Shorter, simpler terms should be preferred even if density is similar
+    generality_scores = (
+        density_weight * density_scores_norm
+        + (1 - density_weight) * simplicity_scores_norm
+    )
+
+    return generality_scores
