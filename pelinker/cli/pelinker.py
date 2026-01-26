@@ -9,7 +9,7 @@ from waitress import serve
 from importlib.resources import files
 from pelinker.util import load_models
 from pelinker.onto import MAX_LENGTH
-from pelinker.model import LinkerModel
+from pelinker.model import Linker
 from pprint import pprint
 import pathlib
 import spacy
@@ -69,17 +69,17 @@ def main(
 
     logger.info(f"thr_score : {thr_score}, thr_dif: {thr_dif}")
 
-    layers = LinkerModel.str2layers(layers_spec)
+    layers = Linker.str2layers(layers_spec)
     sentence = True if layers == "sent" else False
     suffix = ".superposition" if superposition else ""
-    layers_str = LinkerModel.layers2str(layers)
+    layers_str = Linker.layers2str(layers)
 
     model_spec = files("pelinker.store").joinpath(
         f"pelinker.model.{model_type}.{layers_str}{suffix}"
     )
 
     logger.info(f"model path: {model_spec}")
-    pe_model: LinkerModel = LinkerModel.load(model_spec)
+    pe_model: Linker = Linker.load(model_spec)
 
     logger.info(f"pelinker model loaded : {pe_model}")
 
@@ -109,7 +109,7 @@ def main(
                 r = pe_model.link(
                     text, tokenizer, model, nlp, MAX_LENGTH, extra_context
                 )
-                r = LinkerModel.filter_report(r, thr_score=thr_score0, thr_dif=thr_dif0)
+                r = Linker.filter_report(r, thr_score=thr_score0, thr_dif=thr_dif0)
 
             except Exception as exc:
                 logger.error(f"{exc}")
@@ -128,7 +128,7 @@ def main(
             sample_data = json.load(json_file)
         text = sample_data["text"][:11]
         r = pe_model.link(text, tokenizer, model, nlp, MAX_LENGTH, extra_context)
-        r = LinkerModel.filter_report(r, thr_score=thr_score, thr_dif=thr_dif)
+        r = Linker.filter_report(r, thr_score=thr_score, thr_dif=thr_dif)
         pprint(r)
     else:
         serve(

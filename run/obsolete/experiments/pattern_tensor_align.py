@@ -10,7 +10,7 @@ import pathlib
 import spacy
 import torch
 from pelinker.util import load_models, text_to_tokens
-from pelinker.model import LinkerModel
+from pelinker.model import Linker
 from pelinker.util import SimplifiedToken
 
 
@@ -53,7 +53,7 @@ def run(model_type, input_path, layers_spec, pattern, plot_path):
         plot_path.mkdir(parents=True, exist_ok=True)
 
     tokenizer, model = load_models(model_type, sentence=False)
-    layers = LinkerModel.str2layers(layers_spec)
+    layers = Linker.str2layers(layers_spec)
 
     df = pd.read_csv(input_path, index_col=0)
     texts = df["abstract"]

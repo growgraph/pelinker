@@ -13,7 +13,7 @@ from pelinker.util import (
 )
 from pelinker.onto import MAX_LENGTH
 from pelinker.preprocess import pre_process_properties
-from pelinker.model import LinkerModel
+from pelinker.model import Linker
 from pelinker.util import fetch_latest_kb, report2kb, texts_to_vrep
 from pelinker.onto import WordGrouping
 from pathlib import Path
@@ -55,7 +55,7 @@ def run(text_path, model_type, superposition, extra_context, layers_spec):
         print(f"kb not found at {path_derived}")
         raise e
 
-    layers = LinkerModel.str2layers(layers_spec)
+    layers = Linker.str2layers(layers_spec)
     sentence = True if layers == "sent" else False
 
     report = pre_process_properties(df0)
@@ -67,7 +67,7 @@ def run(text_path, model_type, superposition, extra_context, layers_spec):
 
     tokenizer, model = load_models(model_type, sentence)
 
-    layers_str = LinkerModel.layers2str(layers)
+    layers_str = Linker.layers2str(layers)
 
     report = texts_to_vrep(
         labels,
@@ -80,7 +80,7 @@ def run(text_path, model_type, superposition, extra_context, layers_spec):
     vocabulary, index = report2kb(report, wg=WordGrouping.W1)
 
     nb_nn = min([10, report["tensor"].shape[0]])
-    lm = LinkerModel(
+    lm = Linker(
         index=index,
         vocabulary=properties,
         layers=layers,

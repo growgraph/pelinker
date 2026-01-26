@@ -5,7 +5,7 @@ import faiss
 import pandas as pd
 import torch
 
-from pelinker.model import LinkerModel
+from pelinker.model import Linker
 from pelinker.util import load_models, encode
 from importlib.resources import files
 from pelinker.preprocess import pre_process_properties
@@ -33,7 +33,7 @@ from pathlib import Path
     help="`sent` or a string of layers, `1,2,3` would correspond to layers [-1, -2, -3]",
 )
 def run(model_type, layers_spec, superposition):
-    layers = LinkerModel.str2layers(layers_spec)
+    layers = Linker.str2layers(layers_spec)
     sentence = True if layers == "sent" else False
 
     suffix = ".superposition" if superposition else ""
@@ -57,7 +57,7 @@ def run(model_type, layers_spec, superposition):
 
     tokenizer, model = load_models(model_type, sentence)
 
-    layers_str = LinkerModel.layers2str(layers)
+    layers_str = Linker.layers2str(layers)
     tt_labels = encode(labels, tokenizer, model, layers)
 
     if superposition:
@@ -76,7 +76,7 @@ def run(model_type, layers_spec, superposition):
 
     index = faiss.IndexFlatIP(tt_basis.shape[1])
     index.add(tt_basis)
-    lm = LinkerModel(
+    lm = Linker(
         index=index, vocabulary=properties, layers=layers, labels_map=property_label_map
     )
     file_spec = files("pelinker.store").joinpath(

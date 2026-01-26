@@ -8,7 +8,7 @@ import spacy
 import numpy as np
 from sklearn.decomposition import PCA
 
-from pelinker.model import LinkerModel
+from pelinker.model import Linker
 from pelinker.ops import load_dataframe
 from pelinker.util import load_models, embed_texts
 from sklearn.cluster import KMeans
@@ -194,7 +194,7 @@ def run(
         format="%(asctime)s - %(levelname)s - %(message)s",
     )
 
-    layers = LinkerModel.str2layers(layers_spec)
+    layers = Linker.str2layers(layers_spec)
 
     logger.info("Loading dataframe from %s", input_table_path)
     df = load_dataframe(input_table_path)

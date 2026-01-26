@@ -5,7 +5,7 @@ import torch
 import joblib
 
 
-class LinkerModel:
+class Linker:
     def __init__(
         self,
         vocabulary: list[str],

@@ -9,7 +9,7 @@ import logging
 from pelinker.ops import _detect_file_format, _detect_headers_and_columns
 from pelinker.util import load_models, extract_and_embed_mentions
 from pelinker.onto import WordGrouping
-from pelinker.model import LinkerModel
+from pelinker.model import Linker
 from pelinker.io.parquet import ParquetWriter
 
 logger = logging.getLogger(__name__)
@@ -106,7 +106,7 @@ def run(
         model.to("cuda")
         spacy.require_gpu()
     nlp = spacy.load(nlp_model)
-    layers = LinkerModel.str2layers(layers_spec)
+    layers = Linker.str2layers(layers_spec)
 
     # Load properties
     with open(properties_txt_path, "r") as f:
