@@ -87,7 +87,7 @@ def run(text_path, model_type, superposition, extra_context, layers_spec):
         labels_map=property_label_map,
         nb_nn=nb_nn,
     )
-    report = lm.link(
+    report = lm.predict(
         [text],
         tokenizer,
         model,

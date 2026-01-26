@@ -29,5 +29,5 @@ def test_load(text, tokenizer_model_biobert_stsb, nlp):
     model = Linker.load(file_path)
     t_tokenizer, t_model = tokenizer_model_biobert_stsb
 
-    r = model.link([text], t_tokenizer, t_model, nlp, MAX_LENGTH, True)
+    r = model.predict([text], t_tokenizer, t_model, nlp, MAX_LENGTH, True)
     assert r["entities"][-1]["mention"] == "decreased"

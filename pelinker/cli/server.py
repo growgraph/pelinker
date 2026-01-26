@@ -105,9 +105,15 @@ def main(
             try:
                 text = json_data["text"]
                 thr_score0 = json_data.pop("thr_score", thr_score)
-                thr_dif0 = json_data.pop("thr_score", thr_dif)
-                r = pe_model.link(
-                    text, tokenizer, model, nlp, MAX_LENGTH, extra_context
+                thr_dif0 = json_data.pop("thr_dif", thr_dif)
+                r = pe_model.predict(
+                    text,
+                    tokenizer,
+                    model,
+                    nlp,
+                    MAX_LENGTH,
+                    topk=None,
+                    extra_context=extra_context,
                 )
                 r = Linker.filter_report(r, thr_score=thr_score0, thr_dif=thr_dif0)
 
@@ -127,7 +133,15 @@ def main(
         with open(sample_path) as json_file:
             sample_data = json.load(json_file)
         text = sample_data["text"][:11]
-        r = pe_model.link(text, tokenizer, model, nlp, MAX_LENGTH, extra_context)
+        r = pe_model.predict(
+            text,
+            tokenizer,
+            model,
+            nlp,
+            MAX_LENGTH,
+            topk=None,
+            extra_context=extra_context,
+        )
         r = Linker.filter_report(r, thr_score=thr_score, thr_dif=thr_dif)
         pprint(r)
     else:
