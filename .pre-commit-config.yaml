@@ -1,30 +1,36 @@
 fail_fast: false
 
 repos:
+  # Python linting and formatting
 -   repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.8.1
+    rev: v0.14.14
     hooks:
-    -   id: ruff
+    -   id: ruff-check
         args: [--fix, --ignore, E722]
     -   id: ruff-format
+
+  # YAML formatting
 -   repo: https://github.com/macisamuele/language-formatters-pre-commit-hooks
-    rev: v2.14.0
+    rev: v2.16.0
     hooks:
     -   id: pretty-format-yaml
         args: [--autofix, --indent, '4', --preserve-quotes]
-        files: ^(?!.*docker-compose.yml)$
-#-   repo: https://github.com/pre-commit/pre-commit-hooks
-#    rev: v4.6.0
-#    hooks:
-#    -   id: pretty-format-json
-#        args: [--autofix, --indent, '4', --no-sort-keys]
+
+  # JSON formatting
+-   repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+    -   id: pretty-format-json
+        args: [--autofix, --indent, '4', --no-sort-keys]
+
+  # TOML formatting and sorting
 -   repo: https://github.com/macisamuele/language-formatters-pre-commit-hooks
-    rev: v2.14.0
+    rev: v2.16.0
     hooks:
     -   id: pretty-format-toml
         args: [--autofix]
 -   repo: https://github.com/pappasam/toml-sort
-    rev: v0.24.2
+    rev: v0.24.3
     hooks:
     -   id: toml-sort
         args: [-ia]
