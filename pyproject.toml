@@ -8,10 +8,14 @@ dev = [
   "pytest>=9.0.2",
   "seaborn>=0.13.2,<0.14"
 ]
+gpu = [
+  "cupy-cuda12x>=13.6.0"
+]
 
 [project]
 authors = [{email = "abelikov@gmail.com", name = "Alexander Belikov"}]
 dependencies = [
+  "cupy-cuda12x>=13.6.0",
   "dataclass-wizard>=0.35.1",
   "faiss-cpu==1.8.0",
   "flask-compress~=1.15",
