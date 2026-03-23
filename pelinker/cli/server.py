@@ -1,146 +1,226 @@
-import logging.config
+from __future__ import annotations
 
-import click
-from flask import Flask, jsonify, request
-from flask_compress import Compress
-from flask_cors import cross_origin
-from flask_restful import Api
-from waitress import serve
+import logging
+from contextlib import asynccontextmanager
+from dataclasses import asdict, dataclass, field
+from datetime import date
 from importlib.resources import files
-from pelinker.util import str2layers, layers2str
-from pelinker.onto import MAX_LENGTH
-from pelinker.model import Linker
-from pprint import pprint
-import pathlib
-import spacy
-import json
+from pathlib import Path
+from typing import Annotated, Any
 
-app = Flask(__name__)
-Compress(app)
-api = Api(app)
+import hydra
+import spacy
+import uvicorn
+from fastapi import Depends, FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from hydra.core.config_store import ConfigStore
+from omegaconf import OmegaConf
+from pydantic import BaseModel, ConfigDict, Field
+from starlette.middleware.gzip import GZipMiddleware
+
+from pelinker.config import EmbeddingModelMetadata, KBConfig
+from pelinker.model import Linker
+from pelinker.onto import MAX_LENGTH
+from pelinker.util import str2layers, layers2str
 
 logger = logging.getLogger(__name__)
 
 
-@click.command()
-@click.option("--port", type=click.INT, default=8599)
-@click.option("--host", type=click.STRING, default="0.0.0.0")
-@click.option(
-    "--model-type",
-    type=click.STRING,
-    default="pubmedbert",
-    help="run over BERT flavours",
-)
-@click.option(
-    "--superposition",
-    type=click.BOOL,
-    default=False,
-    help="use a superposition of label and description embeddings, where available",
-)
-@click.option("--extra-context", type=click.BOOL, is_flag=True, default=False)
-@click.option(
-    "--layers-spec",
-    default="sent",
-    type=click.STRING,
-    help="`sent` or a string of layers, `1,2,3` would correspond to layers [-1, -2, -3]",
-)
-@click.option("--thr-score", type=click.FLOAT, default=0.5)
-@click.option("--thr-dif", type=click.FLOAT, default=0.0)
-@click.option(
-    "--sample-path",
-    type=click.Path(path_type=pathlib.Path),
-    default=None,
-    help="json with test docs",
-)
-def main(
-    model_type,
-    layers_spec,
-    superposition,
-    port,
-    host,
-    extra_context,
-    thr_score,
-    thr_dif,
-    sample_path,
-):
-    logger_conf = "logging.conf"
-    logging.config.fileConfig(logger_conf, disable_existing_loggers=False)
-    app.logger.setLevel(logging.INFO)
+@dataclass
+class ServerCliConfig:
+    """Hydra/OmegaConf node for the linker HTTP server (aligned with ``fit`` CLI)."""
 
-    logger.info(f"thr_score : {thr_score}, thr_dif: {thr_dif}")
+    host: str = "0.0.0.0"
+    port: int = 8599
+    """Path to the dumped linker **without** ``.gz`` (same as ``Linker.dump`` / ``Linker.load``). If omitted, uses the packaged store path built from ``model_type`` and ``layers_spec``."""
+    model_file_spec: str | None = None
+    model_type: str = "pubmedbert"
+    layers_spec: str = "1"
+    thr_score: float = 0.5
+    nlp_model: str = "en_core_web_trf"
+    use_gpu: bool = False
+    cors_allow_origins: list[str] = field(default_factory=lambda: ["*"])
 
-    layers = str2layers(layers_spec)
-    suffix = ".superposition" if superposition else ""
+
+class LinkRequest(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    text: str = Field(..., min_length=1)
+    thr_score: float | None = None
+    use_gpu: bool | None = None
+
+
+class ServerState:
+    def __init__(
+        self,
+        *,
+        linker: Linker,
+        nlp: Any,
+        cfg: ServerCliConfig,
+        resolved_model_path: str,
+    ) -> None:
+        self.linker = linker
+        self.nlp = nlp
+        self.cfg = cfg
+        self.resolved_model_path = resolved_model_path
+
+
+def _resolve_model_file_spec(cfg: ServerCliConfig) -> Any:
+    if cfg.model_file_spec:
+        p = Path(cfg.model_file_spec).expanduser()
+        if p.suffix == ".gz":
+            p = p.with_suffix("")
+        return p
+    layers = str2layers(cfg.layers_spec)
     layers_str = layers2str(layers)
-
-    model_spec = files("pelinker.store").joinpath(
-        f"pelinker.model.{model_type}.{layers_str}{suffix}"
+    return files("pelinker.store").joinpath(
+        f"pelinker.model.{cfg.model_type}.{layers_str}"
     )
 
-    logger.info(f"model path: {model_spec}")
-    pe_model: Linker = Linker.load(model_spec)
 
-    logger.info(f"pelinker model loaded : {pe_model}")
+def _load_linker(cfg: ServerCliConfig) -> tuple[Linker, str]:
+    file_spec = _resolve_model_file_spec(cfg)
+    resolved = str(file_spec)
+    try:
+        linker = Linker.load(file_spec)
+    except FileNotFoundError as exc:
+        raise FileNotFoundError(
+            f"No dumped model at {resolved!s}.gz (check model_file_spec or model_type/layers_spec)."
+        ) from exc
 
-    nlp = spacy.load("en_core_web_trf")
-    logger.info(f"spacy model loaded : {nlp}")
-
-    @app.route("/link", methods=["POST"])
-    @cross_origin()
-    def link():
-        """
-            navigate api
-                1. converts incoming text to a graph
-                2. computes metrics of the resultant graph wrt to the literature KG
-                3. fetches the graphs of most relevant publications from the literature KG
-
-        :return: response
-        """
-        if request.method == "POST":
-            json_data = request.json
-            try:
-                text = json_data["text"]
-                thr_score0 = json_data.pop("thr_score", thr_score)
-                thr_dif0 = json_data.pop("thr_dif", thr_dif)
-                r = pe_model.predict(
-                    text,
-                    nlp,
-                    MAX_LENGTH,
-                    threshold=0.0,
-                )
-                r = Linker.filter_report(r, thr_score=thr_score0, thr_dif=thr_dif0)
-
-            except Exception as exc:
-                logger.error(f"{exc}")
-                return {"error": str(exc)}, 202
-
-            try:
-                json_response = jsonify(r)
-            except Exception as exc:
-                logger.error(f"{exc}")
-                return {"error": str(exc)}, 201
-
-            return json_response, 200
-
-    if sample_path is not None:
-        with open(sample_path) as json_file:
-            sample_data = json.load(json_file)
-        text = sample_data["text"][:11]
-        r = pe_model.predict(
-            text,
-            nlp,
-            MAX_LENGTH,
-            threshold=0.0,
+    if linker.embedding_metadata is None:
+        linker.embedding_metadata = EmbeddingModelMetadata.from_single(
+            cfg.model_type, cfg.layers_spec
         )
-        r = Linker.filter_report(r, thr_score=thr_score, thr_dif=thr_dif)
-        pprint(r)
-    else:
-        serve(
-            app,
-            host=host,
-            port=port,
+        logger.warning(
+            "Loaded linker had no embedding_metadata; using cfg: model_type=%r layers_spec=%r",
+            cfg.model_type,
+            cfg.layers_spec,
         )
+    return linker, resolved
+
+
+def _kb_to_jsonable(kb: KBConfig | None) -> dict[str, Any] | None:
+    if kb is None:
+        return None
+    d = asdict(kb)
+    created = d["created_at"]
+    if isinstance(created, date):
+        d["created_at"] = created.isoformat()
+    return d
+
+
+def _transform_to_jsonable(linker: Linker) -> dict[str, Any] | None:
+    tc = linker.transform_config
+    if tc is None:
+        return None
+    return asdict(tc)
+
+
+def build_info_payload(state: ServerState) -> dict[str, Any]:
+    linker = state.linker
+    em = linker.embedding_metadata
+    sources_json: list[dict[str, str]] = []
+    if em is not None:
+        sources_json = [
+            {"model_type": s.model_type, "layers_spec": s.layers_spec}
+            for s in em.sources
+        ]
+    cluster_ids = set(linker.cluster_assignments.values())
+    return {
+        "resolved_model_path": state.resolved_model_path,
+        "embedding_metadata": {"sources": sources_json} if em is not None else None,
+        "kb": _kb_to_jsonable(linker.kb_config),
+        "vocabulary_size": len(linker.vocabulary),
+        "cluster_count": len(cluster_ids),
+        "transform_config": _transform_to_jsonable(linker),
+    }
+
+
+def create_app(cfg: ServerCliConfig) -> FastAPI:
+    state_holder: dict[str, ServerState | None] = {"state": None}
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        logging.basicConfig(
+            level=logging.INFO,
+            format="%(asctime)s - %(levelname)s - %(message)s",
+        )
+        linker, resolved = _load_linker(cfg)
+        logger.info("Loaded linker from %s.gz", resolved)
+        logger.info("Loading spaCy: %s", cfg.nlp_model)
+        nlp = spacy.load(cfg.nlp_model)
+        state_holder["state"] = ServerState(
+            linker=linker,
+            nlp=nlp,
+            cfg=cfg,
+            resolved_model_path=resolved,
+        )
+        yield
+        state_holder["state"] = None
+
+    app = FastAPI(title="pelinker", lifespan=lifespan)
+    app.add_middleware(GZipMiddleware, minimum_size=512)
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=list(cfg.cors_allow_origins),
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
+    def get_state() -> ServerState:
+        s = state_holder["state"]
+        if s is None:
+            raise HTTPException(status_code=503, detail="Server not ready")
+        return s
+
+    StateDep = Annotated[ServerState, Depends(get_state)]
+
+    @app.get("/info")
+    def info(state: StateDep) -> dict[str, Any]:
+        return build_info_payload(state)
+
+    @app.post("/link")
+    def link(body: LinkRequest, state: StateDep) -> dict[str, Any]:
+        thr_s = body.thr_score if body.thr_score is not None else state.cfg.thr_score
+        use_gpu = body.use_gpu if body.use_gpu is not None else state.cfg.use_gpu
+        try:
+            r = state.linker.predict(
+                [body.text],
+                state.nlp,
+                MAX_LENGTH,
+                threshold=0.0,
+                use_gpu=use_gpu,
+            )
+            r = Linker.filter_report(r, thr_score=thr_s)
+        except Exception as exc:
+            logger.exception("link failed")
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+        return r
+
+    return app
+
+
+def serve(cfg: ServerCliConfig) -> None:
+    app = create_app(cfg)
+    logger.info("Starting uvicorn on %s:%s", cfg.host, cfg.port)
+    uvicorn.run(app, host=cfg.host, port=cfg.port, log_level="info")
+
+
+CONFIG_STORE = ConfigStore.instance()
+CONFIG_STORE.store(name="server_config", node=ServerCliConfig)
+
+
+@hydra.main(version_base=None, config_path=None, config_name="server_config")
+def run(cfg: ServerCliConfig) -> None:
+    logger.info("Running server with config:\n%s", OmegaConf.to_yaml(cfg))
+    try:
+        serve(cfg)
+    except FileNotFoundError as exc:
+        logger.error("%s", exc)
+        raise SystemExit(1) from exc
 
 
 if __name__ == "__main__":
-    main()
+    run()

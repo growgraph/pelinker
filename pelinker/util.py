@@ -163,54 +163,6 @@ def map_spans_to_spans_basic(
     return map_ix_jx
 
 
-def aggregate_token_groups(nlp, text, extra_context=False):
-    doc = nlp(text)
-    context_tags = ["VB", "IN", "JJ", "TO"] if extra_context else ["VB"]
-
-    # tokens in reverse order
-    tokens = [token for token in doc if token.tag_[:2] in context_tags][::-1]
-
-    # group tokens
-    acc = [[]]
-    while tokens:
-        ctoken = tokens.pop()
-        group = acc[-1]
-        if group:
-            ixu, ixv = group[-1].i, ctoken.i
-            if ixv - ixu == 1:
-                group.append(ctoken)
-            else:
-                acc.append([ctoken])
-        else:
-            acc[0].append(ctoken)
-
-    # remove outstanding adjectives
-    def remove_bnd_adj(group):
-        if group and group[0].tag_ == "JJ":
-            group = group[1:]
-        if group and group[-1].tag_ == "JJ":
-            group = group[:-1]
-        return group
-
-    for jx, group in enumerate(acc):
-        group_new = remove_bnd_adj(group)
-        while len(group_new) != len(group):
-            group = group_new
-            group_new = remove_bnd_adj(group)
-        acc[jx] = group_new
-
-    token_groups = [
-        group for group in acc if any(item.tag_[:2] == "VB" for item in group)
-    ]
-    return token_groups
-
-
-def get_vb_spans(nlp, text, extra_context=False) -> list[tuple[int, int]]:
-    token_groups = aggregate_token_groups(nlp, text, extra_context)
-    spans = transform_tokens2spans(token_groups)
-    return spans
-
-
 def text_to_tokens(nlp, text) -> list[SimplifiedToken]:
     stokens = [
         SimplifiedToken(
@@ -226,11 +178,6 @@ def text_to_tokens(nlp, text) -> list[SimplifiedToken]:
     ]
 
     return stokens
-
-
-def transform_tokens2spans(token_groups) -> list[tuple[int, int]]:
-    spans = [(group[0].idx, group[-1].idx + len(group[-1])) for group in token_groups]
-    return spans
 
 
 def split_into_sentences(text):

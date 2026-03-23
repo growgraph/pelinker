@@ -4,18 +4,12 @@ from pelinker.onto import Expression, WordGrouping
 from pelinker.util import (
     get_word_boundaries,
     map_spans_to_spans_basic,
-    get_vb_spans,
     text_to_tokens,
     map_words_to_tokens,
     split_text_into_batches,
     token_list_with_window,
     SimplifiedToken,
 )
-
-
-def test_vb_span(nlp, phrase_vb_0):
-    spans0 = get_vb_spans(nlp, text=phrase_vb_0, extra_context=True)
-    assert len(spans0) == 3
 
 
 def test_text_info(nlp, phrase_vb_0):

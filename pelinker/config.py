@@ -1,10 +1,54 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
+from datetime import date
 from pathlib import Path
 from typing import Any
 
 from numpy.random import RandomState
+
+
+def _validate_semver(version: str) -> None:
+    """Require semver 2.0.0 core MAJOR.MINOR.PATCH; allow optional -prerelease+build."""
+    s = version.strip()
+    if not s:
+        raise ValueError("version must be a non-empty string")
+    if "+" in s:
+        s = s.split("+", 1)[0]
+    if "-" in s:
+        s = s.split("-", 1)[0]
+    parts = s.split(".")
+    if len(parts) != 3:
+        raise ValueError(
+            f"version core must be semver MAJOR.MINOR.PATCH, got {version!r}"
+        )
+    for p in parts:
+        if not p.isdigit():
+            raise ValueError(f"invalid semver numeric segment {p!r} in {version!r}")
+        n = int(p)
+        if p != "0" and p != str(n):
+            raise ValueError(
+                f"semver numeric segments must not have leading zeros: {version!r}"
+            )
+
+
+@dataclass(frozen=True)
+class KBConfig:
+    """Metadata for the knowledge base packaged with a fitted Linker."""
+
+    name: str
+    version: str
+    created_at: date
+    description: str = ""
+    entity_count: int | None = None
+    """Set after fit from vocabulary size when None at construction time."""
+
+    def __post_init__(self) -> None:
+        if not self.name.strip():
+            raise ValueError("name must be a non-empty string")
+        _validate_semver(self.version)
+        if self.entity_count is not None and self.entity_count < 0:
+            raise ValueError("entity_count must be >= 0 when provided")
 
 
 @dataclass(frozen=True)

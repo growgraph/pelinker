@@ -1,4 +1,5 @@
 import tempfile
+from dataclasses import replace
 from pelinker.util import texts_to_vrep
 from pelinker.onto import WordGrouping
 import torch
@@ -15,6 +16,7 @@ from pelinker.config import (
     ClusteringOptimizationConfig,
     EmbeddingModelMetadata,
     EmbeddingTrainingConfig,
+    KBConfig,
     TransformConfig,
 )
 from pelinker.embedder import embed_kb_corpus
@@ -31,6 +33,7 @@ class Linker:
         clusterer: hdbscan.HDBSCAN | None = None,
         transform_config: TransformConfig | None = None,
         embedding_metadata: EmbeddingModelMetadata | None = None,
+        kb_config: KBConfig | None = None,
         **kwargs,
     ):
         self.transformer: EmbeddingTransformer | None = transformer
@@ -38,6 +41,7 @@ class Linker:
         self.cluster_assignments: dict[str, int] = {}
         self.transform_config: TransformConfig | None = transform_config
         self.embedding_metadata: EmbeddingModelMetadata | None = embedding_metadata
+        self.kb_config: KBConfig | None = kb_config
 
         self.vocabulary: list[str] = []
         self.labels_map: dict[str, str] = kwargs.pop("labels_map", dict())
@@ -45,12 +49,8 @@ class Linker:
         self._hf_model = None
 
     @classmethod
-    def filter_report(cls, report, thr_score, thr_dif):
-        report["entities"] = [
-            r
-            for r in report["entities"]
-            if r["dif_to_next"] >= thr_dif and r["score"] >= thr_score
-        ]
+    def filter_report(cls, report, thr_score):
+        report["entities"] = [r for r in report["entities"] if r["score"] >= thr_score]
         return report
 
     def dump(self, file_spec):
@@ -61,6 +61,8 @@ class Linker:
         pe_model = joblib.load(f"{file_spec}.gz")
         if "embedding_metadata" not in pe_model.__dict__:
             pe_model.embedding_metadata = None
+        if "kb_config" not in pe_model.__dict__:
+            pe_model.kb_config = None
         return pe_model
 
     def fit(
@@ -73,6 +75,7 @@ class Linker:
         clustering_optimization_config: Optional[ClusteringOptimizationConfig] = None,
         embedding_training: EmbeddingTrainingConfig | None = None,
         embedding_metadata: EmbeddingModelMetadata | None = None,
+        kb_config: KBConfig | None = None,
     ):
         """
         Fit the Linker model with embeddings.
@@ -93,6 +96,8 @@ class Linker:
             embedding_training: Corpus paths and embedding runtime. Required when embeddings=None.
             embedding_metadata: If provided, overrides or sets ``self.embedding_metadata`` for
                 this fit (required when embeddings=None unless already set on the linker).
+            kb_config: Knowledge-base metadata stored on the linker; ``entity_count`` is set
+                from fitted vocabulary when omitted (None).
 
         Returns:
             self
@@ -176,6 +181,14 @@ class Linker:
                 entity_id: int(cluster_id)
                 for entity_id, cluster_id in zip(self.vocabulary, cluster_labels)
             }
+
+            if kb_config is not None:
+                if kb_config.entity_count is None:
+                    self.kb_config = replace(
+                        kb_config, entity_count=len(self.vocabulary)
+                    )
+                else:
+                    self.kb_config = kb_config
 
             return self
         finally:
@@ -477,53 +490,13 @@ class Linker:
             predicted_entity = cluster_entities[0]
             score = float(cluster_prob)
 
-            # Calculate dif_to_next (difference to next cluster probability)
-            # For simplicity, use 0.0 if only one cluster
-            dif_to_next = 0.0
-            if len(cluster_entities) > 1:
-                # Could compute similarity to other entities in cluster
-                dif_to_next = 0.1  # Placeholder
-
             kb_item = {
                 **item_dict,
                 **{
                     "entity_id_predicted": predicted_entity,
                     "score": score,
-                    "dif_to_next": dif_to_next,
                 },
             }
             kb_items += [kb_item]
 
         return kb_items
-
-    def complement_with_kb_data(self, item, nearest_neighbors, distance, topk):
-        distance = distance.tolist()
-
-        candidate_entity = [self.vocabulary[nnx] for nnx in nearest_neighbors]
-
-        dif = round(distance[0] - distance[1], 5)
-        item = {
-            **item,
-            **{
-                "entity_id_predicted": candidate_entity[0],
-                "score": round(distance[0], 4),
-                "dif_to_next": dif,
-            },
-        }
-        if topk is not None:
-            item["_leading_candidates"] = candidate_entity[1:topk]
-            item["_leading_scores"] = [round(x, 4) for x in distance[1:topk]]
-
-        if self.labels_map:
-            item["entity_label"] = (
-                self.labels_map[candidate_entity[0]]
-                if candidate_entity[0] in self.labels_map
-                else "NA"
-            )
-            if topk is not None:
-                item["_leading_candidates_labels"] = [
-                    self.labels_map[e] if e in self.labels_map else "NA"
-                    for e in candidate_entity[1:topk]
-                ]
-
-        return item
