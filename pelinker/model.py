@@ -4,7 +4,7 @@ from pelinker.onto import WordGrouping
 import torch
 import joblib
 import numpy as np
-from typing import Optional, Union
+from typing import Optional
 import hdbscan
 from hdbscan import approximate_predict
 import pathlib
@@ -83,7 +83,7 @@ class Linker:
 
     def fit(
         self,
-        embeddings: Union[np.ndarray, pathlib.Path, str],
+        embeddings: pathlib.Path,
         transform_config: TransformConfig,
         min_cluster_size: Optional[int] = None,
         kb_labels: Optional[set[str]] = None,
@@ -117,44 +117,25 @@ class Linker:
         Returns:
             self
         """
-        # Part a) Load and process embeddings
-        # Check if embeddings is a file path (before loading)
-        is_file_path = isinstance(embeddings, (str, pathlib.Path))
 
-        if is_file_path:
-            embeddings_path = pathlib.Path(embeddings)
-            # Part b) Optimize clustering first if requested (before loading embeddings)
-            if optimize_clustering:
-                logger.info("Optimizing clustering parameters...")
-                min_cluster_size = self._optimize_clustering(
-                    embeddings_path,
-                    transform_config,
-                    kb_labels,
-                    clustering_optimization_params,
-                )
-
-            # Load embeddings from file
-            logger.info(f"Loading embeddings from file: {embeddings_path}")
-            embeddings, entity_ids = self._load_embeddings_from_file(
-                embeddings_path, kb_labels
+        embeddings_path = pathlib.Path(embeddings)
+        # Part b) Optimize clustering first if requested (before loading embeddings)
+        if optimize_clustering:
+            logger.info("Optimizing clustering parameters...")
+            min_cluster_size = self._optimize_clustering(
+                embeddings_path,
+                transform_config,
+                kb_labels,
+                clustering_optimization_params,
             )
-            # Update vocabulary to match loaded entity_ids
-            self.vocabulary = entity_ids
-        else:
-            # Direct embeddings array provided
-            if embeddings.ndim != 2:
-                raise ValueError(f"embeddings must be 2D, got shape {embeddings.shape}")
 
-            if len(embeddings) != len(self.vocabulary):
-                raise ValueError(
-                    f"Number of embeddings ({len(embeddings)}) must match vocabulary size ({len(self.vocabulary)})"
-                )
-
-            # Optimization not supported for direct embeddings array
-            if optimize_clustering:
-                logger.warning(
-                    "Clustering optimization requires file path, using provided min_cluster_size"
-                )
+        # Load embeddings from file
+        logger.info(f"Loading embeddings from file: {embeddings_path}")
+        embeddings, entity_ids = self._load_embeddings_from_file(
+            embeddings_path, kb_labels
+        )
+        # Update vocabulary to match loaded entity_ids
+        self.vocabulary = entity_ids
 
         # Set transform config
         self.transform_config = transform_config

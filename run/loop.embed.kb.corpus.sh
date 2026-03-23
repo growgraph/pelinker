@@ -19,7 +19,7 @@ while [[ $# -gt 0 ]]; do
             OUTPUT_PARQUET_PREFIX="$2"
             shift 2
             ;;
-        --properties-txt-path)
+        --kb-csv-path)
             KB_CSV_PATH="$2"
             shift 2
             ;;

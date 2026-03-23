@@ -2,6 +2,11 @@ import pathlib
 
 import pandas as pd
 import seaborn as sns
+import matplotlib
+
+# Force a non-interactive backend because this project only saves plots to files.
+# This avoids Tk/threading crashes in long-running or parallelized workflows.
+matplotlib.use("Agg")
 from matplotlib import pyplot as plt
 from plotly import express as px, graph_objects as go
 

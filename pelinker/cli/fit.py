@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 @click.option(
     "--layers-spec",
     type=click.STRING,
-    default="sent",
+    default="1",
     help="`sent` or a string of layers, `1,2,3` would correspond to layers [-1, -2, -3]",
 )
 @click.option(
@@ -105,7 +105,7 @@ logger = logging.getLogger(__name__)
     default=None,
     help="Optional path to pre-computed embeddings parquet file. If provided, skips embedding step (a) and goes directly to clustering (b).",
 )
-def run(
+def fit(
     model_type: str,
     layers_spec: str,
     kb_path: pathlib.Path | None,
@@ -260,4 +260,4 @@ def run(
 
 
 if __name__ == "__main__":
-    run()
+    fit()

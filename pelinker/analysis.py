@@ -20,6 +20,7 @@ def evaluate_cluster_size_grid(
     dfr2: pd.DataFrame,
     umap_columns: list[str],
     sizes: list[int],
+    max_pairs_per_cluster: int = 200_000,
 ) -> pd.DataFrame:
     """
     Evaluate clustering metrics on a grid of min_cluster_size values.
@@ -34,22 +35,27 @@ def evaluate_cluster_size_grid(
     Returns:
         DataFrame with columns: min_cluster_size, icm, n_clusters, dbcv
     """
+    # OPTIMIZATION: materialize UMAP features once as float32 to reduce repeated
+    # DataFrame slicing and keep HDBSCAN input memory footprint lower.
+    umap_values = dfr2[umap_columns].to_numpy(dtype=np.float32, copy=False)
+
     metrics = []
     for size in sizes:
         clusterer = hdbscan.HDBSCAN(min_cluster_size=size, gen_min_span_tree=True)
-        labels = clusterer.fit_predict(dfr2[umap_columns])
-        dfr2_temp = dfr2.copy()
-        dfr2_temp["class"] = pd.DataFrame(
-            labels, columns=["class"], index=dfr2_temp.index
-        )
+        labels = clusterer.fit_predict(umap_values)
 
         ic = []
-        for ix, group in dfr2_temp.groupby("class"):
+        for ix in np.unique(labels):
             if ix == -1:  # Skip noise points
                 continue
-            tgroup = torch.from_numpy(group[umap_columns].values)
-            st = cosine_similarity_std(tgroup)
-            ic += [st]
+            cluster_values = umap_values[labels == ix]
+            if len(cluster_values) < 2:
+                continue
+            tgroup = torch.from_numpy(cluster_values)
+            st = cosine_similarity_std(
+                tgroup, max_pairs=max_pairs_per_cluster, random_seed=13
+            )
+            ic += [float(st)]
 
         icm = np.mean(ic) if ic else np.nan
 
@@ -172,7 +178,9 @@ def find_optimal_from_grid(
     return best_size, best_score_mean, best_score_std
 
 
-def cosine_similarity_std(tensor):
+def cosine_similarity_std(
+    tensor: torch.Tensor, max_pairs: int = 200_000, random_seed: int = 13
+):
     """
     Calculate the standard deviation of pairwise cosine similarities
     for a tensor of shape (n_b, dim_emb).
@@ -184,22 +192,39 @@ def cosine_similarity_std(tensor):
         torch.Tensor: scalar tensor containing the standard deviation
     """
 
-    # Normalize the embeddings to unit vectors
-    normalized = F.normalize(tensor, p=2, dim=1)
+    # OPTIMIZATION: use float32 to reduce memory pressure from intermediate tensors.
+    normalized = F.normalize(tensor.float(), p=2, dim=1)
 
-    # Compute pairwise cosine similarities
-    cos_sim_matrix = torch.mm(normalized, normalized.t())
+    n_points = normalized.size(0)
+    if n_points < 2:
+        return torch.tensor(float("nan"), dtype=normalized.dtype)
 
-    # Get upper triangular part (excluding diagonal) to avoid duplicates and self-similarity
-    triu_indices = torch.triu_indices(
-        cos_sim_matrix.size(0), cos_sim_matrix.size(1), offset=1
+    total_pairs = n_points * (n_points - 1) // 2
+
+    # For small clusters, exact computation is cheap and keeps original behavior.
+    if total_pairs <= max_pairs:
+        cos_sim_matrix = torch.mm(normalized, normalized.t())
+        triu_indices = torch.triu_indices(
+            cos_sim_matrix.size(0), cos_sim_matrix.size(1), offset=1
+        )
+        cos_similarities = cos_sim_matrix[triu_indices[0], triu_indices[1]]
+        return torch.std(cos_similarities)
+
+    # OPTIMIZATION: avoid O(n^2) similarity matrix for large clusters by sampling
+    # random pairs and estimating the std from sampled cosine similarities.
+    sample_size = min(max_pairs, total_pairs)
+    generator = torch.Generator(device=normalized.device)
+    generator.manual_seed(random_seed)
+
+    idx_i = torch.randint(
+        0, n_points, (sample_size,), generator=generator, device=normalized.device
     )
-    cos_similarities = cos_sim_matrix[triu_indices[0], triu_indices[1]]
-
-    # Calculate standard deviation
-    std_dev = torch.std(cos_similarities)
-
-    return std_dev
+    idx_j = torch.randint(
+        0, n_points - 1, (sample_size,), generator=generator, device=normalized.device
+    )
+    idx_j = idx_j + (idx_j >= idx_i).long()  # ensure i != j
+    cos_similarities = (normalized[idx_i] * normalized[idx_j]).sum(dim=1)
+    return torch.std(cos_similarities)
 
 
 def get_word_frequencies_from_library(

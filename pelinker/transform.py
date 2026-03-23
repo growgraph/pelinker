@@ -170,16 +170,23 @@ def transform_embeddings(
 
     config = config or TransformConfig()
 
-    # Extract embeddings
-    embedding_vectors = np.stack(df[embed_column].values)
+    # OPTIMIZATION: convert once to float32 to keep memory usage lower for
+    # large embedding matrices (e.g., tens of thousands of rows).
+    embedding_vectors = np.stack(df[embed_column].values).astype(np.float32, copy=False)
 
     # Apply transformation
     transformer = EmbeddingTransformer(config)
-    umap_clustering, umap_visualization = transformer.fit_transform(embedding_vectors)
+    transformer.fit(embedding_vectors)
+
+    # OPTIMIZATION: compute PCA transform once and reuse it for both UMAP outputs
+    # and exported PCA columns (avoids duplicate PCA transform pass).
+    pca_reduced = transformer.pca.transform(embedding_vectors)
+    umap_clustering = transformer.umap.transform(pca_reduced)
+    umap_visualization = transformer.umap_viz.transform(pca_reduced)
 
     # Create DataFrames for each transformation
     df_pca = pd.DataFrame(
-        transformer.pca.transform(embedding_vectors),
+        pca_reduced,
         index=df.index,
         columns=[f"p_{j:02d}" for j in range(config.pca_components)],
     )
