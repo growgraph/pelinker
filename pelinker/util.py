@@ -371,37 +371,6 @@ def compute_distance_ref(
     return m0, dfa
 
 
-def embedding_to_dist(tt_x, tt_y):
-    index = faiss.IndexFlatIP(tt_x.shape[1])
-    nb_nn = min([100, tt_x.shape[0]])
-    index.add(tt_x)
-
-    distance_matrix, nearest_neighbors_matrix = index.search(tt_y, nb_nn)
-    ds = distance_matrix[:, 1:].flatten()
-    ds.sort()
-    k_links = 20
-    thr = ds[-k_links]
-
-    edges = []
-    for dd, nn in zip(distance_matrix, nearest_neighbors_matrix):
-        m = dd >= thr
-        equis = nn[m]
-        edges += [(equis[0], c) for c in equis[1:]]
-
-    dfa = pd.DataFrame(ds, columns=["dist"])
-    return dfa
-
-
-def mean_pooling(model_output, attention_mask):
-    token_embeddings = model_output[0]
-    input_mask_expanded = (
-        attention_mask.unsqueeze(-1).expand(token_embeddings.size()).float()
-    )
-    return torch.sum(token_embeddings * input_mask_expanded, 1) / torch.clamp(
-        input_mask_expanded.sum(1), min=1e-9
-    )
-
-
 def encode(texts, tokenizer, model, ls):
     if ls == "sent":
         tt_labels = model.encode(texts, normalize_embeddings=True)
@@ -426,28 +395,6 @@ def fetch_latest_kb(path_derived) -> tuple[str | None, int]:
         return filename_versions[-1]
     else:
         return None, -1
-
-
-def split_long_text(text, max_length=MAX_LENGTH):
-    """
-
-    :param text:
-    :param max_length:
-    :return: list of strings representing text, such that each string is < max_length
-        text = " ".join(agg)
-    """
-    agg = []
-
-    for chunk in split_text_into_batches(text, max_length - 2):
-        if agg:
-            if len(agg[-1]) + len(chunk) < max_length - 2:
-                agg[-1] = agg[-1] + f" {chunk}"
-            else:
-                agg += [chunk]
-        else:
-            agg += [chunk]
-
-    return agg
 
 
 def split_text_into_batches(text: str, max_length) -> list[str]:

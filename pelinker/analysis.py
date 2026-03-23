@@ -13,7 +13,8 @@ from collections.abc import Mapping
 from typing import Iterable
 from numpy.random import RandomState
 
-from pelinker.transform import TransformConfig, get_umap_columns, transform_embeddings
+from pelinker.config import ClusteringOptimizationConfig, TransformConfig
+from pelinker.transform import get_umap_columns, transform_embeddings
 
 
 def evaluate_cluster_size_grid(
@@ -377,39 +378,31 @@ def compute_hungarian_accuracy(y_true: np.ndarray, y_pred: np.ndarray) -> float:
 
 def estimate_model_clustering(
     file_path: pathlib.Path,
-    rns: RandomState,
     transform_config: TransformConfig,
+    optimization_config: ClusteringOptimizationConfig | None = None,
     *,
-    min_class_size: int = 20,
-    max_scale: int = 120,
-    frac: float = 0.1,
-    head: int | None = None,
-    batch_size: int = 1000,
     selected_labels: set[str] | None = None,
     all_metrics_dfs: list[pd.DataFrame] | None = None,
-    optimization_method: str = "mean",
 ):
     """
     Estimate optimal cluster size for a single model/layer file.
 
     Args:
         file_path: Path to parquet file
-        rns: RandomState object for reproducible sampling
         transform_config: TransformConfig instance specifying transformation parameters
-        min_class_size: Minimum class size for filtering
-        max_scale: Maximum value for grid evaluation of min_cluster_size (default: 120)
-        frac: Fraction of dataset to sample
-        head: Number of batches to take (None for all)
-        batch_size: Batch size for reading
+        optimization_config: Clustering optimization settings. If None, defaults
+            to ClusteringOptimizationConfig().
         selected_labels: Optional set of labels from selected labels KB to filter by
         all_metrics_dfs: Optional list of metrics DataFrames from previous samples.
                          If provided, will aggregate and find optimum from grid.
                          If None, evaluates grid for this sample only.
-        optimization_method: Method for finding optimum ("mean", "lower_bound", "weighted")
 
     Returns:
         ClusteringReport or None: Report containing clustering results, or None if processing failed
     """
+
+    config = optimization_config or ClusteringOptimizationConfig()
+    rns: RandomState = config.rns
 
     # Simple check: if file doesn't exist (handles broken symlinks), skip it
     if not file_path.exists():
@@ -418,11 +411,11 @@ def estimate_model_clustering(
 
     try:
         for i, batch in enumerate(
-            read_batches(file_path.as_posix(), batch_size=batch_size)
+            read_batches(file_path.as_posix(), batch_size=config.batch_size)
         ):
-            sample = batch.sample(frac=frac, random_state=rns)
+            sample = batch.sample(frac=config.frac, random_state=rns)
             agg += [sample]
-            if head is not None and i >= head - 1:
+            if config.head is not None and i >= config.head - 1:
                 break
     except Exception:
         return None
@@ -443,7 +436,7 @@ def estimate_model_clustering(
     # trim rare mentions
     mention_count = dfr["property"].value_counts()
     low_count_properties = mention_count[
-        ~(mention_count >= min_class_size)
+        ~(mention_count >= config.min_class_size)
     ].index.to_list()
 
     dfr = dfr.loc[~dfr["property"].isin(low_count_properties)].copy()
@@ -457,7 +450,7 @@ def estimate_model_clustering(
     dfr2 = transform_embeddings(dfr, config=transform_config, embed_column="embed")
 
     # Grid evaluation
-    sizes = list(np.arange(int(0.5 * min_class_size), max_scale, 5))
+    sizes = list(np.arange(int(0.5 * config.min_class_size), config.max_scale, 5))
 
     metrics_df = evaluate_cluster_size_grid(dfr2, umap_columns, sizes)
 
@@ -467,7 +460,7 @@ def estimate_model_clustering(
         all_metrics_dfs.append(metrics_df)
         aggregated = aggregate_grid_metrics(all_metrics_dfs)
         best_size, best_score, best_score_std = find_optimal_from_grid(
-            aggregated, method=optimization_method
+            aggregated, method=config.optimization_method
         )
     else:
         # Single sample: just use max DBCV from this sample

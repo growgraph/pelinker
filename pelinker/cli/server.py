@@ -7,7 +7,7 @@ from flask_cors import cross_origin
 from flask_restful import Api
 from waitress import serve
 from importlib.resources import files
-from pelinker.util import load_models, str2layers, layers2str
+from pelinker.util import str2layers, layers2str
 from pelinker.onto import MAX_LENGTH
 from pelinker.model import Linker
 from pprint import pprint
@@ -70,7 +70,6 @@ def main(
     logger.info(f"thr_score : {thr_score}, thr_dif: {thr_dif}")
 
     layers = str2layers(layers_spec)
-    sentence = True if layers == "sent" else False
     suffix = ".superposition" if superposition else ""
     layers_str = layers2str(layers)
 
@@ -82,9 +81,6 @@ def main(
     pe_model: Linker = Linker.load(model_spec)
 
     logger.info(f"pelinker model loaded : {pe_model}")
-
-    tokenizer, model = load_models(model_type, sentence=sentence)
-    logger.info(f"tokenizer and model loaded : {model}")
 
     nlp = spacy.load("en_core_web_trf")
     logger.info(f"spacy model loaded : {nlp}")
@@ -108,12 +104,9 @@ def main(
                 thr_dif0 = json_data.pop("thr_dif", thr_dif)
                 r = pe_model.predict(
                     text,
-                    tokenizer,
-                    model,
                     nlp,
                     MAX_LENGTH,
-                    topk=None,
-                    extra_context=extra_context,
+                    threshold=0.0,
                 )
                 r = Linker.filter_report(r, thr_score=thr_score0, thr_dif=thr_dif0)
 
@@ -135,12 +128,9 @@ def main(
         text = sample_data["text"][:11]
         r = pe_model.predict(
             text,
-            tokenizer,
-            model,
             nlp,
             MAX_LENGTH,
-            topk=None,
-            extra_context=extra_context,
+            threshold=0.0,
         )
         r = Linker.filter_report(r, thr_score=thr_score, thr_dif=thr_dif)
         pprint(r)

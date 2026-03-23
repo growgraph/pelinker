@@ -1,4 +1,4 @@
-import faiss
+import tempfile
 from pelinker.util import texts_to_vrep
 from pelinker.onto import WordGrouping
 import torch
@@ -10,9 +10,16 @@ from hdbscan import approximate_predict
 import pathlib
 import pyarrow.parquet as pq
 import logging
-from numpy.random import RandomState
 
-from pelinker.transform import EmbeddingTransformer, TransformConfig
+from pelinker.config import (
+    ClusteringOptimizationConfig,
+    EmbeddingModelMetadata,
+    EmbeddingTrainingConfig,
+    TransformConfig,
+)
+from pelinker.embedder import embed_kb_corpus
+from pelinker.transform import EmbeddingTransformer
+from pelinker.util import load_models
 
 logger = logging.getLogger(__name__)
 
@@ -20,26 +27,22 @@ logger = logging.getLogger(__name__)
 class Linker:
     def __init__(
         self,
-        layers,
-        nb_nn=10,
-        index: faiss.IndexFlatIP | None = None,
-        transformer: Optional[EmbeddingTransformer] = None,
-        clusterer: Optional[hdbscan.HDBSCAN] = None,
-        cluster_assignments: Optional[dict[str, int]] = None,
-        transform_config: Optional[TransformConfig] = None,
+        transformer: EmbeddingTransformer | None = None,
+        clusterer: hdbscan.HDBSCAN | None = None,
+        transform_config: TransformConfig | None = None,
+        embedding_metadata: EmbeddingModelMetadata | None = None,
         **kwargs,
     ):
-        self.index: faiss.IndexFlatIP | None = index
-        # New clustering-based approach
-        self.transformer: Optional[EmbeddingTransformer] = transformer
-        self.clusterer: Optional[hdbscan.HDBSCAN] = clusterer
-        self.cluster_assignments: dict[str, int] = cluster_assignments or {}
-        self.transform_config: Optional[TransformConfig] = transform_config
+        self.transformer: EmbeddingTransformer | None = transformer
+        self.clusterer: hdbscan.HDBSCAN | None = clusterer
+        self.cluster_assignments: dict[str, int] = {}
+        self.transform_config: TransformConfig | None = transform_config
+        self.embedding_metadata: EmbeddingModelMetadata | None = embedding_metadata
 
         self.vocabulary: list[str] = []
         self.labels_map: dict[str, str] = kwargs.pop("labels_map", dict())
-        self.ls = layers
-        self.nb_nn = nb_nn
+        self._hf_tokenizer = None
+        self._hf_model = None
 
     @classmethod
     def filter_report(cls, report, thr_score, thr_dif):
@@ -51,44 +54,25 @@ class Linker:
         return report
 
     def dump(self, file_spec):
-        # Save FAISS index if it exists (legacy support)
-        if self.index is not None:
-            faiss.write_index(self.index, f"{file_spec}.index")
-            index_backup = self.index
-            self.index = None
-        else:
-            index_backup = None
-
         joblib.dump(self, f"{file_spec}.gz", compress=3)
-
-        # Restore index after saving
-        if index_backup is not None:
-            self.index = index_backup
 
     @classmethod
     def load(cls, file_spec):
         pe_model = joblib.load(f"{file_spec}.gz")
-        # Load FAISS index if it exists (legacy support)
-        index_path = f"{file_spec}.index"
-        try:
-            import pathlib
-
-            if pathlib.Path(index_path).exists():
-                index = faiss.read_index(index_path)
-                pe_model.index = index
-        except Exception:
-            # Index file doesn't exist or can't be loaded - that's OK for new models
-            pass
+        if "embedding_metadata" not in pe_model.__dict__:
+            pe_model.embedding_metadata = None
         return pe_model
 
     def fit(
         self,
-        embeddings: pathlib.Path,
+        embeddings: pathlib.Path | None,
         transform_config: TransformConfig,
         min_cluster_size: Optional[int] = None,
         kb_labels: Optional[set[str]] = None,
         optimize_clustering: bool = False,
-        clustering_optimization_params: Optional[dict] = None,
+        clustering_optimization_config: Optional[ClusteringOptimizationConfig] = None,
+        embedding_training: EmbeddingTrainingConfig | None = None,
+        embedding_metadata: EmbeddingModelMetadata | None = None,
     ):
         """
         Fit the Linker model with embeddings.
@@ -98,73 +82,112 @@ class Linker:
         b) Clustering the embeddings
 
         Args:
-            embeddings: Either:
-                - Array of shape (n_samples, n_features) containing KB embeddings
-                - Path to parquet file containing embeddings (with 'property' and 'embed' columns)
+            embeddings: Path to parquet file containing embeddings (with 'property' and
+                        'embed' columns). If None, this method will run embedding first.
             transform_config: TransformConfig instance
             min_cluster_size: Minimum cluster size for HDBSCAN. If None and optimize_clustering=False,
                             uses default from transform_config or 20.
             kb_labels: Set of KB property labels to filter by (only used when embeddings is a file path)
             optimize_clustering: If True, optimize min_cluster_size using grid search
-            clustering_optimization_params: Optional dict with optimization parameters:
-                - min_class_size: Minimum class size for filtering (default: 20)
-                - max_scale: Maximum value for grid evaluation (default: 120)
-                - rns: RandomState for reproducibility (default: RandomState(seed=13))
-                - frac: Fraction of dataset to sample (default: 1.0)
-                - head: Number of batches to take (default: None)
-                - batch_size: Batch size for reading (default: 1000)
+            clustering_optimization_config: Config object for clustering optimization.
+            embedding_training: Corpus paths and embedding runtime. Required when embeddings=None.
+            embedding_metadata: If provided, overrides or sets ``self.embedding_metadata`` for
+                this fit (required when embeddings=None unless already set on the linker).
 
         Returns:
             self
         """
 
-        embeddings_path = pathlib.Path(embeddings)
-        # Part b) Optimize clustering first if requested (before loading embeddings)
-        if optimize_clustering:
-            logger.info("Optimizing clustering parameters...")
-            min_cluster_size = self._optimize_clustering(
-                embeddings_path,
-                transform_config,
-                kb_labels,
-                clustering_optimization_params,
+        is_temporary = False
+        embeddings_path = None
+
+        try:
+            if embedding_metadata is not None:
+                self.embedding_metadata = embedding_metadata
+
+            if embeddings is None:
+                if embedding_training is None:
+                    raise ValueError(
+                        "embedding_training is required when embeddings is None. "
+                        "Provide embeddings path or EmbeddingTrainingConfig(...)."
+                    )
+                if self.embedding_metadata is None:
+                    raise ValueError(
+                        "embedding_metadata is required when embeddings is None "
+                        "(set on Linker(...) or pass embedding_metadata=... to fit())."
+                    )
+
+                with tempfile.NamedTemporaryFile(suffix=".parquet", delete=False) as f:
+                    output_parquet_path = pathlib.Path(f.name)
+
+                logger.info("Step (a): Embedding corpus...")
+                embed_kb_corpus(
+                    metadata=self.embedding_metadata,
+                    training=embedding_training,
+                    output_parquet_path=output_parquet_path,
+                )
+                embeddings_path = output_parquet_path
+                is_temporary = True
+            else:
+                embeddings_path = pathlib.Path(embeddings).expanduser()
+                logger.info(
+                    "Step (a): Skipping embedding, using provided embeddings: "
+                    f"{embeddings_path}"
+                )
+
+            # Part b) Optimize clustering first if requested (before loading embeddings)
+            if optimize_clustering:
+                logger.info("Optimizing clustering parameters...")
+                min_cluster_size = self._optimize_clustering(
+                    embeddings_path,
+                    transform_config,
+                    kb_labels,
+                    clustering_optimization_config,
+                )
+
+            # Load embeddings from file
+            logger.info(f"Loading embeddings from file: {embeddings_path}")
+            embeddings_data, entity_ids = self._load_embeddings_from_file(
+                embeddings_path, kb_labels
             )
+            # Update vocabulary to match loaded entity_ids
+            self.vocabulary = entity_ids
 
-        # Load embeddings from file
-        logger.info(f"Loading embeddings from file: {embeddings_path}")
-        embeddings, entity_ids = self._load_embeddings_from_file(
-            embeddings_path, kb_labels
-        )
-        # Update vocabulary to match loaded entity_ids
-        self.vocabulary = entity_ids
+            # Set transform config
+            self.transform_config = transform_config
 
-        # Set transform config
-        self.transform_config = transform_config
+            # Fit transformer
+            self.transformer = EmbeddingTransformer(self.transform_config)
+            umap_clustering, _ = self.transformer.fit_transform(embeddings_data)
 
-        # Fit transformer
-        self.transformer = EmbeddingTransformer(self.transform_config)
-        umap_clustering, _ = self.transformer.fit_transform(embeddings)
+            # Use optimized or provided min_cluster_size
+            if min_cluster_size is None:
+                min_cluster_size = 20  # Default
 
-        # Use optimized or provided min_cluster_size
-        if min_cluster_size is None:
-            min_cluster_size = 20  # Default
+            self.clusterer = hdbscan.HDBSCAN(
+                min_cluster_size=min_cluster_size,
+                gen_min_span_tree=True,
+                prediction_data=True,  # Enable prediction for new points
+            )
+            cluster_labels = self.clusterer.fit_predict(umap_clustering)
 
-        self.clusterer = hdbscan.HDBSCAN(
-            min_cluster_size=min_cluster_size,
-            gen_min_span_tree=True,
-            prediction_data=True,  # Enable prediction for new points
-        )
-        cluster_labels = self.clusterer.fit_predict(umap_clustering)
+            # Store cluster assignments: entity_id -> cluster_id
+            self.cluster_assignments = {
+                entity_id: int(cluster_id)
+                for entity_id, cluster_id in zip(self.vocabulary, cluster_labels)
+            }
 
-        # Store cluster assignments: entity_id -> cluster_id
-        self.cluster_assignments = {
-            entity_id: int(cluster_id)
-            for entity_id, cluster_id in zip(self.vocabulary, cluster_labels)
-        }
-
-        return self
+            return self
+        finally:
+            if is_temporary and embeddings_path is not None:
+                try:
+                    embeddings_path.unlink()
+                    logger.debug(f"Removed temporary parquet file: {embeddings_path}")
+                except Exception as e:
+                    logger.warning(f"Failed to remove temporary parquet file: {e}")
 
     def _load_embeddings_from_file(
-        self, embeddings_path: pathlib.Path, kb_labels: Optional[set[str]] = None
+        self, embeddings_path: pathlib.Path, kb_labels: set[str] | None = None
     ) -> tuple[np.ndarray, list[str]]:
         """
         Load embeddings from parquet file, filter to KB entities, and aggregate per property.
@@ -241,8 +264,8 @@ class Linker:
         self,
         embeddings_path: pathlib.Path,
         transform_config: TransformConfig,
-        kb_labels: Optional[set[str]],
-        optimization_params: Optional[dict],
+        kb_labels: set[str] | None,
+        optimization_config: Optional[ClusteringOptimizationConfig] = None,
     ) -> int:
         """
         Optimize min_cluster_size using grid search.
@@ -251,47 +274,29 @@ class Linker:
             embeddings_path: Path to parquet file
             transform_config: TransformConfig instance
             kb_labels: Set of KB property labels to filter by
-            optimization_params: Optional dict with optimization parameters
 
         Returns:
             Optimal min_cluster_size value
         """
         from pelinker.analysis import estimate_model_clustering
 
-        # Default optimization parameters
-        params = {
-            "min_class_size": 20,
-            "max_scale": 120,
-            "rns": RandomState(seed=13),
-            "frac": 1.0,
-            "head": None,
-            "batch_size": 1000,
-            "optimization_method": "mean",
-        }
-        if optimization_params:
-            params.update(optimization_params)
+        effective_config = optimization_config or ClusteringOptimizationConfig()
 
         logger.info("Fitting clustering model using estimate_model_clustering...")
 
         clustering_report = estimate_model_clustering(
             file_path=embeddings_path,
-            rns=params["rns"],
             transform_config=transform_config,
-            min_class_size=params["min_class_size"],
-            max_scale=params["max_scale"],
-            frac=params["frac"],
-            head=params["head"],
-            batch_size=params["batch_size"],
+            optimization_config=effective_config,
             selected_labels=kb_labels,
             all_metrics_dfs=None,
-            optimization_method=params["optimization_method"],
         )
 
         if clustering_report is None:
             logger.warning(
                 "Clustering estimation failed, using default min_cluster_size"
             )
-            return params["min_class_size"]
+            return effective_config.min_class_size
 
         best_min_cluster_size = clustering_report.best_size
         best_score = clustering_report.best_score
@@ -301,56 +306,94 @@ class Linker:
 
         return best_min_cluster_size
 
+    def _ensure_hf_models(self, *, use_gpu: bool = False) -> None:
+        """Load HuggingFace tokenizer+encoder once, matching ``embed_kb_corpus`` / first metadata source."""
+        if self.embedding_metadata is None:
+            raise ValueError(
+                "embedding_metadata is required for predict(); set it during fit() or on the Linker."
+            )
+        if self._hf_tokenizer is None or self._hf_model is None:
+            primary = self.embedding_metadata.sources[0]
+            if len(self.embedding_metadata.sources) > 1:
+                logger.warning(
+                    "Multiple embedding sources in metadata; only the first source is used "
+                    "(concatenation / fusion not implemented yet)."
+                )
+            logger.info("Loading encoder for predict: %s", primary.model_type)
+            self._hf_tokenizer, self._hf_model = load_models(
+                primary.model_type, sentence=False
+            )
+        if use_gpu:
+            if torch.cuda.is_available():
+                self._hf_model.to("cuda")
+            else:
+                logger.warning("CUDA is not available; predict runs on CPU")
+
     def predict(
-        self, texts, tokenizer, model, nlp, max_length, topk=None, extra_context=False
+        self,
+        texts,
+        nlp,
+        max_length,
+        threshold: float = 0.0,
+        *,
+        use_gpu: bool = False,
     ):
         """
         Predict entities for input texts.
 
-        Uses clustering-based approach if transformer and clusterer are available,
-        otherwise falls back to FAISS index (legacy mode).
         """
+        self._ensure_hf_models(use_gpu=use_gpu)
+        primary = self.embedding_metadata.sources[0]
         report_batch = texts_to_vrep(
             texts,
-            tokenizer,
-            model,
-            layers_spec=self.ls,
-            word_modes=[WordGrouping.W1],
+            self._hf_tokenizer,
+            self._hf_model,
+            layers_spec=primary.layers_spec,
+            word_modes=[WordGrouping.W1, WordGrouping.W2, WordGrouping.W3],
             nlp=nlp,
             max_length=max_length,
         )
 
-        # Extract embeddings and vocabulary from ReportBatch
-        wg_current = report_batch[WordGrouping.W1]
-
+        # Extract embeddings and mention metadata across all supported word groupings.
+        word_groupings = [WordGrouping.W1, WordGrouping.W2, WordGrouping.W3]
         tt_list = []
         vocabulary = []
-        for expr_holder in wg_current.expression_data:
-            # expr_holder is ExpressionHolder with tt (tensor) and expressions
-            for expr, tt in zip(expr_holder.expressions, expr_holder.tt):
-                tt_list.append(tt)
-                # Create item dict with mention text and position info
-                mention_text = ""
-                if expr.itext is not None and expr.itext < len(report_batch.texts):
-                    text = report_batch.texts[expr.itext]
-                    if expr.ichunk is not None:
-                        # Map chunk position to text position
-                        offset = report_batch.chunk_mapper.map_chunk_to_text(
-                            expr.itext, expr.ichunk
-                        )
-                        if expr.a is not None and expr.b is not None:
-                            mention_text = text[offset + expr.a : offset + expr.b]
-                    elif expr.a is not None and expr.b is not None:
-                        mention_text = text[expr.a : expr.b]
+        for wg in word_groupings:
+            if wg not in report_batch.available_groupings():
+                continue
 
-                item_dict = {
-                    "mention": mention_text,
-                    "a": expr.a,
-                    "b": expr.b,
-                    "itext": expr.itext,
-                    "ichunk": expr.ichunk,
-                }
-                vocabulary.append(item_dict)
+            expression_container = report_batch[wg]
+            for expr_holder in expression_container.expression_data:
+                # expr_holder is ExpressionHolder with tt (tensor) and expressions
+                for expr, tt in zip(expr_holder.expressions, expr_holder.tt):
+                    tt_list.append(tt)
+                    # Create item dict with mention text and position info
+                    mention_text = ""
+                    if (
+                        expr.itext is not None
+                        and expr.itext < len(report_batch.texts)
+                        and expr.a is not None
+                        and expr.b is not None
+                    ):
+                        text = report_batch.texts[expr.itext]
+                        if expr.ichunk is not None:
+                            # Map chunk position to text position
+                            offset = report_batch.chunk_mapper.map_chunk_to_text(
+                                expr.itext, expr.ichunk
+                            )
+                            mention_text = text[offset + expr.a : offset + expr.b]
+                        else:
+                            mention_text = text[expr.a : expr.b]
+
+                    item_dict = {
+                        "mention": mention_text,
+                        "a": expr.a,
+                        "b": expr.b,
+                        "itext": expr.itext,
+                        "ichunk": expr.ichunk,
+                        "word_grouping": wg,
+                    }
+                    vocabulary.append(item_dict)
 
         if not tt_list:
             # No mentions found
@@ -361,18 +404,9 @@ class Linker:
 
         # Use clustering-based approach if available
         if self.transformer is not None and self.clusterer is not None:
-            kb_items = self._predict_with_clustering(tt, vocabulary, topk=topk)
-        elif self.index is not None:
-            # Fall back to FAISS index (legacy mode)
-            distance_matrix, nearest_neighbors_matrix = self.index.search(
-                tt, self.nb_nn
+            kb_items = self._predict_with_clustering(
+                tt, vocabulary, threshold=threshold
             )
-            kb_items = []
-            for item, nn, d in zip(
-                vocabulary, nearest_neighbors_matrix, distance_matrix
-            ):
-                item = self.complement_with_kb_data(item, nn, d, topk=topk)
-                kb_items += [item]
         else:
             raise TypeError(
                 "Neither transformer/clusterer nor index is set. Call fit() first."
@@ -381,12 +415,16 @@ class Linker:
         # Convert to dict format for compatibility
         report = {
             "entities": kb_items,
-            "word_groupings": {WordGrouping.W1: wg_current},
+            "word_groupings": {
+                wg: report_batch[wg]
+                for wg in word_groupings
+                if wg in report_batch.available_groupings()
+            },
         }
         return report
 
     def _predict_with_clustering(
-        self, embeddings: torch.Tensor, vocabulary: list, topk=None
+        self, embeddings: torch.Tensor, vocabulary: list, threshold: float = 0.0
     ):
         """
         Predict entities using clustering approach.
@@ -394,7 +432,8 @@ class Linker:
         Args:
             embeddings: Tensor of shape (n_mentions, embedding_dim)
             vocabulary: List of mention texts
-            topk: Number of top candidates to return
+            threshold: Minimum cluster membership probability required to return
+                a prediction
 
         Returns:
             List of entity predictions
@@ -419,6 +458,10 @@ class Linker:
         for item_dict, cluster_id, cluster_prob in zip(
             vocabulary, cluster_labels, cluster_probs
         ):
+            # Skip HDBSCAN outliers and low-confidence assignments.
+            if int(cluster_id) == -1 or float(cluster_prob) < threshold:
+                continue
+
             # Find all entities in the same cluster
             cluster_entities = [
                 entity_id
@@ -426,21 +469,11 @@ class Linker:
                 if cid == cluster_id
             ]
 
-            # If no entities in cluster (noise point), return empty
+            # Skip clusters that have no mapped entities from the training vocabulary.
             if not cluster_entities:
-                kb_item = {
-                    **item_dict,
-                    **{
-                        "entity_id_predicted": None,
-                        "score": float(cluster_prob),
-                        "dif_to_next": 0.0,
-                    },
-                }
-                kb_items += [kb_item]
                 continue
 
             # For now, return the first entity in the cluster
-            # TODO: Could implement similarity-based ranking within cluster
             predicted_entity = cluster_entities[0]
             score = float(cluster_prob)
 
@@ -459,12 +492,6 @@ class Linker:
                     "dif_to_next": dif_to_next,
                 },
             }
-
-            if topk is not None and len(cluster_entities) > 1:
-                kb_item["_leading_candidates"] = cluster_entities[1 : topk + 1]
-                kb_item["_leading_scores"] = [score * 0.9] * min(
-                    len(cluster_entities) - 1, topk
-                )
             kb_items += [kb_item]
 
         return kb_items

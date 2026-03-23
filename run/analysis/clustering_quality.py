@@ -4,6 +4,7 @@ import numpy as np
 
 import pandas as pd
 from numpy.random import RandomState
+from pelinker.config import ClusteringOptimizationConfig
 from pelinker.plotting import (
     plot_metrics_with_error_bars,
     plot_heatmap,
@@ -230,7 +231,15 @@ def main(
             file_reports = []
             all_metrics_dfs = []  # Accumulate metrics across samples for aggregation
 
-            rns = RandomState(seed=seed)
+            optimization_config = ClusteringOptimizationConfig(
+                min_class_size=min_class_size,
+                max_scale=max_scale,
+                rns=RandomState(seed=seed),
+                frac=frac,
+                head=head,
+                batch_size=batch_size,
+                optimization_method="mean",
+            )
 
             for sample_idx in range(n_sample):
                 # Update progress bar description with current status
@@ -254,16 +263,10 @@ def main(
 
                 report = estimate_model_clustering(
                     file_path=file_path,
-                    rns=rns,
                     transform_config=transform_config,
-                    min_class_size=min_class_size,
-                    max_scale=max_scale,
-                    frac=frac,
-                    head=head,
-                    batch_size=batch_size,
+                    optimization_config=optimization_config,
                     selected_labels=selected_labels,
                     all_metrics_dfs=all_metrics_dfs,
-                    optimization_method="mean",
                 )
 
                 if report is not None:

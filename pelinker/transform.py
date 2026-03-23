@@ -7,7 +7,6 @@ embeddings through PCA and UMAP before clustering with HDBSCAN.
 Pipeline: LLM embeddings -> PCA -> UMAP -> HDBSCAN
 """
 
-from dataclasses import dataclass
 from typing import Optional
 
 import numpy as np
@@ -15,35 +14,7 @@ import pandas as pd
 import umap
 from sklearn.decomposition import PCA
 
-
-@dataclass
-class TransformConfig:
-    """Configuration for the embedding transformation pipeline."""
-
-    # PCA configuration
-    pca_components: int = 50
-    """Number of principal components to keep after PCA reduction."""
-
-    # UMAP configuration
-    umap_components: int = 4
-    """Number of UMAP dimensions for clustering (typically 3-5)."""
-    umap_metric: str = "cosine"
-    """Distance metric for UMAP (default: 'cosine')."""
-
-    # Visualization UMAP configuration
-    umap_viz_components: int = 3
-    """Number of UMAP dimensions for visualization (default: 3)."""
-    umap_viz_metric: str = "cosine"
-    """Distance metric for visualization UMAP (default: 'cosine')."""
-
-    def __post_init__(self):
-        """Validate configuration parameters."""
-        if self.pca_components < 1:
-            raise ValueError("pca_components must be >= 1")
-        if self.umap_components < 2:
-            raise ValueError("umap_components must be >= 2")
-        if self.umap_viz_components < 2:
-            raise ValueError("umap_viz_components must be >= 2")
+from pelinker.config import TransformConfig
 
 
 class EmbeddingTransformer:

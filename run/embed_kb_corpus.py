@@ -2,6 +2,7 @@ import click
 import pathlib
 import logging
 
+from pelinker.config import EmbeddingModelMetadata, EmbeddingTrainingConfig
 from pelinker.embedder import embed_kb_corpus
 
 logger = logging.getLogger(__name__)
@@ -84,18 +85,21 @@ def run(
         level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
     )
 
-    # Call the embedding function
-    embed_kb_corpus(
-        model_type=model_type,
-        layers_spec=layers_spec,
+    metadata = EmbeddingModelMetadata.from_single(model_type, layers_spec)
+    training = EmbeddingTrainingConfig(
         input_text_table_path=input_text_table_path,
         kb_csv_path=kb_csv_path,
-        output_parquet_path=output_parquet_path,
         use_gpu=use_gpu,
         chunk_size=chunk_size,
         batch_size=batch_size,
         nlp_model=nlp_model,
         head=head,
+    )
+
+    embed_kb_corpus(
+        metadata=metadata,
+        training=training,
+        output_parquet_path=output_parquet_path,
     )
 
 

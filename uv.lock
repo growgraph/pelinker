@@ -36,6 +36,12 @@ wheels = [
 ]
 
 [[package]]
+name = "antlr4-python3-runtime"
+sdist = {hash = "sha256:f224469b4168294902bb1efa80a8bf7855f24c99aef99cbefc1bcd3cce77881b", size = 117034, upload-time = "2021-11-06T17:52:23.524Z", url = "https://files.pythonhosted.org/packages/3e/38/7859ff46355f76f8d19459005ca000b6e7012f2f1ca597746cbcd1fbfe5e/antlr4-python3-runtime-4.9.3.tar.gz"}
+source = {registry = "https://pypi.org/simple"}
+version = "4.9.3"
+
+[[package]]
 name = "backports-zstd"
 sdist = {hash = "sha256:e8b2d68e2812f5c9970cabc5e21da8b409b5ed04e79b4585dbffa33e9b45ebe2", size = 997138, upload-time = "2025-12-29T17:28:06.143Z", url = "https://files.pythonhosted.org/packages/f4/b1/36a5182ce1d8ef9ef32bff69037bd28b389bbdb66338f8069e61da7028cb/backports_zstd-1.3.0.tar.gz"}
 source = {registry = "https://pypi.org/simple"}
@@ -1134,6 +1140,20 @@ wheels = [
 ]
 
 [[package]]
+dependencies = [
+  {name = "antlr4-python3-runtime"},
+  {name = "omegaconf"},
+  {name = "packaging"}
+]
+name = "hydra-core"
+sdist = {hash = "sha256:8a878ed67216997c3e9d88a8e72e7b4767e81af37afb4ea3334b269a4390a824", size = 3263494, upload-time = "2023-02-23T18:33:43.03Z", url = "https://files.pythonhosted.org/packages/6d/8e/07e42bc434a847154083b315779b0a81d567154504624e181caf2c71cd98/hydra-core-1.3.2.tar.gz"}
+source = {registry = "https://pypi.org/simple"}
+version = "1.3.2"
+wheels = [
+  {hash = "sha256:fa0238a9e31df3373b35b0bfb672c34cc92718d21f81311d8996a16de1141d8b", size = 154547, upload-time = "2023-02-23T18:33:40.801Z", url = "https://files.pythonhosted.org/packages/c6/50/e0edd38dcd63fb26a8547f13d28f7a008bc4a3fd4eb4ff030673f22ad41a/hydra_core-1.3.2-py3-none-any.whl"}
+]
+
+[[package]]
 name = "identify"
 sdist = {hash = "sha256:873ac56a5e3fd63e7438a7ecbc4d91aca692eb3fefa4534db2b7913f3fc352fd", size = 99580, upload-time = "2026-03-15T18:39:50.319Z", url = "https://files.pythonhosted.org/packages/46/c4/7fb4db12296cdb11893d61c92048fe617ee853f8523b9b296ac03b43757e/identify-2.6.18.tar.gz"}
 source = {registry = "https://pypi.org/simple"}
@@ -1926,6 +1946,19 @@ wheels = [
 ]
 
 [[package]]
+dependencies = [
+  {name = "antlr4-python3-runtime"},
+  {name = "pyyaml"}
+]
+name = "omegaconf"
+sdist = {hash = "sha256:d5d4b6d29955cc50ad50c46dc269bcd92c6e00f5f90d23ab5fee7bfca4ba4cc7", size = 3298120, upload-time = "2022-12-08T20:59:22.753Z", url = "https://files.pythonhosted.org/packages/09/48/6388f1bb9da707110532cb70ec4d2822858ddfb44f1cdf1233c20a80ea4b/omegaconf-2.3.0.tar.gz"}
+source = {registry = "https://pypi.org/simple"}
+version = "2.3.0"
+wheels = [
+  {hash = "sha256:7b4df175cdb08ba400f45cae3bdcae7ba8365db4d165fc65fd04b050ab63b46b", size = 79500, upload-time = "2022-12-08T20:59:19.686Z", url = "https://files.pythonhosted.org/packages/e3/94/1843518e420fa3ed6919835845df698c7e27e183cb997394e4a670973a65/omegaconf-2.3.0-py3-none-any.whl"}
+]
+
+[[package]]
 name = "packaging"
 sdist = {hash = "sha256:00243ae351a257117b6a241061796684b084ed1c516a08c48a3f7e147a9d80b4", size = 143416, upload-time = "2026-01-21T20:50:39.064Z", url = "https://files.pythonhosted.org/packages/65/ee/299d360cdc32edc7d2cf530f3accf79c4fca01e96ffc950d8a52213bd8e4/packaging-26.0.tar.gz"}
 source = {registry = "https://pypi.org/simple"}
@@ -2007,6 +2040,7 @@ dependencies = [
   {name = "flask-cors"},
   {name = "flask-restful"},
   {name = "hdbscan"},
+  {name = "hydra-core"},
   {name = "joblib"},
   {name = "numpy"},
   {name = "pandas"},
@@ -2027,18 +2061,13 @@ name = "pelinker"
 source = {editable = "."}
 version = "0.1.3"
 
-[package.dev-dependencies]
-dev = [
-  {name = "pre-commit"},
-  {name = "pytest"},
-  {name = "seaborn"}
-]
-gpu = [
-  {name = "cupy-cuda12x"}
-]
-
 [package.metadata]
+provides-extras = ["dev", "gpu"]
 requires-dist = [
+  {marker = "extra == 'dev'", name = "pre-commit", specifier = ">=4.0.1,<5"},
+  {marker = "extra == 'dev'", name = "pytest", specifier = ">=9.0.2"},
+  {marker = "extra == 'dev'", name = "seaborn", specifier = ">=0.13.2,<0.14"},
+  {marker = "extra == 'gpu'", name = "cupy-cuda12x", specifier = ">=13.6.0"},
   {name = "cupy-cuda12x", specifier = ">=13.6.0"},
   {name = "dataclass-wizard", specifier = ">=0.35.1"},
   {name = "faiss-cpu", specifier = "==1.8.0"},
@@ -2047,6 +2076,7 @@ requires-dist = [
   {name = "flask-cors", specifier = ">=6.0.2"},
   {name = "flask-restful", specifier = ">=0.3.10,<0.4"},
   {name = "hdbscan", specifier = ">=0.8.41"},
+  {name = "hydra-core", specifier = ">=1.3.2"},
   {name = "joblib", specifier = ">=1.4.2,<2"},
   {name = "numpy", specifier = ">=1.26.4,<2"},
   {name = "pandas", specifier = ">=2.2.2,<3"},
@@ -2065,13 +2095,15 @@ requires-dist = [
   {name = "wordfreq", specifier = ">=3.1.1"}
 ]
 
-[package.metadata.requires-dev]
+[package.optional-dependencies]
 dev = [
-  {name = "pre-commit", specifier = ">=4.0.1,<5"},
-  {name = "pytest", specifier = ">=9.0.2"},
-  {name = "seaborn", specifier = ">=0.13.2,<0.14"}
+  {name = "pre-commit"},
+  {name = "pytest"},
+  {name = "seaborn"}
 ]
-gpu = [{name = "cupy-cuda12x", specifier = ">=13.6.0"}]
+gpu = [
+  {name = "cupy-cuda12x"}
+]
 
 [[package]]
 name = "pillow"

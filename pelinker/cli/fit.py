@@ -3,15 +3,16 @@
 import click
 import pathlib
 import logging
-import tempfile
 import pandas as pd
 
+from pelinker.config import (
+    ClusteringOptimizationConfig,
+    EmbeddingModelMetadata,
+    EmbeddingTrainingConfig,
+    TransformConfig,
+)
 from pelinker.model import Linker
-from pelinker.embedder import embed_kb_corpus
-from pelinker.transform import TransformConfig
 from importlib.resources import files
-from pathlib import Path
-from numpy.random import RandomState
 from pelinker.util import str2layers, layers2str
 
 logger = logging.getLogger(__name__)
@@ -154,109 +155,67 @@ def fit(
         umap_components=umap_dim,
     )
 
-    # Part a) Embed corpus (skip if embeddings_path is provided)
-    if embeddings_path is None:
-        # Embeddings path not provided, need to run embedding step
-        if input_text_table_path is None:
-            raise ValueError(
-                "Either --input-text-table-path or --embeddings-path must be provided"
-            )
+    if embeddings_path is None and input_text_table_path is None:
+        raise ValueError(
+            "Either --input-text-table-path or --embeddings-path must be provided"
+        )
 
-        input_text_table_path = input_text_table_path.expanduser()
+    # Create Linker model
+    layers = str2layers(layers_spec)
+    layers_str = layers2str(layers)
 
-        # Create temporary output parquet path
-        with tempfile.NamedTemporaryFile(suffix=".parquet", delete=False) as f:
-            output_parquet_path = Path(f.name)
+    embedding_metadata = EmbeddingModelMetadata.from_single(model_type, layers_spec)
 
-        try:
-            logger.info("Step (a): Embedding corpus...")
-            embed_kb_corpus(
-                model_type=model_type,
-                layers_spec=layers_spec,
-                input_text_table_path=input_text_table_path,
-                kb_csv_path=kb_path,
-                output_parquet_path=output_parquet_path,
-                use_gpu=use_gpu,
-                chunk_size=chunk_size,
-                batch_size=batch_size,
-                nlp_model=nlp_model,
-                head=head,
-            )
-            embeddings_path = output_parquet_path
-            is_temporary = True
-        except Exception as e:
-            # Clean up temporary file on error
-            try:
-                output_parquet_path.unlink()
-            except Exception:
-                pass
-            raise e
+    # Initialize with empty vocabulary (will be set during fit)
+    linker = Linker(
+        layers=layers,
+        transform_config=transform_config,
+        embedding_metadata=embedding_metadata,
+    )
+
+    embedding_training: EmbeddingTrainingConfig | None = None
+    if input_text_table_path is not None:
+        embedding_training = EmbeddingTrainingConfig(
+            input_text_table_path=input_text_table_path,
+            kb_csv_path=kb_path,
+            use_gpu=use_gpu,
+            chunk_size=chunk_size,
+            batch_size=batch_size,
+            nlp_model=nlp_model,
+            head=head,
+        )
+    clustering_config = ClusteringOptimizationConfig(
+        min_class_size=min_class_size,
+        max_scale=max_scale,
+        batch_size=chunk_size,
+    )
+
+    # Fit the linker - this handles embedding (if needed), loading, filtering, aggregation, and clustering
+    linker.fit(
+        embeddings=embeddings_path,
+        transform_config=transform_config,
+        min_cluster_size=min_class_size,
+        kb_labels=kb_labels,
+        optimize_clustering=True,
+        clustering_optimization_config=clustering_config,
+        embedding_training=embedding_training,
+    )
+
+    logger.info(f"Fitted Linker model with {len(linker.vocabulary)} entities")
+    logger.info(f"Number of clusters: {len(set(linker.cluster_assignments.values()))}")
+
+    # Save model
+    if output_path is None:
+        file_spec = files("pelinker.store").joinpath(
+            f"pelinker.model.{model_type}.{layers_str}"
+        )
     else:
-        # Use provided embeddings path
-        embeddings_path = embeddings_path.expanduser()
-        logger.info(
-            f"Step (a): Skipping embedding, using provided embeddings: {embeddings_path}"
-        )
-        is_temporary = False
+        file_spec = output_path.expanduser()
 
-    # Part b) Fit clustering model
-    try:
-        logger.info("Step (b): Fitting clustering model...")
+    logger.info(f"Saving model to {file_spec}")
+    linker.dump(file_spec)
 
-        # Create Linker model
-        layers = str2layers(layers_spec)
-        layers_str = layers2str(layers)
-
-        # Initialize with empty vocabulary (will be set during fit)
-        linker = Linker(
-            layers=layers,
-            transform_config=transform_config,
-        )
-
-        # Fit the linker - this handles loading embeddings, filtering, aggregation, and clustering
-        linker.fit(
-            embeddings=embeddings_path,
-            transform_config=transform_config,
-            min_cluster_size=min_class_size,
-            kb_labels=kb_labels,
-            optimize_clustering=True,
-            clustering_optimization_params={
-                "min_class_size": min_class_size,
-                "max_scale": max_scale,
-                "rns": RandomState(seed=13),
-                "frac": 1.0,
-                "head": None,
-                "batch_size": chunk_size,
-                "optimization_method": "mean",
-            },
-        )
-
-        logger.info(f"Fitted Linker model with {len(linker.vocabulary)} entities")
-        logger.info(
-            f"Number of clusters: {len(set(linker.cluster_assignments.values()))}"
-        )
-
-        # Save model
-        if output_path is None:
-            file_spec = files("pelinker.store").joinpath(
-                f"pelinker.model.{model_type}.{layers_str}"
-            )
-        else:
-            file_spec = output_path.expanduser()
-
-        logger.info(f"Saving model to {file_spec}")
-        linker.dump(file_spec)
-
-        logger.info("Model saved successfully!")
-
-    finally:
-        # Clean up temporary file if we created it
-        if is_temporary:
-            try:
-                embeddings_path.unlink()
-                logger.debug(f"Removed temporary parquet file: {embeddings_path}")
-            except Exception as e:
-                logger.warning(f"Failed to remove temporary parquet file: {e}")
+    logger.info("Model saved successfully!")
 
 
 if __name__ == "__main__":
