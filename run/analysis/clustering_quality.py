@@ -239,6 +239,7 @@ def main(
     best_per_model: dict[str, float] = {}
     metrics_by_file: dict[tuple[str, str], list[pd.DataFrame]] = {}
     best_report: ClusteringReport | None = None
+    detailed_grid_frames: list[pd.DataFrame] = []
 
     total_tasks = len(valid_files) * n_sample
     with Progress(
@@ -303,6 +304,13 @@ def main(
                     # Collect metrics for plotting (function already updated all_metrics_dfs)
                     file_metrics.append(report.metrics_df)
                     file_reports.append(report)
+                    detailed_grid_frames.append(
+                        report.metrics_df.assign(
+                            model=model,
+                            layer=layer,
+                            sample_idx=sample_idx,
+                        )
+                    )
 
                     # Ensure all_metrics_dfs is initialized for next iteration
                     if all_metrics_dfs is None:
@@ -441,6 +449,13 @@ def main(
                         if report is not None:
                             fusion_metrics.append(report.metrics_df)
                             fusion_reports.append(report)
+                            detailed_grid_frames.append(
+                                report.metrics_df.assign(
+                                    model=model_label,
+                                    layer=layer_label,
+                                    sample_idx=sample_idx,
+                                )
+                            )
                         fusion_progress.advance(ftask)
 
                     if fusion_reports:
@@ -481,6 +496,22 @@ def main(
     output_path = output_dir / "results.csv"
     df_results.to_csv(output_path, index=False)
 
+    if detailed_grid_frames:
+        df_grid_detail = pd.concat(detailed_grid_frames, ignore_index=True)
+        grid_cols = [
+            "model",
+            "layer",
+            "sample_idx",
+            "min_cluster_size",
+            "icm",
+            "n_clusters",
+            "dbcv",
+        ]
+        tail = [c for c in df_grid_detail.columns if c not in grid_cols]
+        df_grid_detail = df_grid_detail[grid_cols + tail]
+        detail_path = output_dir / "results_grid_per_sample.csv"
+        df_grid_detail.to_csv(detail_path, index=False)
+
     df_heatmap = df_results[~df_results["model"].isin(["fusion2", "fusion3"])].copy()
 
     # Create heatmaps (single embeddings only; fusion rows are not a full model×layer grid)
@@ -513,6 +544,7 @@ def main(
     table.add_column("Model", style="cyan")
     table.add_column("Layer", style="yellow")
     table.add_column("Best Size", justify="right", style="green")
+    table.add_column("Clusters", justify="right", style="bright_blue")
     table.add_column("Properties", justify="right", style="magenta")
     table.add_column("Best Score", justify="right", style="blue")
 
@@ -520,12 +552,17 @@ def main(
         # Format with std if n_sample > 1
         if n_sample > 1:
             best_size_str = f"{int(row['best_size'])} ± {row['best_size_std']:.1f}"
+            clusters_str = (
+                f"{row['n_clusters_emergent']:.1f} ± "
+                f"{row['n_clusters_emergent_std']:.1f}"
+            )
             properties_str = (
                 f"{int(row['number_properties'])} ± {row['number_properties_std']:.1f}"
             )
             best_score_str = f"{row['best_score']:.3f} ± {row['best_score_std']:.3f}"
         else:
             best_size_str = str(int(row["best_size"]))
+            clusters_str = str(int(round(row["n_clusters_emergent"])))
             properties_str = str(int(row["number_properties"]))
             best_score_str = f"{row['best_score']:.3f}"
 
@@ -533,12 +570,18 @@ def main(
             str(row["model"]),
             str(row["layer"]),
             best_size_str,
+            clusters_str,
             properties_str,
             best_score_str,
         )
 
     console.print(table)
     console.print(f"\n[green]✓[/green] Results saved to: [cyan]{output_path}[/cyan]")
+    if detailed_grid_frames:
+        console.print(
+            f"[green]✓[/green] Per-sample grid (all min_cluster_size values) saved to: "
+            f"[cyan]{output_dir / 'results_grid_per_sample.csv'}[/cyan]"
+        )
     if len(df_heatmap) > 0:
         console.print(f"[green]✓[/green] Heatmap saved to: [cyan]{heatmap_path}[/cyan]")
 

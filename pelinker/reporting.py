@@ -42,6 +42,11 @@ class ClusteringReport:
     """DBCV (``relative_validity_``) at the chosen ``min_cluster_size`` (mean when from aggregate)."""
 
     number_properties: int
+    """Count of distinct KB properties in the (filtered) frame used for clustering."""
+
+    n_clusters_emergent: int
+    """Number of HDBSCAN clusters at the chosen ``min_cluster_size`` (noise label -1 excluded)."""
+
     metrics_df: pd.DataFrame
     df: pd.DataFrame
     hungarian_accuracy: float | None = None
@@ -64,6 +69,7 @@ class ClusteringSearchSummaryRow:
     layer: str
     hyperparameters: HyperparameterSearchStats
     number_properties: MeanWithUncertainty
+    n_clusters_emergent: MeanWithUncertainty
     dbcv: MeanWithUncertainty
     hungarian_accuracy: MeanWithUncertainty | None
 
@@ -71,6 +77,7 @@ class ClusteringSearchSummaryRow:
         """Keys aligned with historical ``results.csv`` and ``plot_heatmap`` expectations."""
         h = self.hyperparameters.min_cluster_size
         p = self.number_properties
+        k = self.n_clusters_emergent
         d = self.dbcv
         row: dict[str, str | float | None] = {
             "model": self.model,
@@ -79,6 +86,8 @@ class ClusteringSearchSummaryRow:
             "best_size_std": h.std,
             "number_properties": p.mean,
             "number_properties_std": p.std,
+            "n_clusters_emergent": k.mean,
+            "n_clusters_emergent_std": k.std,
             "best_score": d.mean,
             "best_score_std": d.std,
         }
@@ -112,6 +121,7 @@ def summarize_clustering_reports_for_search(
     )
     scores = np.array([r.best_score for r in reports], dtype=np.float64)
     nprops = np.array([r.number_properties for r in reports], dtype=np.float64)
+    n_clusters = np.array([r.n_clusters_emergent for r in reports], dtype=np.float64)
     hungarian_vals = [
         float(r.hungarian_accuracy) for r in reports if r.hungarian_accuracy is not None
     ]
@@ -120,6 +130,7 @@ def summarize_clustering_reports_for_search(
     std_sizes = float(np.std(sizes)) if n > 1 else 0.0
     std_scores = float(np.std(scores)) if n > 1 else 0.0
     std_nprops = float(np.std(nprops)) if n > 1 else 0.0
+    std_n_clusters = float(np.std(n_clusters)) if n > 1 else 0.0
 
     hungarian_block: MeanWithUncertainty | None
     if hungarian_vals:
@@ -143,6 +154,10 @@ def summarize_clustering_reports_for_search(
         number_properties=MeanWithUncertainty(
             mean=float(np.mean(nprops)),
             std=std_nprops,
+        ),
+        n_clusters_emergent=MeanWithUncertainty(
+            mean=float(np.mean(n_clusters)),
+            std=std_n_clusters,
         ),
         dbcv=MeanWithUncertainty(
             mean=float(np.mean(scores)),

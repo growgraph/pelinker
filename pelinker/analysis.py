@@ -257,6 +257,8 @@ def estimate_clustering_from_frame(
 
     clusterer = hdbscan.HDBSCAN(min_cluster_size=best_size, gen_min_span_tree=True)
     labels = clusterer.fit_predict(dfr2[umap_columns])
+    label_set = set(labels.tolist())
+    n_clusters_emergent = len(label_set) - (1 if -1 in label_set else 0)
     dfr2_final = dfr2.copy()
     dfr2_final["class"] = pd.DataFrame(
         labels, columns=["class"], index=dfr2_final.index
@@ -272,6 +274,7 @@ def estimate_clustering_from_frame(
         hyperparameters=ClusteringHyperparameters(min_cluster_size=best_size),
         best_score=best_score,
         number_properties=number_properties,
+        n_clusters_emergent=n_clusters_emergent,
         metrics_df=metrics_df,
         df=dfr2_final,
         hungarian_accuracy=hungarian_acc,

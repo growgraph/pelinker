@@ -15,6 +15,7 @@ def _minimal_report(
     min_cluster_size: int,
     best_score: float,
     *,
+    n_clusters_emergent: int = 3,
     hungarian: float | None = None,
 ) -> ClusteringReport:
     metrics_df = pd.DataFrame(
@@ -25,6 +26,7 @@ def _minimal_report(
         hyperparameters=ClusteringHyperparameters(min_cluster_size=min_cluster_size),
         best_score=best_score,
         number_properties=5,
+        n_clusters_emergent=n_clusters_emergent,
         metrics_df=metrics_df,
         df=df,
         hungarian_accuracy=hungarian,
@@ -38,8 +40,8 @@ def test_clustering_report_best_size_alias() -> None:
 
 
 def test_summarize_clustering_reports_for_search_means_and_flat_dict() -> None:
-    r1 = _minimal_report(10, 0.5, hungarian=0.8)
-    r2 = _minimal_report(20, 0.7, hungarian=0.9)
+    r1 = _minimal_report(10, 0.5, n_clusters_emergent=4, hungarian=0.8)
+    r2 = _minimal_report(20, 0.7, n_clusters_emergent=8, hungarian=0.9)
     row = summarize_clustering_reports_for_search(
         [r1, r2],
         model="m1",
@@ -54,6 +56,8 @@ def test_summarize_clustering_reports_for_search_means_and_flat_dict() -> None:
     assert flat["layer"] == "L0"
     assert flat["best_size"] == pytest.approx(15.0)
     assert flat["best_score"] == pytest.approx(0.6)
+    assert flat["n_clusters_emergent"] == pytest.approx(6.0)
+    assert flat["n_clusters_emergent_std"] > 0
     assert flat["hungarian_accuracy"] == pytest.approx(0.85)
 
 
