@@ -315,10 +315,10 @@ class Linker:
 
         logger.info(
             "Optimal min_cluster_size: %s (score: %.3f)",
-            clustering_report.best_size,
+            clustering_report.hyperparameters.min_cluster_size,
             clustering_report.best_score,
         )
-        return clustering_report.best_size
+        return clustering_report.hyperparameters.min_cluster_size
 
     def _ensure_hf_models_for_sources(self, *, use_gpu: bool = False) -> None:
         """Load tokenizer+encoder once per distinct ``model_type`` in metadata sources."""

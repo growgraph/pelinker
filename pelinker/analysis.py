@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import pathlib
 from collections.abc import Iterable, Mapping, Sequence
 from typing import Literal
@@ -6,227 +8,20 @@ import numpy as np
 import pandas as pd
 import torch
 import hdbscan
+from pelinker.clustering_grid import (
+    aggregate_grid_metrics,
+    evaluate_cluster_size_grid,
+    solve_optimal_min_cluster_size_from_aggregated,
+)
 from pelinker.embedding_fusion import mention_level_concat_frames
 from pelinker.io import read_batches
-from pelinker.reporting import ClusteringReport
+from pelinker.reporting import ClusteringHyperparameters, ClusteringReport
 from sklearn.metrics import confusion_matrix
 from scipy.optimize import linear_sum_assignment
-from torch.nn import functional as F
 from numpy.random import RandomState
 
 from pelinker.config import ClusteringOptimizationConfig, TransformConfig
 from pelinker.transform import get_umap_columns, transform_embeddings
-
-
-def evaluate_cluster_size_grid(
-    dfr2: pd.DataFrame,
-    umap_columns: list[str],
-    sizes: list[int],
-    max_pairs_per_cluster: int = 200_000,
-) -> pd.DataFrame:
-    """
-    Evaluate clustering metrics on a grid of min_cluster_size values.
-
-    Uses DBCV (Density-Based Clustering Validation) metric.
-
-    Args:
-        dfr2: DataFrame with UMAP-reduced embeddings
-        umap_columns: List of UMAP column names
-        sizes: List of min_cluster_size values to evaluate
-
-    Returns:
-        DataFrame with columns: min_cluster_size, icm, n_clusters, dbcv
-    """
-    # OPTIMIZATION: materialize UMAP features once as float32 to reduce repeated
-    # DataFrame slicing and keep HDBSCAN input memory footprint lower.
-    umap_values = dfr2[umap_columns].to_numpy(dtype=np.float32, copy=False)
-
-    metrics = []
-    for size in sizes:
-        clusterer = hdbscan.HDBSCAN(min_cluster_size=size, gen_min_span_tree=True)
-        labels = clusterer.fit_predict(umap_values)
-
-        ic = []
-        for ix in np.unique(labels):
-            if ix == -1:  # Skip noise points
-                continue
-            cluster_values = umap_values[labels == ix]
-            if len(cluster_values) < 2:
-                continue
-            tgroup = torch.from_numpy(cluster_values)
-            st = cosine_similarity_std(
-                tgroup, max_pairs=max_pairs_per_cluster, random_seed=13
-            )
-            ic += [float(st)]
-
-        icm = np.mean(ic) if ic else np.nan
-
-        # Compute DBCV score
-        unique_labels = set(labels)
-        n_clusters = len(unique_labels) - (1 if -1 in unique_labels else 0)
-
-        # DBCV is available as relative_validity_ attribute
-        if n_clusters >= 2 and hasattr(clusterer, "relative_validity_"):
-            dbcv = float(clusterer.relative_validity_)
-        else:
-            dbcv = np.nan
-
-        # Only record if we have at least one valid cluster
-        if n_clusters >= 1:
-            metrics += [(size, icm, n_clusters, dbcv)]
-
-    return pd.DataFrame(
-        metrics, columns=["min_cluster_size", "icm", "n_clusters", "dbcv"]
-    )
-
-
-def aggregate_grid_metrics(
-    all_metrics_dfs: list[pd.DataFrame],
-) -> pd.DataFrame:
-    """
-    Aggregate grid evaluation metrics across multiple samples.
-
-    Args:
-        all_metrics_dfs: List of metrics DataFrames from multiple samples
-
-    Returns:
-        DataFrame with columns:
-        - min_cluster_size
-        - dbcv_mean, dbcv_std, dbcv_count
-        - icm_mean, n_clusters_mean
-    """
-    if not all_metrics_dfs:
-        return pd.DataFrame()
-
-    combined = pd.concat(all_metrics_dfs, ignore_index=True)
-
-    aggregated = (
-        combined.groupby("min_cluster_size")
-        .agg(
-            {
-                "dbcv": ["mean", "std", "count"],
-                "icm": "mean",
-                "n_clusters": "mean",
-            }
-        )
-        .reset_index()
-    )
-
-    # Flatten column names
-    aggregated.columns = [
-        "min_cluster_size",
-        "dbcv_mean",
-        "dbcv_std",
-        "dbcv_count",
-        "icm_mean",
-        "n_clusters_mean",
-    ]
-
-    # Fill NaN std with 0 (single sample case)
-    aggregated["dbcv_std"] = aggregated["dbcv_std"].fillna(0.0)
-
-    return aggregated
-
-
-def find_optimal_from_grid(
-    aggregated_metrics: pd.DataFrame,
-    method: str = "mean",
-    uncertainty_penalty: float = 1.0,
-) -> tuple[int, float, float]:
-    """
-    Find optimal min_cluster_size from aggregated grid metrics.
-
-    Uses DBCV (Density-Based Clustering Validation) as the metric (maximize).
-
-    Args:
-        aggregated_metrics: DataFrame from aggregate_grid_metrics()
-        method: How to select optimum:
-            - "mean": Use mean DBCV score (default)
-            - "lower_bound": Use mean - uncertainty_penalty * std (conservative)
-            - "weighted": Weight by inverse variance (more samples = more weight)
-        uncertainty_penalty: Multiplier for std when using "lower_bound" method
-
-    Returns:
-        (best_size, best_score_mean, best_score_std) where score is DBCV
-    """
-    if len(aggregated_metrics) == 0:
-        raise ValueError("No aggregated metrics provided")
-
-    sizes = aggregated_metrics["min_cluster_size"].values
-    means = aggregated_metrics["dbcv_mean"].values
-    stds = aggregated_metrics["dbcv_std"].values
-
-    if method == "mean":
-        scores = means
-    elif method == "lower_bound":
-        # Conservative: prefer points with lower uncertainty
-        scores = means - uncertainty_penalty * stds
-    elif method == "weighted":
-        # Weight by inverse variance (more reliable = higher weight)
-        weights = 1.0 / (stds + 1e-8)  # Add small epsilon to avoid division by zero
-        # Normalize weights
-        weights = weights / weights.sum()
-        # Weighted average (but we still need to pick a discrete point)
-        # So we'll use weighted mean as score
-        scores = means * weights
-    else:
-        raise ValueError(f"Unknown method: {method}")
-
-    best_idx = np.argmax(scores)
-    best_size = int(sizes[best_idx])
-    best_score_mean = float(means[best_idx])
-    best_score_std = float(stds[best_idx])
-
-    return best_size, best_score_mean, best_score_std
-
-
-def cosine_similarity_std(
-    tensor: torch.Tensor, max_pairs: int = 200_000, random_seed: int = 13
-):
-    """
-    Calculate the standard deviation of pairwise cosine similarities
-    for a tensor of shape (n_b, dim_emb).
-
-    Args:
-        tensor: torch.Tensor of shape (n_b, dim_emb)
-
-    Returns:
-        torch.Tensor: scalar tensor containing the standard deviation
-    """
-
-    # OPTIMIZATION: use float32 to reduce memory pressure from intermediate tensors.
-    normalized = F.normalize(tensor.float(), p=2, dim=1)
-
-    n_points = normalized.size(0)
-    if n_points < 2:
-        return torch.tensor(float("nan"), dtype=normalized.dtype)
-
-    total_pairs = n_points * (n_points - 1) // 2
-
-    # For small clusters, exact computation is cheap and keeps original behavior.
-    if total_pairs <= max_pairs:
-        cos_sim_matrix = torch.mm(normalized, normalized.t())
-        triu_indices = torch.triu_indices(
-            cos_sim_matrix.size(0), cos_sim_matrix.size(1), offset=1
-        )
-        cos_similarities = cos_sim_matrix[triu_indices[0], triu_indices[1]]
-        return torch.std(cos_similarities)
-
-    # OPTIMIZATION: avoid O(n^2) similarity matrix for large clusters by sampling
-    # random pairs and estimating the std from sampled cosine similarities.
-    sample_size = min(max_pairs, total_pairs)
-    generator = torch.Generator(device=normalized.device)
-    generator.manual_seed(random_seed)
-
-    idx_i = torch.randint(
-        0, n_points, (sample_size,), generator=generator, device=normalized.device
-    )
-    idx_j = torch.randint(
-        0, n_points - 1, (sample_size,), generator=generator, device=normalized.device
-    )
-    idx_j = idx_j + (idx_j >= idx_i).long()  # ensure i != j
-    cos_similarities = (normalized[idx_i] * normalized[idx_j]).sum(dim=1)
-    return torch.std(cos_similarities)
 
 
 def get_word_frequencies_from_library(
@@ -444,9 +239,15 @@ def estimate_clustering_from_frame(
     if all_metrics_dfs is not None:
         all_metrics_dfs.append(metrics_df)
         aggregated = aggregate_grid_metrics(all_metrics_dfs)
-        best_size, best_score, best_score_std = find_optimal_from_grid(
-            aggregated, method=config.optimization_method
+        solved = solve_optimal_min_cluster_size_from_aggregated(
+            aggregated,
+            method=config.optimization_method,
+            smooth_window=config.grid_smooth_window,
+            plateau_fraction=config.grid_plateau_fraction,
+            derivative_rel_tol=config.grid_derivative_rel_tol,
         )
+        best_size = solved.chosen_min_cluster_size
+        best_score = solved.score_mean_at_chosen
     else:
         if len(metrics_df) == 0:
             return None
@@ -468,7 +269,7 @@ def estimate_clustering_from_frame(
         hungarian_acc = compute_hungarian_accuracy(property_labels, cluster_labels)
 
     return ClusteringReport(
-        best_size=best_size,
+        hyperparameters=ClusteringHyperparameters(min_cluster_size=best_size),
         best_score=best_score,
         number_properties=number_properties,
         metrics_df=metrics_df,

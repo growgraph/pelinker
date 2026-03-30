@@ -118,6 +118,13 @@ class ClusteringOptimizationConfig:
     head: int | None = None
     batch_size: int = 1000
     optimization_method: str = "mean"
+    """How to build the objective f(min_cluster_size) before smoothing (mean / lower_bound / weighted)."""
+    grid_smooth_window: int = 3
+    """Odd-length centered moving-average window for smoothing f(x). Even values are bumped up by one."""
+    grid_plateau_fraction: float = 0.92
+    """Require smoothed f(x) >= this fraction of the smoothed maximum to accept a plateau point."""
+    grid_derivative_rel_tol: float = 0.12
+    """|df/dx| below this times max|df/dx| counts as “derivative near zero” on the smoothed curve."""
 
     def __post_init__(self) -> None:
         if self.min_class_size < 1:
@@ -132,6 +139,12 @@ class ClusteringOptimizationConfig:
             raise ValueError("head must be >= 1 when provided")
         if not self.optimization_method:
             raise ValueError("optimization_method must be a non-empty string")
+        if self.grid_smooth_window < 1:
+            raise ValueError("grid_smooth_window must be >= 1")
+        if not 0 < self.grid_plateau_fraction <= 1:
+            raise ValueError("grid_plateau_fraction must be in (0, 1]")
+        if self.grid_derivative_rel_tol <= 0:
+            raise ValueError("grid_derivative_rel_tol must be > 0")
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

@@ -1,6 +1,5 @@
 import click
 import pathlib
-import numpy as np
 
 import pandas as pd
 from numpy.random import RandomState
@@ -21,10 +20,17 @@ from rich.progress import (
 )
 from rich.table import Table
 
-from pelinker.analysis import (
-    estimate_model_clustering,
+from pelinker.analysis import estimate_model_clustering
+from pelinker.clustering_fusion_ranking import (
+    singleton_items_by_dbcv_score,
+    top_k_fusion_candidates_by_dbcv_proxy,
 )
 from pelinker.ops import parse_model_filename
+from pelinker.reporting import (
+    ClusteringReport,
+    ClusteringSearchSummaryRow,
+    summarize_clustering_reports_for_search,
+)
 from pelinker.transform import TransformConfig
 
 
@@ -108,6 +114,23 @@ from pelinker.transform import TransformConfig
     show_default=True,
     help="Maximum value for grid evaluation of min_cluster_size",
 )
+@click.option(
+    "--fusion-pairs",
+    type=click.INT,
+    default=5,
+    show_default=True,
+    help=(
+        "After scoring single embeddings (DBCV), evaluate fused pairs: "
+        "pick this many distinct pairs with highest sum of singleton DBCV. 0 disables."
+    ),
+)
+@click.option(
+    "--fusion-triples",
+    type=click.INT,
+    default=0,
+    show_default=True,
+    help=("Same as --fusion-pairs but for three-way fusions (costly). 0 disables."),
+)
 def main(
     input_dir: pathlib.Path,
     output_dir: pathlib.Path,
@@ -122,11 +145,18 @@ def main(
     prefix: str,
     selected_labels_kb_path: pathlib.Path | None,
     max_scale: int,
+    fusion_pairs: int,
+    fusion_triples: int,
 ):
     """
     Process multiple parquet files and compute optimal cluster sizes.
 
     Files should follow the pattern: <prefix>_<model>_<layer>.parquet
+
+    After scoring each (model, layer) alone (mean DBCV as ``best_score``), optionally
+    evaluates fused embeddings: pairs/triples with the highest sum of singleton DBCV
+    scores (see ``--fusion-pairs`` / ``--fusion-triples``), then clusters the
+    concatenated mention-level vectors via ``estimate_model_clustering(..., file_paths=...)``.
     """
     # Configure console to work better in PyCharm and other IDEs
     # Use legacy_windows=False and force_terminal to ensure progress bars work
@@ -202,13 +232,13 @@ def main(
         return
 
     # Process each file with progress bar
-    results = []
+    results: list[ClusteringSearchSummaryRow] = []
     best_overall_score = None
     best_overall_model = None
     best_overall_layer = None
-    best_per_model = {}  # Track best score per model
-    metrics_by_file = {}  # Store metrics for each (model, layer) combination
-    best_report = None  # Track the absolute best report for UMAP visualization
+    best_per_model: dict[str, float] = {}
+    metrics_by_file: dict[tuple[str, str], list[pd.DataFrame]] = {}
+    best_report: ClusteringReport | None = None
 
     total_tasks = len(valid_files) * n_sample
     with Progress(
@@ -292,65 +322,24 @@ def main(
                 # Store metrics for plotting
                 metrics_by_file[(model, layer)] = file_metrics
 
-                # Aggregate results across runs (take mean and std)
-                best_sizes = [r.best_size for r in file_reports]
-                best_scores = [r.best_score for r in file_reports]
-                number_properties_list = [r.number_properties for r in file_reports]
-                hungarian_accuracies = [
-                    r.hungarian_accuracy
-                    for r in file_reports
-                    if r.hungarian_accuracy is not None
-                ]
-
-                avg_best_size = np.mean(best_sizes)
-                std_best_size = np.std(best_sizes) if len(best_sizes) > 1 else 0.0
-
-                avg_best_score = np.mean(best_scores)
-                std_best_score = np.std(best_scores) if len(best_scores) > 1 else 0.0
-
-                avg_number_properties = np.mean(number_properties_list)
-                std_number_properties = (
-                    np.std(number_properties_list)
-                    if len(number_properties_list) > 1
-                    else 0.0
+                summary_row = summarize_clustering_reports_for_search(
+                    file_reports,
+                    model=model,
+                    layer=layer,
                 )
+                results.append(summary_row)
 
-                avg_hungarian_accuracy = (
-                    np.mean(hungarian_accuracies) if hungarian_accuracies else None
-                )
-                std_hungarian_accuracy = (
-                    np.std(hungarian_accuracies)
-                    if len(hungarian_accuracies) > 1
-                    else 0.0
-                )
-
-                results.append(
-                    {
-                        "model": model,
-                        "layer": layer,
-                        "best_size": avg_best_size,
-                        "best_size_std": std_best_size,
-                        "number_properties": avg_number_properties,
-                        "number_properties_std": std_number_properties,
-                        "best_score": avg_best_score,
-                        "best_score_std": std_best_score,
-                        "hungarian_accuracy": avg_hungarian_accuracy,
-                        "hungarian_accuracy_std": std_hungarian_accuracy,
-                    }
-                )
+                mean_dbcv = summary_row.dbcv.mean
 
                 # Update best overall (using mean score)
-                if best_overall_score is None or avg_best_score > best_overall_score:
-                    best_overall_score = avg_best_score
+                if best_overall_score is None or mean_dbcv > best_overall_score:
+                    best_overall_score = mean_dbcv
                     best_overall_model = model
                     best_overall_layer = layer
 
                 # Update best per model
-                if (
-                    model not in best_per_model
-                    or avg_best_score > best_per_model[model]
-                ):
-                    best_per_model[model] = avg_best_score
+                if model not in best_per_model or mean_dbcv > best_per_model[model]:
+                    best_per_model[model] = mean_dbcv
 
                 if len(file_metrics) > 1:
                     # Use lineplot with error bars for multiple samples
@@ -361,32 +350,159 @@ def main(
                     # Use original plot for single sample
                     plot_metrics(file_metrics[0], output_dir / f"{model}_{layer}.png")
 
+    if results:
+        score_by_ml = {(r.model, r.layer): r.dbcv.mean for r in results}
+        singleton_items = singleton_items_by_dbcv_score(valid_files, score_by_ml)
+        fusion_jobs: list[tuple[int, int]] = []
+        if fusion_pairs > 0:
+            fusion_jobs.append((2, fusion_pairs))
+        if fusion_triples > 0:
+            fusion_jobs.append((3, fusion_triples))
+
+        fusion_task_total = 0
+        fusion_batches: list[
+            tuple[
+                int,
+                int,
+                list[tuple[list[pathlib.Path], list[str], list[str], float]],
+            ]
+        ] = []
+        for order, top_k in fusion_jobs:
+            cand = top_k_fusion_candidates_by_dbcv_proxy(singleton_items, order, top_k)
+            if not cand:
+                continue
+            fusion_batches.append((order, top_k, cand))
+            fusion_task_total += len(cand) * n_sample
+
+        if fusion_task_total > 0:
+            console.print(
+                "[cyan]Fused embeddings:[/cyan] evaluating "
+                f"{fusion_task_total // n_sample} combination(s) × {n_sample} sample(s)..."
+            )
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[bold blue]{task.description}"),
+            BarColumn(),
+            TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+            TimeElapsedColumn(),
+            console=console,
+            refresh_per_second=4,
+        ) as fusion_progress:
+            ftask = fusion_progress.add_task(
+                "[cyan]Fusion clustering...",
+                total=fusion_task_total,
+            )
+            for order, _top_k, candidates in fusion_batches:
+                model_label = f"fusion{order}"
+                for paths, models, layers, sum_proxy in candidates:
+                    ordered = sorted(
+                        zip(paths, models, layers, strict=True),
+                        key=lambda t: (t[1], t[2]),
+                    )
+                    ordered_paths = [t[0] for t in ordered]
+                    o_models = [t[1] for t in ordered]
+                    o_layers = [t[2] for t in ordered]
+                    layer_label = "+".join(
+                        f"{m}/{layer}"
+                        for m, layer in zip(o_models, o_layers, strict=True)
+                    )
+
+                    fusion_metrics: list[pd.DataFrame] = []
+                    fusion_reports: list[ClusteringReport] = []
+                    fusion_all_metrics_dfs: list[pd.DataFrame] = []
+
+                    optimization_config = ClusteringOptimizationConfig(
+                        min_class_size=min_class_size,
+                        max_scale=max_scale,
+                        rns=RandomState(seed=seed),
+                        frac=frac,
+                        head=head,
+                        batch_size=batch_size,
+                        optimization_method="mean",
+                    )
+
+                    for sample_idx in range(n_sample):
+                        fusion_progress.update(
+                            ftask,
+                            description=(
+                                f"[cyan]{model_label}[/cyan] "
+                                f"[yellow]{layer_label}[/yellow] "
+                                f"(Σ singles≈{sum_proxy:.3f}) "
+                                f"sample {sample_idx + 1}/{n_sample}"
+                            ),
+                        )
+                        report = estimate_model_clustering(
+                            transform_config=transform_config,
+                            optimization_config=optimization_config,
+                            file_paths=ordered_paths,
+                            selected_labels=selected_labels,
+                            all_metrics_dfs=fusion_all_metrics_dfs,
+                        )
+                        if report is not None:
+                            fusion_metrics.append(report.metrics_df)
+                            fusion_reports.append(report)
+                        fusion_progress.advance(ftask)
+
+                    if fusion_reports:
+                        fusion_summary = summarize_clustering_reports_for_search(
+                            fusion_reports,
+                            model=model_label,
+                            layer=layer_label,
+                        )
+                        results.append(fusion_summary)
+
+                        best_fusion_report = max(
+                            fusion_reports, key=lambda r: r.best_score
+                        )
+                        if (
+                            best_report is None
+                            or best_fusion_report.best_score > best_report.best_score
+                        ):
+                            best_report = best_fusion_report
+
+                        metrics_by_file[(model_label, layer_label)] = fusion_metrics
+
+                        safe = layer_label.replace("/", "_").replace("+", "__")
+                        out_metric = output_dir / f"{model_label}_{safe}.png"
+                        if len(fusion_metrics) > 1:
+                            plot_metrics_with_error_bars(fusion_metrics, out_metric)
+                        else:
+                            plot_metrics(fusion_metrics[0], out_metric)
+
     # Create results dataframe
     if not results:
         console.print("[red]No results to save[/red]")
         return
 
-    df_results = pd.DataFrame(results)
+    df_results = pd.DataFrame([r.to_flat_dict() for r in results])
     df_results = df_results.sort_values(["model", "layer"])
 
     # Save results
     output_path = output_dir / "results.csv"
     df_results.to_csv(output_path, index=False)
 
-    # Create heatmaps
+    df_heatmap = df_results[~df_results["model"].isin(["fusion2", "fusion3"])].copy()
+
+    # Create heatmaps (single embeddings only; fusion rows are not a full model×layer grid)
     heatmap_path = output_dir / "model.perf.heatmap.png"
-    plot_heatmap(
-        df_results, heatmap_path, metric="best_score", metric_label="Best Score"
-    )
+    if len(df_heatmap) > 0:
+        plot_heatmap(
+            df_heatmap, heatmap_path, metric="best_score", metric_label="Best Score"
+        )
+    else:
+        console.print(
+            "[yellow]Skipping score heatmap: no single-embedding rows[/yellow]"
+        )
 
     # Create Hungarian accuracy heatmap if available
     if (
-        "hungarian_accuracy" in df_results.columns
-        and df_results["hungarian_accuracy"].notna().any()
+        len(df_heatmap) > 0
+        and "hungarian_accuracy" in df_heatmap.columns
+        and df_heatmap["hungarian_accuracy"].notna().any()
     ):
         hungarian_heatmap_path = output_dir / "model.hungarian_accuracy.heatmap.png"
         plot_heatmap(
-            df_results,
+            df_heatmap,
             hungarian_heatmap_path,
             metric="hungarian_accuracy",
             metric_label="Hungarian Accuracy",
@@ -423,13 +539,15 @@ def main(
 
     console.print(table)
     console.print(f"\n[green]✓[/green] Results saved to: [cyan]{output_path}[/cyan]")
-    console.print(f"[green]✓[/green] Heatmap saved to: [cyan]{heatmap_path}[/cyan]")
+    if len(df_heatmap) > 0:
+        console.print(f"[green]✓[/green] Heatmap saved to: [cyan]{heatmap_path}[/cyan]")
 
-    if best_overall_score is not None:
-        console.print(
-            f"\n[bold green]Best overall score: {best_overall_score:.3f}[/bold green] "
-            f"([cyan]{best_overall_model}[/cyan]/[yellow]{best_overall_layer}[/yellow])"
-        )
+    top_idx = df_results["best_score"].idxmax()
+    top_row = df_results.loc[top_idx]
+    console.print(
+        f"\n[bold green]Best mean DBCV (best_score): {float(top_row['best_score']):.3f}[/bold green] "
+        f"([cyan]{top_row['model']}[/cyan]/[yellow]{top_row['layer']}[/yellow])"
+    )
 
     # Generate UMAP visualization for the best model
     if best_report is not None:
