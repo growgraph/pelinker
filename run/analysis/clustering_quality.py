@@ -262,9 +262,9 @@ def main(
                 progress.update(task, description=" | ".join(status_parts))
 
                 report = estimate_model_clustering(
-                    file_path=file_path,
                     transform_config=transform_config,
                     optimization_config=optimization_config,
+                    file_path=file_path,
                     selected_labels=selected_labels,
                     all_metrics_dfs=all_metrics_dfs,
                 )

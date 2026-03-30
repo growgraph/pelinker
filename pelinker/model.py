@@ -1,7 +1,7 @@
 import tempfile
+from collections.abc import Sequence
 from dataclasses import replace
-from pelinker.util import texts_to_vrep
-from pelinker.onto import WordGrouping
+
 import torch
 import joblib
 import numpy as np
@@ -9,7 +9,6 @@ from typing import Optional
 import hdbscan
 from hdbscan import approximate_predict
 import pathlib
-import pyarrow.parquet as pq
 import logging
 
 from pelinker.config import (
@@ -20,8 +19,13 @@ from pelinker.config import (
     TransformConfig,
 )
 from pelinker.embedder import embed_kb_corpus
+from pelinker.embedding_fusion import (
+    fused_property_vectors_from_paths,
+    property_fused_dataframe_for_linker_order,
+)
+from pelinker.onto import WordGrouping
 from pelinker.transform import EmbeddingTransformer
-from pelinker.util import load_models
+from pelinker.util import load_models, texts_to_vrep
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +51,7 @@ class Linker:
         self.labels_map: dict[str, str] = kwargs.pop("labels_map", dict())
         self._hf_tokenizer = None
         self._hf_model = None
+        self._hf_models_by_type: dict[str, tuple[object, object]] = {}
 
     @classmethod
     def filter_report(cls, report, thr_score):
@@ -63,11 +68,21 @@ class Linker:
             pe_model.embedding_metadata = None
         if "kb_config" not in pe_model.__dict__:
             pe_model.kb_config = None
+        if "_hf_models_by_type" not in pe_model.__dict__:
+            pe_model._hf_models_by_type = {}
         return pe_model
+
+    @staticmethod
+    def _normalize_embedding_paths(
+        embeddings: pathlib.Path | Sequence[pathlib.Path],
+    ) -> list[pathlib.Path]:
+        if isinstance(embeddings, pathlib.Path):
+            return [embeddings.expanduser()]
+        return [pathlib.Path(p).expanduser() for p in embeddings]
 
     def fit(
         self,
-        embeddings: pathlib.Path | None,
+        embeddings: pathlib.Path | Sequence[pathlib.Path] | None,
         transform_config: TransformConfig,
         min_cluster_size: Optional[int] = None,
         kb_labels: Optional[set[str]] = None,
@@ -85,8 +100,11 @@ class Linker:
         b) Clustering the embeddings
 
         Args:
-            embeddings: Path to parquet file containing embeddings (with 'property' and
-                        'embed' columns). If None, this method will run embedding first.
+            embeddings: Path or sequence of paths to parquet file(s) (columns ``property``,
+                        ``embed``; mention-level rows). Order must match
+                        ``embedding_metadata.sources``. Vectors are averaged per property per
+                        file, then concatenated across files for each property (intersection).
+                        If None, ``embed_kb_corpus`` is run (one output file per source).
             transform_config: TransformConfig instance
             min_cluster_size: Minimum cluster size for HDBSCAN. If None and optimize_clustering=False,
                             uses default from transform_config or 20.
@@ -104,7 +122,7 @@ class Linker:
         """
 
         is_temporary = False
-        embeddings_path = None
+        embeddings_paths: list[pathlib.Path] = []
 
         try:
             if embedding_metadata is not None:
@@ -121,62 +139,67 @@ class Linker:
                         "embedding_metadata is required when embeddings is None "
                         "(set on Linker(...) or pass embedding_metadata=... to fit())."
                     )
+                k = len(self.embedding_metadata.sources)
+                for _ in range(k):
+                    tf = tempfile.NamedTemporaryFile(suffix=".parquet", delete=False)
+                    embeddings_paths.append(pathlib.Path(tf.name))
+                    tf.close()
 
-                with tempfile.NamedTemporaryFile(suffix=".parquet", delete=False) as f:
-                    output_parquet_path = pathlib.Path(f.name)
-
-                logger.info("Step (a): Embedding corpus...")
+                logger.info("Step (a): Embedding corpus (%s source(s))...", k)
                 embed_kb_corpus(
                     metadata=self.embedding_metadata,
                     training=embedding_training,
-                    output_parquet_path=output_parquet_path,
+                    output_parquet_paths=embeddings_paths,
                 )
-                embeddings_path = output_parquet_path
                 is_temporary = True
             else:
-                embeddings_path = pathlib.Path(embeddings).expanduser()
+                embeddings_paths = self._normalize_embedding_paths(embeddings)
+                if self.embedding_metadata is not None and len(embeddings_paths) != len(
+                    self.embedding_metadata.sources
+                ):
+                    raise ValueError(
+                        "Number of embedding parquet paths must match "
+                        f"embedding_metadata.sources ({len(self.embedding_metadata.sources)}), "
+                        f"got {len(embeddings_paths)}"
+                    )
                 logger.info(
-                    "Step (a): Skipping embedding, using provided embeddings: "
-                    f"{embeddings_path}"
+                    "Step (a): Using provided embeddings (%s file(s)): %s",
+                    len(embeddings_paths),
+                    embeddings_paths,
                 )
 
-            # Part b) Optimize clustering first if requested (before loading embeddings)
             if optimize_clustering:
                 logger.info("Optimizing clustering parameters...")
                 min_cluster_size = self._optimize_clustering(
-                    embeddings_path,
+                    embeddings_paths,
                     transform_config,
                     kb_labels,
                     clustering_optimization_config,
                 )
 
-            # Load embeddings from file
-            logger.info(f"Loading embeddings from file: {embeddings_path}")
-            embeddings_data, entity_ids = self._load_embeddings_from_file(
-                embeddings_path, kb_labels
+            logger.info(
+                "Loading embeddings from %s parquet file(s)", len(embeddings_paths)
             )
-            # Update vocabulary to match loaded entity_ids
+            embeddings_data, entity_ids = self._load_fused_embeddings_from_files(
+                embeddings_paths, kb_labels
+            )
             self.vocabulary = entity_ids
 
-            # Set transform config
             self.transform_config = transform_config
 
-            # Fit transformer
             self.transformer = EmbeddingTransformer(self.transform_config)
             umap_clustering, _ = self.transformer.fit_transform(embeddings_data)
 
-            # Use optimized or provided min_cluster_size
             if min_cluster_size is None:
-                min_cluster_size = 20  # Default
+                min_cluster_size = 20
 
             self.clusterer = hdbscan.HDBSCAN(
                 min_cluster_size=min_cluster_size,
                 gen_min_span_tree=True,
-                prediction_data=True,  # Enable prediction for new points
+                prediction_data=True,
             )
             cluster_labels = self.clusterer.fit_predict(umap_clustering)
 
-            # Store cluster assignments: entity_id -> cluster_id
             self.cluster_assignments = {
                 entity_id: int(cluster_id)
                 for entity_id, cluster_id in zip(self.vocabulary, cluster_labels)
@@ -192,62 +215,41 @@ class Linker:
 
             return self
         finally:
-            if is_temporary and embeddings_path is not None:
-                try:
-                    embeddings_path.unlink()
-                    logger.debug(f"Removed temporary parquet file: {embeddings_path}")
-                except Exception as e:
-                    logger.warning(f"Failed to remove temporary parquet file: {e}")
+            if is_temporary:
+                for p in embeddings_paths:
+                    try:
+                        p.unlink()
+                        logger.debug("Removed temporary parquet file: %s", p)
+                    except Exception as e:
+                        logger.warning(
+                            "Failed to remove temporary parquet file %s: %s", p, e
+                        )
 
     def _load_embeddings_from_file(
         self, embeddings_path: pathlib.Path, kb_labels: set[str] | None = None
     ) -> tuple[np.ndarray, list[str]]:
+        """Backward-compatible single-file loader; delegates to fused multi-file path."""
+        return self._load_fused_embeddings_from_files([embeddings_path], kb_labels)
+
+    def _load_fused_embeddings_from_files(
+        self,
+        embeddings_paths: Sequence[pathlib.Path],
+        kb_labels: set[str] | None = None,
+    ) -> tuple[np.ndarray, list[str]]:
         """
-        Load embeddings from parquet file, filter to KB entities, and aggregate per property.
-
-        Args:
-            embeddings_path: Path to parquet file with 'property' and 'embed' columns
-            kb_labels: Optional set of KB property labels to filter by
-
-        Returns:
-            Tuple of (embeddings_array, entity_ids_list)
+        Per-file per-property mean embeddings, intersection across sources, concat features.
         """
-        logger.info("Reading embedded corpus and filtering to KB entities...")
-        parquet_table = pq.read_table(embeddings_path)
-        df_parquet = parquet_table.to_pandas()
+        logger.info(
+            "Reading %s parquet source(s) and fusing per-property vectors...",
+            len(embeddings_paths),
+        )
+        fused = fused_property_vectors_from_paths(embeddings_paths, kb_labels)
+        if not fused:
+            raise ValueError("No fused property vectors (empty intersection or inputs)")
 
-        # Filter to only KB properties if labels provided
-        if kb_labels is not None:
-            df_kb_filtered = df_parquet[df_parquet["property"].isin(kb_labels)].copy()
-            logger.info(
-                f"Filtered to {len(df_kb_filtered)} mentions from {len(df_parquet)} total mentions"
-            )
-        else:
-            df_kb_filtered = df_parquet.copy()
-            logger.info(f"Using all {len(df_kb_filtered)} mentions (no KB filter)")
-
-        if len(df_kb_filtered) == 0:
-            raise ValueError("No mentions found for KB properties in corpus")
-
-        # Aggregate embeddings per property (average)
-        logger.info("Aggregating embeddings per property...")
-        # Convert embed lists to numpy arrays for aggregation
-        df_kb_filtered["embed_array"] = df_kb_filtered["embed"].apply(np.array)
-
-        # Group by property and average embeddings
-        property_embeddings = {}
-        for prop_label, group in df_kb_filtered.groupby("property"):
-            embeddings_list = group["embed_array"].tolist()
-            # Stack and average
-            embeddings_array = np.stack(embeddings_list)
-            avg_embedding = np.mean(embeddings_array, axis=0)
-            property_embeddings[prop_label] = avg_embedding
-
-        # Map property labels to entity_ids using labels_map
-        entity_ids = []
-        embeddings_list = []
-        for prop_label in sorted(property_embeddings.keys()):
-            # Find entity_id for this property label
+        entity_ids: list[str] = []
+        embeddings_list: list[np.ndarray] = []
+        for prop_label in sorted(fused.keys()):
             entity_id = None
             for eid, label in self.labels_map.items():
                 if label == prop_label:
@@ -256,53 +258,53 @@ class Linker:
 
             if entity_id is not None:
                 entity_ids.append(entity_id)
-                embeddings_list.append(property_embeddings[prop_label])
+                embeddings_list.append(fused[prop_label])
             else:
                 logger.warning(
-                    f"Property label '{prop_label}' not found in labels_map, skipping"
+                    "Property label '%s' not found in labels_map, skipping", prop_label
                 )
 
         if len(embeddings_list) == 0:
             raise ValueError("No valid embeddings after mapping to entity_ids")
 
         embeddings = np.stack(embeddings_list)
-
         logger.info(
-            f"Embedded {len(embeddings)} KB properties into {embeddings.shape[1]}-dimensional vectors"
+            "Embedded %s KB properties into %s-dimensional fused vectors",
+            len(embeddings),
+            embeddings.shape[1],
         )
-
         return embeddings, entity_ids
 
     def _optimize_clustering(
         self,
-        embeddings_path: pathlib.Path,
+        embeddings_paths: Sequence[pathlib.Path],
         transform_config: TransformConfig,
         kb_labels: set[str] | None,
         optimization_config: Optional[ClusteringOptimizationConfig] = None,
     ) -> int:
         """
-        Optimize min_cluster_size using grid search.
-
-        Args:
-            embeddings_path: Path to parquet file
-            transform_config: TransformConfig instance
-            kb_labels: Set of KB property labels to filter by
-
-        Returns:
-            Optimal min_cluster_size value
+        Optimize min_cluster_size on the same property-level fused matrix as ``fit`` uses
+        (not mention-level; differs from ``estimate_model_clustering`` on raw corpora).
         """
-        from pelinker.analysis import estimate_model_clustering
+        from pelinker.analysis import estimate_clustering_from_frame
 
         effective_config = optimization_config or ClusteringOptimizationConfig()
 
-        logger.info("Fitting clustering model using estimate_model_clustering...")
+        fused = fused_property_vectors_from_paths(embeddings_paths, kb_labels)
+        dfr = property_fused_dataframe_for_linker_order(fused, self.labels_map)
+        if len(dfr) == 0:
+            logger.warning(
+                "Clustering optimization skipped (empty fused property frame)"
+            )
+            return effective_config.min_class_size
 
-        clustering_report = estimate_model_clustering(
-            file_path=embeddings_path,
-            transform_config=transform_config,
+        clustering_report = estimate_clustering_from_frame(
+            dfr,
+            transform_config,
             optimization_config=effective_config,
-            selected_labels=kb_labels,
+            selected_labels=None,
             all_metrics_dfs=None,
+            aggregation_level="property",
         )
 
         if clustering_report is None:
@@ -311,36 +313,55 @@ class Linker:
             )
             return effective_config.min_class_size
 
-        best_min_cluster_size = clustering_report.best_size
-        best_score = clustering_report.best_score
         logger.info(
-            f"Optimal min_cluster_size: {best_min_cluster_size} (score: {best_score:.3f})"
+            "Optimal min_cluster_size: %s (score: %.3f)",
+            clustering_report.best_size,
+            clustering_report.best_score,
         )
+        return clustering_report.best_size
 
-        return best_min_cluster_size
-
-    def _ensure_hf_models(self, *, use_gpu: bool = False) -> None:
-        """Load HuggingFace tokenizer+encoder once, matching ``embed_kb_corpus`` / first metadata source."""
+    def _ensure_hf_models_for_sources(self, *, use_gpu: bool = False) -> None:
+        """Load tokenizer+encoder once per distinct ``model_type`` in metadata sources."""
         if self.embedding_metadata is None:
             raise ValueError(
                 "embedding_metadata is required for predict(); set it during fit() or on the Linker."
             )
-        if self._hf_tokenizer is None or self._hf_model is None:
-            primary = self.embedding_metadata.sources[0]
-            if len(self.embedding_metadata.sources) > 1:
-                logger.warning(
-                    "Multiple embedding sources in metadata; only the first source is used "
-                    "(concatenation / fusion not implemented yet)."
+        for src in self.embedding_metadata.sources:
+            mt = src.model_type
+            if mt not in self._hf_models_by_type:
+                logger.info("Loading encoder for predict: %s", mt)
+                self._hf_models_by_type[mt] = load_models(mt, sentence=False)
+        if use_gpu and torch.cuda.is_available():
+            for _mt, (_tok, model) in self._hf_models_by_type.items():
+                model.to("cuda")
+        elif use_gpu:
+            logger.warning("CUDA is not available; predict runs on CPU")
+
+    @staticmethod
+    def _extract_ordered_mention_tensors(report_batch) -> list[torch.Tensor]:
+        word_groupings = [WordGrouping.W1, WordGrouping.W2, WordGrouping.W3]
+        tt_list: list[torch.Tensor] = []
+        for wg in word_groupings:
+            if wg not in report_batch.available_groupings():
+                continue
+            expression_container = report_batch[wg]
+            for expr_holder in expression_container.expression_data:
+                for _expr, tt in zip(expr_holder.expressions, expr_holder.tt):
+                    tt_list.append(tt)
+        return tt_list
+
+    @staticmethod
+    def _mention_tensor_lists_aligned(
+        lists: list[list[torch.Tensor]],
+    ) -> None:
+        n0 = len(lists[0])
+        for i, lst in enumerate(lists[1:], start=1):
+            if len(lst) != n0:
+                raise ValueError(
+                    f"Mention tensor count mismatch between fused sources: "
+                    f"source 0 has {n0}, source {i} has {len(lst)}. "
+                    "Use the same model_type for all sources if spans must align."
                 )
-            logger.info("Loading encoder for predict: %s", primary.model_type)
-            self._hf_tokenizer, self._hf_model = load_models(
-                primary.model_type, sentence=False
-            )
-        if use_gpu:
-            if torch.cuda.is_available():
-                self._hf_model.to("cuda")
-            else:
-                logger.warning("CUDA is not available; predict runs on CPU")
 
     def predict(
         self,
@@ -354,68 +375,79 @@ class Linker:
         """
         Predict entities for input texts.
 
+        With multiple ``embedding_metadata.sources``, runs ``texts_to_vrep`` per source
+        (cached by ``model_type``), concatenates mention tensors along the feature axis in
+        source order, then applies the fitted transformer and clusterer. Mention counts
+        must match across sources (typically the same ``model_type`` for all sources).
         """
-        self._ensure_hf_models(use_gpu=use_gpu)
-        primary = self.embedding_metadata.sources[0]
-        report_batch = texts_to_vrep(
-            texts,
-            self._hf_tokenizer,
-            self._hf_model,
-            layers_spec=primary.layers_spec,
-            word_modes=[WordGrouping.W1, WordGrouping.W2, WordGrouping.W3],
-            nlp=nlp,
-            max_length=max_length,
-        )
+        if self.embedding_metadata is None:
+            raise ValueError(
+                "embedding_metadata is required for predict(); set it during fit() or on the Linker."
+            )
+        self._ensure_hf_models_for_sources(use_gpu=use_gpu)
 
-        # Extract embeddings and mention metadata across all supported word groupings.
         word_groupings = [WordGrouping.W1, WordGrouping.W2, WordGrouping.W3]
-        tt_list = []
-        vocabulary = []
-        for wg in word_groupings:
-            if wg not in report_batch.available_groupings():
-                continue
+        report_batches: list = []
+        for src in self.embedding_metadata.sources:
+            tok, model = self._hf_models_by_type[src.model_type]
+            rb = texts_to_vrep(
+                texts,
+                tok,
+                model,
+                layers_spec=src.layers_spec,
+                word_modes=word_groupings,
+                nlp=nlp,
+                max_length=max_length,
+            )
+            report_batches.append(rb)
 
-            expression_container = report_batch[wg]
+        primary = report_batches[0]
+        tt_lists = [self._extract_ordered_mention_tensors(rb) for rb in report_batches]
+        self._mention_tensor_lists_aligned(tt_lists)
+
+        vocabulary: list[dict[str, object]] = []
+        for wg in word_groupings:
+            if wg not in primary.available_groupings():
+                continue
+            expression_container = primary[wg]
             for expr_holder in expression_container.expression_data:
-                # expr_holder is ExpressionHolder with tt (tensor) and expressions
-                for expr, tt in zip(expr_holder.expressions, expr_holder.tt):
-                    tt_list.append(tt)
-                    # Create item dict with mention text and position info
+                for expr, _tt in zip(expr_holder.expressions, expr_holder.tt):
                     mention_text = ""
                     if (
                         expr.itext is not None
-                        and expr.itext < len(report_batch.texts)
+                        and expr.itext < len(primary.texts)
                         and expr.a is not None
                         and expr.b is not None
                     ):
-                        text = report_batch.texts[expr.itext]
+                        text = primary.texts[expr.itext]
                         if expr.ichunk is not None:
-                            # Map chunk position to text position
-                            offset = report_batch.chunk_mapper.map_chunk_to_text(
+                            offset = primary.chunk_mapper.map_chunk_to_text(
                                 expr.itext, expr.ichunk
                             )
                             mention_text = text[offset + expr.a : offset + expr.b]
                         else:
                             mention_text = text[expr.a : expr.b]
+                    vocabulary.append(
+                        {
+                            "mention": mention_text,
+                            "a": expr.a,
+                            "b": expr.b,
+                            "itext": expr.itext,
+                            "ichunk": expr.ichunk,
+                            "word_grouping": wg,
+                        }
+                    )
 
-                    item_dict = {
-                        "mention": mention_text,
-                        "a": expr.a,
-                        "b": expr.b,
-                        "itext": expr.itext,
-                        "ichunk": expr.ichunk,
-                        "word_grouping": wg,
-                    }
-                    vocabulary.append(item_dict)
+        if not tt_lists[0]:
+            return {"entities": [], "word_groupings": {}}
 
-        if not tt_list:
-            # No mentions found
-            report = {"entities": [], "word_groupings": {}}
-            return report
+        fused_rows: list[torch.Tensor] = []
+        for i in range(len(tt_lists[0])):
+            fused_rows.append(
+                torch.cat([tts[i] for tts in tt_lists], dim=-1),
+            )
+        tt = torch.stack(fused_rows, dim=0)
 
-        tt = torch.stack(tt_list)
-
-        # Use clustering-based approach if available
         if self.transformer is not None and self.clusterer is not None:
             kb_items = self._predict_with_clustering(
                 tt, vocabulary, threshold=threshold
@@ -425,16 +457,14 @@ class Linker:
                 "Neither transformer/clusterer nor index is set. Call fit() first."
             )
 
-        # Convert to dict format for compatibility
-        report = {
+        return {
             "entities": kb_items,
             "word_groupings": {
-                wg: report_batch[wg]
+                wg: primary[wg]
                 for wg in word_groupings
-                if wg in report_batch.available_groupings()
+                if wg in primary.available_groupings()
             },
         }
-        return report
 
     def _predict_with_clustering(
         self, embeddings: torch.Tensor, vocabulary: list, threshold: float = 0.0

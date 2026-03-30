@@ -1,16 +1,17 @@
 import pathlib
+from collections.abc import Iterable, Mapping, Sequence
+from typing import Literal
 
 import numpy as np
 import pandas as pd
 import torch
 import hdbscan
+from pelinker.embedding_fusion import mention_level_concat_frames
 from pelinker.io import read_batches
 from pelinker.reporting import ClusteringReport
 from sklearn.metrics import confusion_matrix
 from scipy.optimize import linear_sum_assignment
 from torch.nn import functional as F
-from collections.abc import Mapping
-from typing import Iterable
 from numpy.random import RandomState
 
 from pelinker.config import ClusteringOptimizationConfig, TransformConfig
@@ -376,101 +377,83 @@ def compute_hungarian_accuracy(y_true: np.ndarray, y_pred: np.ndarray) -> float:
     return float(accuracy)
 
 
-def estimate_model_clustering(
-    file_path: pathlib.Path,
+def _read_batches_concat(
+    path: pathlib.Path,
+    config: ClusteringOptimizationConfig,
+) -> pd.DataFrame | None:
+    if not path.exists():
+        return None
+    agg: list[pd.DataFrame] = []
+    try:
+        for i, batch in enumerate(
+            read_batches(path.as_posix(), batch_size=config.batch_size)
+        ):
+            agg.append(batch)
+            if config.head is not None and i >= config.head - 1:
+                break
+    except Exception:
+        return None
+    if not agg:
+        return None
+    return pd.concat(agg, ignore_index=True)
+
+
+def estimate_clustering_from_frame(
+    dfr: pd.DataFrame,
     transform_config: TransformConfig,
     optimization_config: ClusteringOptimizationConfig | None = None,
     *,
     selected_labels: set[str] | None = None,
     all_metrics_dfs: list[pd.DataFrame] | None = None,
-):
+    aggregation_level: Literal["mention", "property"] = "mention",
+) -> ClusteringReport | None:
     """
-    Estimate optimal cluster size for a single model/layer file.
+    Run clustering grid search and optional aggregation on a pre-built frame with an ``embed`` column.
 
-    Args:
-        file_path: Path to parquet file
-        transform_config: TransformConfig instance specifying transformation parameters
-        optimization_config: Clustering optimization settings. If None, defaults
-            to ClusteringOptimizationConfig().
-        selected_labels: Optional set of labels from selected labels KB to filter by
-        all_metrics_dfs: Optional list of metrics DataFrames from previous samples.
-                         If provided, will aggregate and find optimum from grid.
-                         If None, evaluates grid for this sample only.
-
-    Returns:
-        ClusteringReport or None: Report containing clustering results, or None if processing failed
+    ``aggregation_level="property"`` expects one row per distinct ``property`` (e.g. fused
+    KB vectors) and skips min-mention-per-property trimming used for mention-level corpora.
     """
 
     config = optimization_config or ClusteringOptimizationConfig()
-    rns: RandomState = config.rns
 
-    # Simple check: if file doesn't exist (handles broken symlinks), skip it
-    if not file_path.exists():
-        return None
-    agg = []
-
-    try:
-        for i, batch in enumerate(
-            read_batches(file_path.as_posix(), batch_size=config.batch_size)
-        ):
-            sample = batch.sample(frac=config.frac, random_state=rns)
-            agg += [sample]
-            if config.head is not None and i >= config.head - 1:
-                break
-    except Exception:
+    if "embed" not in dfr.columns or "property" not in dfr.columns:
         return None
 
-    if not agg:
-        return None
-
-    dfr = pd.concat(agg)
-
-    umap_columns = get_umap_columns(transform_config)
-
-    # Filter by selected labels if provided
     if selected_labels is not None:
         dfr = dfr.loc[dfr["property"].isin(selected_labels)].copy()
         if len(dfr) == 0:
             return None
 
-    # trim rare mentions
-    mention_count = dfr["property"].value_counts()
-    low_count_properties = mention_count[
-        ~(mention_count >= config.min_class_size)
-    ].index.to_list()
+    if aggregation_level == "mention":
+        mention_count = dfr["property"].value_counts()
+        low_count_properties = mention_count[
+            ~(mention_count >= config.min_class_size)
+        ].index.to_list()
+        dfr = dfr.loc[~dfr["property"].isin(low_count_properties)].copy()
+        if len(dfr) == 0:
+            return None
 
-    dfr = dfr.loc[~dfr["property"].isin(low_count_properties)].copy()
+    number_properties = int(dfr["property"].nunique())
 
-    if len(dfr) == 0:
-        return None
-
-    # Get number of unique properties before transformation
-    number_properties = dfr["property"].nunique()
-
+    umap_columns = get_umap_columns(transform_config)
     dfr2 = transform_embeddings(dfr, config=transform_config, embed_column="embed")
 
-    # Grid evaluation
     sizes = list(np.arange(int(0.5 * config.min_class_size), config.max_scale, 5))
-
     metrics_df = evaluate_cluster_size_grid(dfr2, umap_columns, sizes)
 
-    # Find optimal cluster size
     if all_metrics_dfs is not None:
-        # Aggregate with previous samples and find optimum from grid
         all_metrics_dfs.append(metrics_df)
         aggregated = aggregate_grid_metrics(all_metrics_dfs)
         best_size, best_score, best_score_std = find_optimal_from_grid(
             aggregated, method=config.optimization_method
         )
     else:
-        # Single sample: just use max DBCV from this sample
         if len(metrics_df) == 0:
             return None
         best_idx = metrics_df["dbcv"].idxmax()
         best_size = int(metrics_df.loc[best_idx, "min_cluster_size"])
         best_score = float(metrics_df.loc[best_idx, "dbcv"])
 
-    # Apply final clustering with best size
     clusterer = hdbscan.HDBSCAN(min_cluster_size=best_size, gen_min_span_tree=True)
     labels = clusterer.fit_predict(dfr2[umap_columns])
     dfr2_final = dfr2.copy()
@@ -478,11 +461,8 @@ def estimate_model_clustering(
         labels, columns=["class"], index=dfr2_final.index
     )
 
-    # Compute Hungarian matching accuracy
-    # Use property column as true labels and class column as predicted clusters
     hungarian_acc = None
     if "property" in dfr2_final.columns and "class" in dfr2_final.columns:
-        # Convert property labels to numeric for confusion matrix
         property_labels = dfr2_final["property"].astype("category").cat.codes.values
         cluster_labels = dfr2_final["class"].values
         hungarian_acc = compute_hungarian_accuracy(property_labels, cluster_labels)
@@ -494,6 +474,89 @@ def estimate_model_clustering(
         metrics_df=metrics_df,
         df=dfr2_final,
         hungarian_accuracy=hungarian_acc,
+    )
+
+
+def estimate_model_clustering(
+    transform_config: TransformConfig,
+    optimization_config: ClusteringOptimizationConfig | None = None,
+    *,
+    file_path: pathlib.Path | None = None,
+    file_paths: Sequence[pathlib.Path] | None = None,
+    dfr: pd.DataFrame | None = None,
+    selected_labels: set[str] | None = None,
+    all_metrics_dfs: list[pd.DataFrame] | None = None,
+):
+    """
+    Estimate optimal cluster size from parquet file(s) or a preloaded DataFrame.
+
+    Provide exactly one of ``file_path``, ``file_paths``, or ``dfr``. For multiple parquets,
+    rows are inner-joined on (pmid, property, mention) and ``embed`` vectors are concatenated
+    in path order (must match ``EmbeddingModelMetadata.sources``). Sampling ``frac`` / ``head``
+    are applied while loading each file (batches), then ``frac`` is applied once on the merged
+    mention-level frame.
+
+    Args:
+        transform_config: TransformConfig instance specifying transformation parameters
+        optimization_config: Clustering optimization settings. If None, defaults
+            to ClusteringOptimizationConfig().
+        file_path: Single parquet path (backward-compatible entry point).
+        file_paths: Multiple parquets to fuse at mention level before clustering.
+        dfr: Optional pre-built frame (e.g. fused) with ``property`` and ``embed`` columns.
+        selected_labels: Optional set of labels from selected labels KB to filter by
+        all_metrics_dfs: Optional list of metrics DataFrames from previous samples.
+
+    Returns:
+        ClusteringReport or None if processing failed
+    """
+    config = optimization_config or ClusteringOptimizationConfig()
+    rns: RandomState = config.rns
+
+    sources = [file_path is not None, file_paths is not None, dfr is not None]
+    if sum(bool(x) for x in sources) != 1:
+        raise ValueError(
+            "Provide exactly one of file_path=, file_paths=, or dfr= to estimate_model_clustering"
+        )
+
+    frame: pd.DataFrame | None
+    if dfr is not None:
+        frame = dfr.copy()
+    elif file_paths is not None:
+        paths = list(file_paths)
+        if len(paths) == 0:
+            return None
+        parts: list[pd.DataFrame] = []
+        for p in paths:
+            part = _read_batches_concat(p, config)
+            if part is None or len(part) == 0:
+                return None
+            parts.append(part)
+        if len(parts) == 1:
+            frame = parts[0]
+        else:
+            try:
+                frame = mention_level_concat_frames(parts)
+            except Exception:
+                return None
+        if frame is None or len(frame) == 0:
+            return None
+    else:
+        assert file_path is not None
+        frame = _read_batches_concat(file_path, config)
+        if frame is None or len(frame) == 0:
+            return None
+
+    frame = frame.sample(frac=config.frac, random_state=rns, replace=False)
+    if len(frame) == 0:
+        return None
+
+    return estimate_clustering_from_frame(
+        frame,
+        transform_config,
+        optimization_config=config,
+        selected_labels=selected_labels,
+        all_metrics_dfs=all_metrics_dfs,
+        aggregation_level="mention",
     )
 
 

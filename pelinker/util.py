@@ -8,7 +8,6 @@ from typing import List
 import tqdm
 from transformers import AutoModel, AutoTokenizer
 from sentence_transformers import SentenceTransformer
-import faiss
 import torch
 import pandas as pd
 from sklearn.metrics import accuracy_score
@@ -476,19 +475,6 @@ def texts_to_vrep(
             )
         ]
     return ReportBatch(chunk_mapper=chunk_mapper, texts=texts, _data=data)
-
-
-def report2kb(report, wg):
-    wg_current = report["word_groupings"][wg]
-    tt_list = []
-    vocabulary = []
-    for sentence in wg_current:
-        tt_list += [t for _, t in sentence]
-        vocabulary += [item["mention"] for item, _ in sentence]
-    tt_basis = torch.concat(tt_list)
-    index = faiss.IndexFlatIP(tt_basis.shape[1])
-    index.add(tt_basis)
-    return vocabulary, index
 
 
 def merge_wbs(word_boundaries, window) -> list[tuple[int, int]]:
