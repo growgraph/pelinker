@@ -112,7 +112,7 @@ class ClusteringOptimizationConfig:
     """Configuration for clustering optimization grid search."""
 
     min_class_size: int = 20
-    max_scale: int = 120
+    max_scale: int = 100
     rns: RandomState = field(default_factory=lambda: RandomState(seed=13))
     frac: float = 1.0
     head: int | None = None

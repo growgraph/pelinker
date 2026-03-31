@@ -1950,6 +1950,7 @@ dependencies = [
   {name = "hdbscan"},
   {name = "hydra-core"},
   {name = "joblib"},
+  {name = "pip"},
   {name = "pyarrow"},
   {name = "rich"},
   {name = "scikit-optimize"},
@@ -1980,6 +1981,7 @@ requires-dist = [
   {name = "hydra-core", specifier = ">=1.3.2"},
   {name = "joblib", specifier = ">=1.4.2,<2"},
   {name = "pandas", specifier = ">=2.3.3"},
+  {name = "pip", specifier = ">=26.0.1"},
   {name = "pyarrow", specifier = ">=23.0.1"},
   {name = "rich", specifier = ">=14.1.0"},
   {name = "scikit-learn", specifier = ">=1.5.0,<2"},
@@ -2100,6 +2102,15 @@ wheels = [
   {hash = "sha256:fbfa2a7c10cc2623f412753cddf391c7f971c52ca40a3f65dc5039b2939e8563", size = 7031448, upload-time = "2026-02-11T04:20:44.696Z", url = "https://files.pythonhosted.org/packages/31/03/bef822e4f2d8f9d7448c133d0a18185d3cce3e70472774fffefe8b0ed562/pillow-12.1.1-cp311-cp311-win_amd64.whl"},
   {hash = "sha256:fc354a04072b765eccf2204f588a7a532c9511e8b9c7f900e1b64e3e33487090", size = 8038007, upload-time = "2026-02-11T04:20:34.225Z", url = "https://files.pythonhosted.org/packages/d5/e2/53c43334bbbb2d3b938978532fbda8e62bb6e0b23a26ce8592f36bcc4987/pillow-12.1.1-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.whl"},
   {hash = "sha256:fc44ef1f3de4f45b50ccf9136999d71abb99dca7706bc75d222ed350b9fd2289", size = 8041706, upload-time = "2026-02-11T04:21:17.723Z", url = "https://files.pythonhosted.org/packages/95/f4/86f51b8745070daf21fd2e5b1fe0eb35d4db9ca26e6d58366562fb56a743/pillow-12.1.1-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.whl"}
+]
+
+[[package]]
+name = "pip"
+sdist = {hash = "sha256:c4037d8a277c89b320abe636d59f91e6d0922d08a05b60e85e53b296613346d8", size = 1812747, upload-time = "2026-02-05T02:20:18.702Z", url = "https://files.pythonhosted.org/packages/48/83/0d7d4e9efe3344b8e2fe25d93be44f64b65364d3c8d7bc6dc90198d5422e/pip-26.0.1.tar.gz"}
+source = {registry = "https://pypi.org/simple"}
+version = "26.0.1"
+wheels = [
+  {hash = "sha256:bdb1b08f4274833d62c1aa29e20907365a2ceb950410df15fc9521bad440122b", size = 1787723, upload-time = "2026-02-05T02:20:16.416Z", url = "https://files.pythonhosted.org/packages/de/f0/c81e05b613866b76d2d1066490adf1a3dbc4ee9d9c839961c3fc8a6997af/pip-26.0.1-py3-none-any.whl"}
 ]
 
 [[package]]

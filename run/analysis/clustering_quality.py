@@ -110,7 +110,7 @@ from pelinker.transform import TransformConfig
 @click.option(
     "--max-scale",
     type=click.INT,
-    default=120,
+    default=60,
     show_default=True,
     help="Maximum value for grid evaluation of min_cluster_size",
 )
