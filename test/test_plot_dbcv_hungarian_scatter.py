@@ -16,8 +16,8 @@ from pelinker.plotting import (
 
 def test_layer_spec_code() -> None:
     assert _layer_spec_code("m1", "2") == "2"
-    assert _layer_spec_code("fusion2", "bluebert/2+pubmedbert/3") == "2+3"
-    assert _layer_spec_code("fusion3", "a/2+b/2+c/3") == "2+2+3"
+    assert _layer_spec_code("fusion2", "bluebert/2+pubmedbert/3") == "2,3"
+    assert _layer_spec_code("fusion3", "a/2+b/2+c/3") == "2,2,s3"
 
 
 def test_plot_dbcv_vs_hungarian_from_grid_writes_file(tmp_path: pathlib.Path) -> None:
