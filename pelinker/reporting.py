@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
+import math
 
 import numpy as np
 import pandas as pd
@@ -99,6 +100,44 @@ class ClusteringSearchSummaryRow:
             row["hungarian_accuracy"] = ha.mean
             row["hungarian_accuracy_std"] = ha.std
         return row
+
+
+def clustering_search_summary_row_from_flat_dict(
+    row: dict[str, str | float | None],
+) -> ClusteringSearchSummaryRow:
+    """Reconstruct :class:`ClusteringSearchSummaryRow` from :meth:`to_flat_dict` output."""
+    ha_raw = row.get("hungarian_accuracy")
+    hungarian_block: MeanWithUncertainty | None
+    if ha_raw is None or (isinstance(ha_raw, float) and math.isnan(ha_raw)):
+        hungarian_block = None
+    else:
+        hungarian_block = MeanWithUncertainty(
+            mean=float(ha_raw),
+            std=float(row.get("hungarian_accuracy_std") or 0.0),
+        )
+    return ClusteringSearchSummaryRow(
+        model=str(row["model"]),
+        layer=str(row["layer"]),
+        hyperparameters=HyperparameterSearchStats(
+            min_cluster_size=MeanWithUncertainty(
+                mean=float(row["best_size"]),
+                std=float(row["best_size_std"] or 0.0),
+            ),
+        ),
+        number_properties=MeanWithUncertainty(
+            mean=float(row["number_properties"]),
+            std=float(row["number_properties_std"] or 0.0),
+        ),
+        n_clusters_emergent=MeanWithUncertainty(
+            mean=float(row["n_clusters_emergent"]),
+            std=float(row["n_clusters_emergent_std"] or 0.0),
+        ),
+        dbcv=MeanWithUncertainty(
+            mean=float(row["best_score"]),
+            std=float(row["best_score_std"] or 0.0),
+        ),
+        hungarian_accuracy=hungarian_block,
+    )
 
 
 def summarize_clustering_reports_for_search(

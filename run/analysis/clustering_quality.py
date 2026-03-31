@@ -1,20 +1,14 @@
 import click
+import gc
 import pathlib
 
 import pandas as pd
 from numpy.random import RandomState
-from pelinker.config import ClusteringOptimizationConfig
-from pelinker.plotting import (
-    plot_metrics_with_error_bars,
-    plot_heatmap,
-    plot_umap_viz,
-    plot_metrics,
-)
 from rich.console import Console
 from rich.progress import (
+    BarColumn,
     Progress,
     SpinnerColumn,
-    BarColumn,
     TextColumn,
     TimeElapsedColumn,
 )
@@ -25,13 +19,217 @@ from pelinker.clustering_fusion_ranking import (
     singleton_items_by_dbcv_score,
     top_k_fusion_candidates_by_dbcv_proxy,
 )
+from pelinker.clustering_quality_checkpoint import (
+    ClusteringQualityCheckpoint,
+    DEFAULT_CHECKPOINT_NAME,
+    FailureRecord,
+    RunMode,
+    combination_key_from_members,
+    compute_run_fingerprint,
+    fingerprint_config_from_cli,
+    load_checkpoint,
+    model_layer_from_singleton_key,
+    new_checkpoint,
+    reconcile_fusion_checkpoint_params,
+    save_checkpoint_atomic,
+    score_by_model_layer_from_checkpoint,
+    utc_now_iso,
+)
+from pelinker.config import ClusteringOptimizationConfig
 from pelinker.ops import parse_model_filename
+from pelinker.plotting import (
+    GRID_COL_CHOSEN_MIN_CLUSTER_SIZE,
+    GRID_COL_SAMPLE_BEST_DBCV,
+    GRID_COL_SAMPLE_HUNGARIAN,
+    plot_dbcv_vs_hungarian_from_grid,
+    plot_heatmap,
+    plot_metrics,
+    plot_metrics_with_error_bars,
+    plot_umap_viz,
+)
 from pelinker.reporting import (
     ClusteringReport,
     ClusteringSearchSummaryRow,
+    clustering_search_summary_row_from_flat_dict,
     summarize_clustering_reports_for_search,
 )
 from pelinker.transform import TransformConfig
+
+
+def _path_by_model_layer(
+    valid_files: list[tuple[pathlib.Path, str, str]],
+) -> dict[tuple[str, str], pathlib.Path]:
+    return {(m, layer): fp for fp, m, layer in valid_files}
+
+
+def _parse_fusion_members(layer_label: str) -> list[tuple[str, str]]:
+    members: list[tuple[str, str]] = []
+    for part in layer_label.split("+"):
+        p = part.strip()
+        model, _, layer = p.partition("/")
+        members.append((model, layer))
+    return sorted(members, key=lambda t: (t[0], t[1]))
+
+
+def _ordered_paths_for_fusion(
+    path_by_ml: dict[tuple[str, str], pathlib.Path],
+    members: list[tuple[str, str]],
+) -> list[pathlib.Path]:
+    return [path_by_ml[t] for t in members]
+
+
+def _update_leaderboard_fixed(
+    summary_row: ClusteringSearchSummaryRow,
+    *,
+    best_overall_score: float | None,
+    best_overall_model: str | None,
+    best_overall_layer: str | None,
+    best_per_model: dict[str, float],
+) -> tuple[float | None, str | None, str | None, dict[str, float]]:
+    mean_dbcv = summary_row.dbcv.mean
+    model, layer = summary_row.model, summary_row.layer
+    if not model.startswith("fusion"):
+        if best_overall_score is None or mean_dbcv > best_overall_score:
+            best_overall_score = mean_dbcv
+            best_overall_model = model
+            best_overall_layer = layer
+        if model not in best_per_model or mean_dbcv > best_per_model[model]:
+            best_per_model[model] = mean_dbcv
+    return best_overall_score, best_overall_model, best_overall_layer, best_per_model
+
+
+def _recompute_leaderboard_from_results(
+    results: list[ClusteringSearchSummaryRow],
+) -> tuple[float | None, str | None, str | None, dict[str, float]]:
+    best_overall_score = None
+    best_overall_model = None
+    best_overall_layer = None
+    best_per_model: dict[str, float] = {}
+    for r in results:
+        best_overall_score, best_overall_model, best_overall_layer, best_per_model = (
+            _update_leaderboard_fixed(
+                r,
+                best_overall_score=best_overall_score,
+                best_overall_model=best_overall_model,
+                best_overall_layer=best_overall_layer,
+                best_per_model=best_per_model,
+            )
+        )
+    return best_overall_score, best_overall_model, best_overall_layer, best_per_model
+
+
+def _materialize_best_report(
+    top: ClusteringSearchSummaryRow,
+    *,
+    valid_files: list[tuple[pathlib.Path, str, str]],
+    path_by_ml: dict[tuple[str, str], pathlib.Path],
+    transform_config: TransformConfig,
+    optimization_config: ClusteringOptimizationConfig,
+    selected_labels: set[str] | None,
+) -> ClusteringReport | None:
+    if top.model.startswith("fusion"):
+        members = _parse_fusion_members(top.layer)
+        try:
+            ordered_paths = _ordered_paths_for_fusion(path_by_ml, members)
+        except KeyError:
+            return None
+        return estimate_model_clustering(
+            transform_config=transform_config,
+            optimization_config=optimization_config,
+            file_paths=ordered_paths,
+            selected_labels=selected_labels,
+            all_metrics_dfs=None,
+        )
+    key = (top.model, top.layer)
+    path = path_by_ml.get(key)
+    if path is None:
+        return None
+    return estimate_model_clustering(
+        transform_config=transform_config,
+        optimization_config=optimization_config,
+        file_path=path,
+        selected_labels=selected_labels,
+        all_metrics_dfs=None,
+    )
+
+
+def _metrics_df_with_grid_sample_columns(
+    report: ClusteringReport,
+    *,
+    model: str,
+    layer: str,
+    sample_idx: int,
+) -> pd.DataFrame:
+    """Grid rows for ``results_grid_per_sample.csv`` with per-sample DBCV / Hungarian for scatter."""
+    ha = report.hungarian_accuracy
+    return report.metrics_df.assign(
+        model=model,
+        layer=layer,
+        sample_idx=sample_idx,
+        **{
+            GRID_COL_CHOSEN_MIN_CLUSTER_SIZE: int(
+                report.hyperparameters.min_cluster_size
+            ),
+            GRID_COL_SAMPLE_BEST_DBCV: float(report.best_score),
+            GRID_COL_SAMPLE_HUNGARIAN: float("nan") if ha is None else float(ha),
+        },
+    )
+
+
+def _mark_combination_done(
+    ckpt: ClusteringQualityCheckpoint,
+    ckpt_path: pathlib.Path,
+    *,
+    combination_key: str,
+    summary: ClusteringSearchSummaryRow,
+    singleton_score_key: str | None,
+) -> None:
+    if combination_key not in ckpt.completed_combinations:
+        ckpt.completed_combinations.append(combination_key)
+    flat = summary.to_flat_dict()
+    ckpt.summaries_by_key[combination_key] = dict(flat)
+    if singleton_score_key is not None:
+        ckpt.singleton_scores_by_key[singleton_score_key] = float(summary.dbcv.mean)
+    save_checkpoint_atomic(ckpt_path, ckpt)
+
+
+def _record_failure(
+    ckpt: ClusteringQualityCheckpoint,
+    ckpt_path: pathlib.Path,
+    *,
+    combination_key: str,
+    message: str,
+) -> None:
+    ckpt.failures.append(
+        FailureRecord(combination_key=combination_key, error=message, at=utc_now_iso())
+    )
+    save_checkpoint_atomic(ckpt_path, ckpt)
+
+
+def _singleton_score_by_model_layer_from_checkpoint(
+    ckpt: ClusteringQualityCheckpoint,
+) -> dict[tuple[str, str], float]:
+    """Mean DBCV per (model, layer) for fusion proxy (singletons only)."""
+    out = score_by_model_layer_from_checkpoint(ckpt.singleton_scores_by_key)
+    if out:
+        return out
+    for key, row in ckpt.summaries_by_key.items():
+        if not key.startswith("1:"):
+            continue
+        ml = model_layer_from_singleton_key(key)
+        score = row.get("best_score")
+        if score is not None:
+            out[ml] = float(score)
+    return out
+
+
+def _results_from_checkpoint(
+    ckpt: ClusteringQualityCheckpoint,
+) -> list[ClusteringSearchSummaryRow]:
+    return [
+        clustering_search_summary_row_from_flat_dict(dict(row))
+        for _k, row in sorted(ckpt.summaries_by_key.items(), key=lambda item: item[0])
+    ]
 
 
 @click.command()
@@ -131,6 +329,32 @@ from pelinker.transform import TransformConfig
     show_default=True,
     help=("Same as --fusion-pairs but for three-way fusions (costly). 0 disables."),
 )
+@click.option(
+    "--resume/--no-resume",
+    default=True,
+    show_default=True,
+    help=(
+        "If the checkpoint file exists and matches the run fingerprint, skip completed work. "
+        "If the file is missing, start fresh and create it. Use --no-resume to ignore an "
+        "existing checkpoint and reinitialize (overwrites on save)."
+    ),
+)
+@click.option(
+    "--checkpoint-path",
+    type=click.Path(path_type=pathlib.Path),
+    default=None,
+    help=f"Checkpoint JSON path (default: <output-dir>/{DEFAULT_CHECKPOINT_NAME})",
+)
+@click.option(
+    "--mode",
+    type=click.Choice(["single", "fusion2", "fusion3", "all"]),
+    default="all",
+    show_default=True,
+    help=(
+        "single: only single-embedding combinations; fusion2/fusion3: only that fusion order "
+        "(requires prior singleton scores in checkpoint); all: singletons then enabled fusions."
+    ),
+)
 def main(
     input_dir: pathlib.Path,
     output_dir: pathlib.Path,
@@ -139,7 +363,7 @@ def main(
     min_class_size: int,
     seed: int,
     frac: float,
-    head: int,
+    head: int | None,
     batch_size: int,
     n_sample: int,
     prefix: str,
@@ -147,6 +371,9 @@ def main(
     max_scale: int,
     fusion_pairs: int,
     fusion_triples: int,
+    resume: bool,
+    checkpoint_path: pathlib.Path | None,
+    mode: RunMode,
 ):
     """
     Process multiple parquet files and compute optimal cluster sizes.
@@ -157,13 +384,13 @@ def main(
     evaluates fused embeddings: pairs/triples with the highest sum of singleton DBCV
     scores (see ``--fusion-pairs`` / ``--fusion-triples``), then clusters the
     concatenated mention-level vectors via ``estimate_model_clustering(..., file_paths=...)``.
+
+    Checkpointing is on by default (``--resume``): progress is saved under the output directory.
+    Use ``--no-resume`` to discard the on-disk checkpoint and start from an empty state.
     """
-    # Configure console to work better in PyCharm and other IDEs
-    # Use legacy_windows=False and force_terminal to ensure progress bars work
     console = Console(force_terminal=True, width=120, legacy_windows=False)
     input_dir = input_dir.expanduser()
 
-    # Load selected labels KB if provided
     selected_labels: set[str] | None = None
     if selected_labels_kb_path is not None:
         selected_labels_kb_path = selected_labels_kb_path.expanduser()
@@ -178,8 +405,6 @@ def main(
         )
         try:
             df_selected = pd.read_csv(selected_labels_kb_path)
-            # Extract labels from the selected labels KB
-            # The file should have a 'label' column
             if "label" not in df_selected.columns:
                 console.print(
                     f"[red]Selected labels KB file must have a 'label' column. Found columns: {list(df_selected.columns)}[/red]"
@@ -193,200 +418,151 @@ def main(
             console.print(f"[red]Error loading selected labels KB: {e}[/red]")
             return
 
-    # Set up output directory
     if output_dir is None:
         output_dir = input_dir
     else:
         output_dir = output_dir.expanduser()
     output_dir.mkdir(parents=True, exist_ok=True)
+    output_path = output_dir / "results.csv"
+    detail_path = output_dir / "results_grid_per_sample.csv"
 
-    # Create transform config from CLI options
+    fp_payload = fingerprint_config_from_cli(
+        input_dir=input_dir,
+        umap_dim=umap_dim,
+        pca_components=pca_components,
+        min_class_size=min_class_size,
+        seed=seed,
+        frac=frac,
+        head=head,
+        batch_size=batch_size,
+        prefix=prefix,
+        n_sample=n_sample,
+        selected_labels_kb_path=selected_labels_kb_path,
+        max_scale=max_scale,
+    )
+    run_fingerprint = compute_run_fingerprint(fp_payload)
+
+    ckpt_path = (
+        checkpoint_path.expanduser()
+        if checkpoint_path is not None
+        else output_dir / DEFAULT_CHECKPOINT_NAME
+    )
+
+    if resume and ckpt_path.exists():
+        ckpt = load_checkpoint(ckpt_path)
+        if ckpt.run_fingerprint != run_fingerprint:
+            console.print(
+                "[red]Checkpoint run fingerprint does not match current CLI parameters.[/red]\n"
+                f"Checkpoint: {ckpt.run_fingerprint}\n"
+                f"Current:    {run_fingerprint}\n"
+                "Use the same inputs, or pass --no-resume to reinitialize the checkpoint."
+            )
+            return
+        console.print(
+            f"[green]Resuming from checkpoint[/green] [cyan]{ckpt_path}[/cyan]"
+        )
+    else:
+        ckpt = new_checkpoint(run_fingerprint)
+        if resume:
+            console.print(
+                f"[cyan]No checkpoint at[/cyan] [yellow]{ckpt_path}[/yellow][cyan]; "
+                f"starting new run (writing checkpoint to[/cyan] [green]{ckpt_path}[/green][cyan]).[/cyan]"
+            )
+        else:
+            console.print(
+                f"[cyan]New run (--no-resume); checkpoint reinitialized at[/cyan] "
+                f"[green]{ckpt_path}[/green]"
+            )
+
+    n_fusion_cleared = reconcile_fusion_checkpoint_params(
+        ckpt,
+        fusion_pairs=fusion_pairs,
+        fusion_triples=fusion_triples,
+    )
+    if n_fusion_cleared > 0:
+        console.print(
+            f"[yellow]Fusion settings changed relative to the checkpoint; "
+            f"dropped {n_fusion_cleared} cached fusion row(s). Singletons are unchanged.[/yellow]"
+        )
+    save_checkpoint_atomic(ckpt_path, ckpt)
+
+    completed = set(ckpt.completed_combinations)
+    results: list[ClusteringSearchSummaryRow] = _results_from_checkpoint(ckpt)
+    (
+        best_overall_score,
+        best_overall_model,
+        best_overall_layer,
+        best_per_model,
+    ) = _recompute_leaderboard_from_results(results)
+
     transform_config = TransformConfig(
         pca_components=pca_components,
         umap_components=umap_dim,
     )
 
-    # Find all parquet files matching the pattern
     parquet_files = sorted(input_dir.glob(f"{prefix}*.parquet"))
-
     if not parquet_files:
         console.print(
             f"[red]No parquet files found matching pattern '{prefix}*.parquet' in {input_dir}[/red]"
         )
         return
 
-    # Filter valid files first
-    valid_files = []
+    valid_files: list[tuple[pathlib.Path, str, str]] = []
     for file_path in parquet_files:
         if not file_path.exists():
             continue
-
         model, layer = parse_model_filename(file_path.name, prefix)
         if model is None or layer is None:
             continue
-
-        valid_files.append((file_path, model, layer))
+        # Layer as str matches checkpoint keys from "1:model/layer" and score_by_ml lookups.
+        valid_files.append((file_path, model, str(layer)))
 
     if not valid_files:
         console.print("[red]No valid files to process[/red]")
         return
 
-    # Process each file with progress bar
-    results: list[ClusteringSearchSummaryRow] = []
-    best_overall_score = None
-    best_overall_model = None
-    best_overall_layer = None
-    best_per_model: dict[str, float] = {}
+    path_by_ml = _path_by_model_layer(valid_files)
     metrics_by_file: dict[tuple[str, str], list[pd.DataFrame]] = {}
     best_report: ClusteringReport | None = None
     detailed_grid_frames: list[pd.DataFrame] = []
 
-    total_tasks = len(valid_files) * n_sample
-    with Progress(
-        SpinnerColumn(),
-        TextColumn("[bold blue]{task.description}"),
-        BarColumn(),
-        TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
-        TimeElapsedColumn(),
-        console=console,
-        refresh_per_second=4,  # Refresh rate for better PyCharm compatibility
-    ) as progress:
-        task = progress.add_task(
-            f"[cyan]Processing {len(valid_files)} files × {n_sample} samples...",
-            total=total_tasks,
-        )
+    run_single = mode in ("single", "all")
+    run_fusion2 = mode in ("fusion2", "all")
+    run_fusion3 = mode in ("fusion3", "all")
 
-        for file_path, model, layer in valid_files:
-            # Accumulate metrics across runs for this file
-            file_metrics = []
-            file_reports = []
-            all_metrics_dfs = []  # Accumulate metrics across samples for aggregation
-
-            optimization_config = ClusteringOptimizationConfig(
-                min_class_size=min_class_size,
-                max_scale=max_scale,
-                rns=RandomState(seed=seed),
-                frac=frac,
-                head=head,
-                batch_size=batch_size,
-                optimization_method="mean",
-            )
-
-            for sample_idx in range(n_sample):
-                # Update progress bar description with current status
-                status_parts = [
-                    f"[cyan]{model}[/cyan]/[yellow]{layer}[/yellow]",
-                    f"sample {sample_idx + 1}/{n_sample}",
-                ]
-
-                if best_overall_score is not None:
-                    status_parts.append(
-                        f"[green]Best: {best_overall_score:.3f}[/green] "
-                        f"([cyan]{best_overall_model}[/cyan]/[yellow]{best_overall_layer}[/yellow])"
-                    )
-
-                if model in best_per_model:
-                    status_parts.append(
-                        f"[magenta]{model}: {best_per_model[model]:.3f}[/magenta]"
-                    )
-
-                progress.update(task, description=" | ".join(status_parts))
-
-                report = estimate_model_clustering(
-                    transform_config=transform_config,
-                    optimization_config=optimization_config,
-                    file_path=file_path,
-                    selected_labels=selected_labels,
-                    all_metrics_dfs=all_metrics_dfs,
-                )
-
-                if report is not None:
-                    # Collect metrics for plotting (function already updated all_metrics_dfs)
-                    file_metrics.append(report.metrics_df)
-                    file_reports.append(report)
-                    detailed_grid_frames.append(
-                        report.metrics_df.assign(
-                            model=model,
-                            layer=layer,
-                            sample_idx=sample_idx,
-                        )
-                    )
-
-                    # Ensure all_metrics_dfs is initialized for next iteration
-                    if all_metrics_dfs is None:
-                        all_metrics_dfs = [report.metrics_df]
-
-                    # Track the absolute best report (highest score)
-                    if (
-                        best_report is None
-                        or report.best_score > best_report.best_score
-                    ):
-                        best_report = report
-
-                progress.advance(task)
-
-            # Process accumulated results for this file
-            if file_reports:
-                # Store metrics for plotting
-                metrics_by_file[(model, layer)] = file_metrics
-
-                summary_row = summarize_clustering_reports_for_search(
-                    file_reports,
-                    model=model,
-                    layer=layer,
-                )
-                results.append(summary_row)
-
-                mean_dbcv = summary_row.dbcv.mean
-
-                # Update best overall (using mean score)
-                if best_overall_score is None or mean_dbcv > best_overall_score:
-                    best_overall_score = mean_dbcv
-                    best_overall_model = model
-                    best_overall_layer = layer
-
-                # Update best per model
-                if model not in best_per_model or mean_dbcv > best_per_model[model]:
-                    best_per_model[model] = mean_dbcv
-
-                if len(file_metrics) > 1:
-                    # Use lineplot with error bars for multiple samples
-                    plot_metrics_with_error_bars(
-                        file_metrics, output_dir / f"{model}_{layer}_error_bars.png"
-                    )
-                else:
-                    # Use original plot for single sample
-                    plot_metrics(file_metrics[0], output_dir / f"{model}_{layer}.png")
-
-    if results:
-        score_by_ml = {(r.model, r.layer): r.dbcv.mean for r in results}
-        singleton_items = singleton_items_by_dbcv_score(valid_files, score_by_ml)
-        fusion_jobs: list[tuple[int, int]] = []
-        if fusion_pairs > 0:
-            fusion_jobs.append((2, fusion_pairs))
-        if fusion_triples > 0:
-            fusion_jobs.append((3, fusion_triples))
-
-        fusion_task_total = 0
-        fusion_batches: list[
-            tuple[
-                int,
-                int,
-                list[tuple[list[pathlib.Path], list[str], list[str], float]],
-            ]
-        ] = []
-        for order, top_k in fusion_jobs:
-            cand = top_k_fusion_candidates_by_dbcv_proxy(singleton_items, order, top_k)
-            if not cand:
-                continue
-            fusion_batches.append((order, top_k, cand))
-            fusion_task_total += len(cand) * n_sample
-
-        if fusion_task_total > 0:
+    if mode in ("fusion2", "fusion3"):
+        if not _singleton_score_by_model_layer_from_checkpoint(ckpt):
             console.print(
-                "[cyan]Fused embeddings:[/cyan] evaluating "
-                f"{fusion_task_total // n_sample} combination(s) × {n_sample} sample(s)..."
+                "[red]Fusion mode requires singleton scores in the checkpoint.[/red] "
+                "Run with ``--mode single`` (or ``all``) first, "
+                "or ensure summaries for ``1:...`` combinations exist."
             )
+            return
+
+    if mode in ("fusion2", "fusion3"):
+        expected_singletons = {
+            combination_key_from_members([(m, layer)]) for _fp, m, layer in valid_files
+        }
+        missing = [k for k in sorted(expected_singletons) if k not in completed]
+        if missing:
+            console.print(
+                f"[yellow]Warning:[/yellow] {len(missing)} singleton combination(s) "
+                "are not marked complete in the checkpoint; fusion proxy scores may be incomplete."
+            )
+
+    # --- single-embedding combinations (arity 1) ---
+    if run_single:
+        ckpt.stages["single"] = "in_progress"
+        save_checkpoint_atomic(ckpt_path, ckpt)
+
+        total_tasks = len(valid_files) * n_sample
+        done_tasks = sum(
+            n_sample
+            for _fp, m, layer in valid_files
+            if combination_key_from_members([(m, layer)]) in completed
+        )
+        initial_total = total_tasks
+
         with Progress(
             SpinnerColumn(),
             TextColumn("[bold blue]{task.description}"),
@@ -395,13 +571,194 @@ def main(
             TimeElapsedColumn(),
             console=console,
             refresh_per_second=4,
-        ) as fusion_progress:
-            ftask = fusion_progress.add_task(
-                "[cyan]Fusion clustering...",
-                total=fusion_task_total,
+        ) as progress:
+            task = progress.add_task(
+                f"[cyan]Singletons: {len(valid_files)} files × {n_sample} samples...",
+                total=initial_total,
+                completed=done_tasks,
             )
-            for order, _top_k, candidates in fusion_batches:
-                model_label = f"fusion{order}"
+
+            for file_path, model, layer in valid_files:
+                comb_key = combination_key_from_members([(model, layer)])
+                if comb_key in completed:
+                    progress.advance(task, advance=n_sample)
+                    continue
+
+                file_metrics: list[pd.DataFrame] = []
+                file_reports: list[ClusteringReport] = []
+                all_metrics_dfs: list[pd.DataFrame] = []
+
+                optimization_config = ClusteringOptimizationConfig(
+                    min_class_size=min_class_size,
+                    max_scale=max_scale,
+                    rns=RandomState(seed=seed),
+                    frac=frac,
+                    head=head,
+                    batch_size=batch_size,
+                    optimization_method="mean",
+                )
+
+                for sample_idx in range(n_sample):
+                    status_parts = [
+                        f"[cyan]{model}[/cyan]/[yellow]{layer}[/yellow]",
+                        f"sample {sample_idx + 1}/{n_sample}",
+                    ]
+                    if best_overall_score is not None:
+                        status_parts.append(
+                            f"[green]Best: {best_overall_score:.3f}[/green] "
+                            f"([cyan]{best_overall_model}[/cyan]/[yellow]{best_overall_layer}[/yellow])"
+                        )
+                    if model in best_per_model:
+                        status_parts.append(
+                            f"[magenta]{model}: {best_per_model[model]:.3f}[/magenta]"
+                        )
+                    progress.update(task, description=" | ".join(status_parts))
+
+                    try:
+                        report = estimate_model_clustering(
+                            transform_config=transform_config,
+                            optimization_config=optimization_config,
+                            file_path=file_path,
+                            selected_labels=selected_labels,
+                            all_metrics_dfs=all_metrics_dfs,
+                        )
+                    except Exception as e:
+                        report = None
+                        console.print(
+                            "[yellow]Skipping failed sample[/yellow] "
+                            f"{model}/{layer} sample {sample_idx + 1}: {e}"
+                        )
+
+                    if report is not None:
+                        file_metrics.append(report.metrics_df)
+                        file_reports.append(report)
+                        detailed_grid_frames.append(
+                            _metrics_df_with_grid_sample_columns(
+                                report,
+                                model=model,
+                                layer=layer,
+                                sample_idx=sample_idx,
+                            )
+                        )
+                        if (
+                            best_report is None
+                            or report.best_score > best_report.best_score
+                        ):
+                            best_report = report
+
+                    progress.advance(task)
+                    gc.collect()
+
+                if file_reports:
+                    metrics_by_file[(model, layer)] = file_metrics
+                    summary_row = summarize_clustering_reports_for_search(
+                        file_reports,
+                        model=model,
+                        layer=layer,
+                    )
+
+                    if len(file_metrics) > 1:
+                        plot_metrics_with_error_bars(
+                            file_metrics,
+                            output_dir / f"{model}_{layer}_error_bars.png",
+                        )
+                    else:
+                        plot_metrics(
+                            file_metrics[0], output_dir / f"{model}_{layer}.png"
+                        )
+
+                    _mark_combination_done(
+                        ckpt,
+                        ckpt_path,
+                        combination_key=comb_key,
+                        summary=summary_row,
+                        singleton_score_key=comb_key,
+                    )
+                    completed.add(comb_key)
+                    results = _results_from_checkpoint(ckpt)
+                    (
+                        best_overall_score,
+                        best_overall_model,
+                        best_overall_layer,
+                        best_per_model,
+                    ) = _recompute_leaderboard_from_results(results)
+                else:
+                    _record_failure(
+                        ckpt,
+                        ckpt_path,
+                        combination_key=comb_key,
+                        message="All samples failed for this combination",
+                    )
+
+        ckpt.stages["single"] = "complete"
+        save_checkpoint_atomic(ckpt_path, ckpt)
+
+    # --- fusion combinations ---
+    fusion_jobs: list[tuple[int, int]] = []
+    if run_fusion2 and fusion_pairs > 0:
+        fusion_jobs.append((2, fusion_pairs))
+    if run_fusion3 and fusion_triples > 0:
+        fusion_jobs.append((3, fusion_triples))
+
+    if fusion_pairs == 0:
+        ckpt.stages["fusion2"] = "skipped"
+    if fusion_triples == 0:
+        ckpt.stages["fusion3"] = "skipped"
+    if not fusion_jobs:
+        save_checkpoint_atomic(ckpt_path, ckpt)
+
+    score_by_ml = _singleton_score_by_model_layer_from_checkpoint(ckpt)
+    singleton_items = singleton_items_by_dbcv_score(valid_files, score_by_ml)
+
+    fusion_batches: list[
+        tuple[
+            int,
+            int,
+            list[tuple[list[pathlib.Path], list[str], list[str], float]],
+        ]
+    ] = []
+    for order, top_k in fusion_jobs:
+        cand = top_k_fusion_candidates_by_dbcv_proxy(singleton_items, order, top_k)
+        if not cand:
+            continue
+        fusion_batches.append((order, top_k, cand))
+
+    handled_fusion_orders: set[int] = set()
+    for order, _top_k, candidates in fusion_batches:
+        handled_fusion_orders.add(order)
+        model_label = f"fusion{order}"
+        stage_name = "fusion2" if order == 2 else "fusion3"
+        fusion_task_total = 0
+        for paths, models, layers, _sum_proxy in candidates:
+            ckey = combination_key_from_members(
+                list(zip(models, layers, strict=True)),
+            )
+            if ckey not in completed:
+                fusion_task_total += n_sample
+
+        if fusion_task_total > 0:
+            console.print(
+                "[cyan]Fused embeddings:[/cyan] evaluating remaining combinations "
+                f"× {n_sample} sample(s)..."
+            )
+
+        ckpt.stages[stage_name] = "in_progress"
+        save_checkpoint_atomic(ckpt_path, ckpt)
+
+        if fusion_task_total > 0:
+            with Progress(
+                SpinnerColumn(),
+                TextColumn("[bold blue]{task.description}"),
+                BarColumn(),
+                TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+                TimeElapsedColumn(),
+                console=console,
+                refresh_per_second=4,
+            ) as fusion_progress:
+                ftask = fusion_progress.add_task(
+                    "[cyan]Fusion clustering...",
+                    total=fusion_task_total,
+                )
                 for paths, models, layers, sum_proxy in candidates:
                     ordered = sorted(
                         zip(paths, models, layers, strict=True),
@@ -411,9 +768,15 @@ def main(
                     o_models = [t[1] for t in ordered]
                     o_layers = [t[2] for t in ordered]
                     layer_label = "+".join(
-                        f"{m}/{layer}"
-                        for m, layer in zip(o_models, o_layers, strict=True)
+                        f"{m}/{lyr}" for m, lyr in zip(o_models, o_layers, strict=True)
                     )
+                    comb_key = combination_key_from_members(
+                        list(zip(o_models, o_layers, strict=True)),
+                    )
+
+                    if comb_key in completed:
+                        fusion_progress.advance(ftask, advance=n_sample)
+                        continue
 
                     fusion_metrics: list[pd.DataFrame] = []
                     fusion_reports: list[ClusteringReport] = []
@@ -439,24 +802,38 @@ def main(
                                 f"sample {sample_idx + 1}/{n_sample}"
                             ),
                         )
-                        report = estimate_model_clustering(
-                            transform_config=transform_config,
-                            optimization_config=optimization_config,
-                            file_paths=ordered_paths,
-                            selected_labels=selected_labels,
-                            all_metrics_dfs=fusion_all_metrics_dfs,
-                        )
+                        try:
+                            report = estimate_model_clustering(
+                                transform_config=transform_config,
+                                optimization_config=optimization_config,
+                                file_paths=ordered_paths,
+                                selected_labels=selected_labels,
+                                all_metrics_dfs=fusion_all_metrics_dfs,
+                            )
+                        except Exception as e:
+                            report = None
+                            console.print(
+                                "[yellow]Skipping failed fusion sample[/yellow] "
+                                f"{layer_label} sample {sample_idx + 1}: {e}"
+                            )
                         if report is not None:
                             fusion_metrics.append(report.metrics_df)
                             fusion_reports.append(report)
                             detailed_grid_frames.append(
-                                report.metrics_df.assign(
+                                _metrics_df_with_grid_sample_columns(
+                                    report,
                                     model=model_label,
                                     layer=layer_label,
                                     sample_idx=sample_idx,
                                 )
                             )
+                            if (
+                                best_report is None
+                                or report.best_score > best_report.best_score
+                            ):
+                                best_report = report
                         fusion_progress.advance(ftask)
+                        gc.collect()
 
                     if fusion_reports:
                         fusion_summary = summarize_clustering_reports_for_search(
@@ -464,17 +841,6 @@ def main(
                             model=model_label,
                             layer=layer_label,
                         )
-                        results.append(fusion_summary)
-
-                        best_fusion_report = max(
-                            fusion_reports, key=lambda r: r.best_score
-                        )
-                        if (
-                            best_report is None
-                            or best_fusion_report.best_score > best_report.best_score
-                        ):
-                            best_report = best_fusion_report
-
                         metrics_by_file[(model_label, layer_label)] = fusion_metrics
 
                         safe = layer_label.replace("/", "_").replace("+", "__")
@@ -484,37 +850,82 @@ def main(
                         else:
                             plot_metrics(fusion_metrics[0], out_metric)
 
-    # Create results dataframe
+                        _mark_combination_done(
+                            ckpt,
+                            ckpt_path,
+                            combination_key=comb_key,
+                            summary=fusion_summary,
+                            singleton_score_key=None,
+                        )
+                        completed.add(comb_key)
+                        results = _results_from_checkpoint(ckpt)
+                    else:
+                        _record_failure(
+                            ckpt,
+                            ckpt_path,
+                            combination_key=comb_key,
+                            message="All fusion samples failed for this combination",
+                        )
+
+        ckpt.stages[stage_name] = "complete"
+        save_checkpoint_atomic(ckpt_path, ckpt)
+
+    for order, _top_k in fusion_jobs:
+        if order in handled_fusion_orders:
+            continue
+        stage_name = "fusion2" if order == 2 else "fusion3"
+        ckpt.stages[stage_name] = "complete"
+    if fusion_jobs:
+        save_checkpoint_atomic(ckpt_path, ckpt)
+
+    results = _results_from_checkpoint(ckpt)
     if not results:
         console.print("[red]No results to save[/red]")
         return
 
     df_results = pd.DataFrame([r.to_flat_dict() for r in results])
     df_results = df_results.sort_values(["model", "layer"])
-
-    # Save results
-    output_path = output_dir / "results.csv"
     df_results.to_csv(output_path, index=False)
 
-    if detailed_grid_frames:
-        df_grid_detail = pd.concat(detailed_grid_frames, ignore_index=True)
+    prior_detail: list[pd.DataFrame] = []
+    if detail_path.exists():
+        try:
+            prior_detail.append(pd.read_csv(detail_path))
+        except Exception:
+            pass
+    if detailed_grid_frames or prior_detail:
+        frames = prior_detail + detailed_grid_frames
+        df_grid_detail = pd.concat(frames, ignore_index=True)
         grid_cols = [
             "model",
             "layer",
             "sample_idx",
+            GRID_COL_CHOSEN_MIN_CLUSTER_SIZE,
+            GRID_COL_SAMPLE_BEST_DBCV,
+            GRID_COL_SAMPLE_HUNGARIAN,
             "min_cluster_size",
             "icm",
             "n_clusters",
             "dbcv",
         ]
-        tail = [c for c in df_grid_detail.columns if c not in grid_cols]
-        df_grid_detail = df_grid_detail[grid_cols + tail]
-        detail_path = output_dir / "results_grid_per_sample.csv"
+        ordered = [c for c in grid_cols if c in df_grid_detail.columns]
+        tail = [c for c in df_grid_detail.columns if c not in ordered]
+        df_grid_detail = df_grid_detail[ordered + tail]
+        dup_subset = [c for c in grid_cols if c in df_grid_detail.columns]
+        if dup_subset:
+            df_grid_detail = df_grid_detail.drop_duplicates(
+                subset=dup_subset, keep="last"
+            )
         df_grid_detail.to_csv(detail_path, index=False)
+        scatter_path = output_dir / "model.dbcv_vs_hungarian.png"
+        if plot_dbcv_vs_hungarian_from_grid(df_grid_detail, scatter_path):
+            console.print(
+                f"[green]✓[/green] DBCV vs Hungarian scatter saved to: "
+                f"[cyan]{scatter_path}[/cyan]"
+            )
 
     df_heatmap = df_results[~df_results["model"].isin(["fusion2", "fusion3"])].copy()
 
-    # Create heatmaps (single embeddings only; fusion rows are not a full model×layer grid)
     heatmap_path = output_dir / "model.perf.heatmap.png"
     if len(df_heatmap) > 0:
         plot_heatmap(
@@ -525,7 +936,6 @@ def main(
             "[yellow]Skipping score heatmap: no single-embedding rows[/yellow]"
         )
 
-    # Create Hungarian accuracy heatmap if available
     if (
         len(df_heatmap) > 0
         and "hungarian_accuracy" in df_heatmap.columns
@@ -549,7 +959,6 @@ def main(
     table.add_column("Best Score", justify="right", style="blue")
 
     for _, row in df_results.iterrows():
-        # Format with std if n_sample > 1
         if n_sample > 1:
             best_size_str = f"{int(row['best_size'])} ± {row['best_size_std']:.1f}"
             clusters_str = (
@@ -577,22 +986,46 @@ def main(
 
     console.print(table)
     console.print(f"\n[green]✓[/green] Results saved to: [cyan]{output_path}[/cyan]")
-    if detailed_grid_frames:
+    if detailed_grid_frames or prior_detail:
         console.print(
             f"[green]✓[/green] Per-sample grid (all min_cluster_size values) saved to: "
-            f"[cyan]{output_dir / 'results_grid_per_sample.csv'}[/cyan]"
+            f"[cyan]{detail_path}[/cyan]"
         )
     if len(df_heatmap) > 0:
         console.print(f"[green]✓[/green] Heatmap saved to: [cyan]{heatmap_path}[/cyan]")
 
     top_idx = df_results["best_score"].idxmax()
     top_row = df_results.loc[top_idx]
+    top_summary = clustering_search_summary_row_from_flat_dict(
+        {str(k): top_row[k] for k in top_row.index}
+    )
     console.print(
         f"\n[bold green]Best mean DBCV (best_score): {float(top_row['best_score']):.3f}[/bold green] "
         f"([cyan]{top_row['model']}[/cyan]/[yellow]{top_row['layer']}[/yellow])"
     )
 
-    # Generate UMAP visualization for the best model
+    if best_report is None:
+        viz_config = ClusteringOptimizationConfig(
+            min_class_size=min_class_size,
+            max_scale=max_scale,
+            rns=RandomState(seed=seed),
+            frac=frac,
+            head=head,
+            batch_size=batch_size,
+            optimization_method="mean",
+        )
+        console.print(
+            "[cyan]Materializing best clustering report for UMAP (not held in memory)...[/cyan]"
+        )
+        best_report = _materialize_best_report(
+            top_summary,
+            valid_files=valid_files,
+            path_by_ml=path_by_ml,
+            transform_config=transform_config,
+            optimization_config=viz_config,
+            selected_labels=selected_labels,
+        )
+
     if best_report is not None:
         umap_viz_path = output_dir / "umap_best.html"
         console.print(

@@ -1,14 +1,472 @@
 import pathlib
 
+import matplotlib
+import numpy as np
 import pandas as pd
 import seaborn as sns
-import matplotlib
 
 # Force a non-interactive backend because this project only saves plots to files.
 # This avoids Tk/threading crashes in long-running or parallelized workflows.
 matplotlib.use("Agg")
 from matplotlib import pyplot as plt
+from matplotlib.lines import Line2D
+from matplotlib.patches import Ellipse, Patch, Polygon, Rectangle, RegularPolygon, Wedge
 from plotly import express as px, graph_objects as go
+
+# Columns appended in ``run/analysis/clustering_quality.py`` grid export (per-sample summaries).
+GRID_COL_CHOSEN_MIN_CLUSTER_SIZE = "chosen_min_cluster_size"
+GRID_COL_SAMPLE_BEST_DBCV = "sample_best_dbcv"
+GRID_COL_SAMPLE_HUNGARIAN = "sample_hungarian_accuracy"
+
+# χ²(2) critical value at p≈0.95 for Gaussian 95% contour (no scipy).
+_CHI2_PPF_95_DF2 = 5.991464550106692
+
+# Arity → marker style: 1 = triangle, 2 = square (bimodal fill), 3 = circle (tricolor wedges).
+ARITY_MARKER_SCATTER: dict[str, str] = {
+    "singleton": "^",
+    "fusion2": "s",
+    "fusion3": "o",
+}
+
+_AXIS_MAX = 1.1
+_MARKER_HALF_WIDTH = 0.028
+_MIN_ELLIPSE_SEMI_AXIS = 0.018
+# Uniform footprint: square side = 2 * _MARKER_HALF_WIDTH; circle uses same radius; triangle side matches.
+_MARKER_FACE_ALPHA = 0.52
+_MARKER_OUTLINE_ALPHA = 0.72
+_ELLIPSE_FILL_ALPHA = 0.14
+_ELLIPSE_EDGE_ALPHA = 0.88
+_ELLIPSE_INFLATE = 1.12
+
+
+def _arity_from_model(model: str) -> str:
+    if model == "fusion2":
+        return "fusion2"
+    if model == "fusion3":
+        return "fusion3"
+    return "singleton"
+
+
+def _base_models_in_row(model: str, layer: str) -> list[str]:
+    """Constituent encoder model names (singleton: one; fusion: from ``a/L1+b/L2``)."""
+    if model not in ("fusion2", "fusion3"):
+        return [str(model)]
+    names: list[str] = []
+    for part in str(layer).split("+"):
+        p = part.strip()
+        if not p:
+            continue
+        m, _, _ = p.partition("/")
+        if m:
+            names.append(m)
+    return names if names else [str(model)]
+
+
+def _layer_spec_code(model: str, layer: str) -> str:
+    """
+    Short label for the layer configuration only (no encoder name): singleton ``layer`` as-is;
+    fusion ``a/L1+b/L2`` → ``L1+L2``.
+    """
+    if model not in ("fusion2", "fusion3"):
+        return str(layer)
+    specs: list[str] = []
+    for part in str(layer).split("+"):
+        p = part.strip()
+        if not p:
+            continue
+        _m, sep, lyr = p.partition("/")
+        specs.append(lyr if sep else p)
+    return ",".join(specs) if specs else str(layer)
+
+
+def _model_color_map(unique_models: list[str]) -> dict[str, str]:
+    models = sorted(set(unique_models))
+    palette = sns.color_palette("husl", n_colors=max(len(models), 1))
+    return {m: matplotlib.colors.to_hex(palette[i]) for i, m in enumerate(models)}
+
+
+def _rgba(hex_color: str, alpha: float) -> tuple[float, float, float, float]:
+    return matplotlib.colors.to_rgba(hex_color, alpha=alpha)
+
+
+def _merge_wedge_spans(
+    spans: list[tuple[float, float, str]],
+) -> list[tuple[float, float, str]]:
+    """Merge adjacent angular spans that share the same face color."""
+    if not spans:
+        return []
+    merged: list[tuple[float, float, str]] = []
+    t1, t2, c = spans[0]
+    for t1n, t2n, cn in spans[1:]:
+        if cn == c and t1n == t2:
+            t2 = t2n
+        else:
+            merged.append((t1, t2, c))
+            t1, t2, c = t1n, t2n, cn
+    merged.append((t1, t2, c))
+    return merged
+
+
+def _covariance_ellipse_95(
+    cov: np.ndarray,
+    *,
+    min_semi_axis: float = _MIN_ELLIPSE_SEMI_AXIS,
+) -> tuple[float, float, float] | None:
+    """
+    Return (width, height, angle_deg) for ~95% Gaussian ellipse.
+    Floors semi-axes so nearly-degenerate covariances stay visible.
+    """
+    c = np.asarray(cov, dtype=np.float64)
+    if c.shape != (2, 2):
+        return None
+    vals, vecs = np.linalg.eigh(c)
+    if np.any(vals < -1e-12):
+        return None
+    vals = np.maximum(vals, 0.0)
+    order = vals.argsort()[::-1]
+    vals, vecs = vals[order], vecs[:, order]
+    semi_major = max(float(np.sqrt(_CHI2_PPF_95_DF2 * vals[0])), min_semi_axis)
+    semi_minor = max(float(np.sqrt(_CHI2_PPF_95_DF2 * vals[1])), min_semi_axis)
+    width = 2.0 * semi_major
+    height = 2.0 * semi_minor
+    theta = float(np.degrees(np.arctan2(vecs[1, 0], vecs[0, 0])))
+    if not np.isfinite(width) or not np.isfinite(height):
+        return None
+    return width, height, theta
+
+
+def _draw_arity_marker(
+    ax: plt.Axes,
+    mx: float,
+    my: float,
+    *,
+    arity: str,
+    models: list[str],
+    color_by_model: dict[str, str],
+    zorder: int = 5,
+) -> None:
+    """Draw △ / □ / ○ in data coords; transparent fills; no internal seams for same-color adjacency."""
+    h = _MARKER_HALF_WIDTH
+    h_sq = 0.8 * h
+    fa = _MARKER_FACE_ALPHA
+    oa = _MARKER_OUTLINE_ALPHA
+    edge_rgba = (0.0, 0.0, 0.0, oa)
+
+    if arity == "singleton":
+        col = color_by_model.get(models[0], "#333333")
+        side = 2.0 * h
+        radius = float(side / np.sqrt(3.0))
+        tri = RegularPolygon(
+            (mx, my),
+            numVertices=3,
+            radius=radius,
+            orientation=np.pi / 2.0,
+            facecolor=_rgba(col, fa),
+            edgecolor=edge_rgba,
+            linewidth=0.85,
+            zorder=zorder,
+        )
+        ax.add_patch(tri)
+        return
+
+    if arity == "fusion2" and len(models) >= 2:
+        c0 = color_by_model.get(models[0], "#888888")
+        c1 = color_by_model.get(models[1], "#444444")
+        if c0 == c1:
+            sq = Polygon(
+                [
+                    (mx - h_sq, my - h_sq),
+                    (mx - h_sq, my + h_sq),
+                    (mx + h_sq, my + h_sq),
+                    (mx + h_sq, my - h_sq),
+                ],
+                closed=True,
+                facecolor=_rgba(c0, fa),
+                edgecolor=edge_rgba,
+                linewidth=0.85,
+                zorder=zorder,
+            )
+            ax.add_patch(sq)
+            return
+        left = Polygon(
+            [
+                (mx - h_sq, my - h_sq),
+                (mx - h_sq, my + h_sq),
+                (mx, my + h_sq),
+                (mx, my - h_sq),
+            ],
+            closed=True,
+            facecolor=_rgba(c0, fa),
+            linewidth=0,
+            zorder=zorder,
+        )
+        right = Polygon(
+            [
+                (mx, my - h_sq),
+                (mx, my + h_sq),
+                (mx + h_sq, my + h_sq),
+                (mx + h_sq, my - h_sq),
+            ],
+            closed=True,
+            facecolor=_rgba(c1, fa),
+            linewidth=0,
+            zorder=zorder,
+        )
+        ax.add_patch(left)
+        ax.add_patch(right)
+        ax.add_patch(
+            Rectangle(
+                (mx - h_sq, my - h_sq),
+                2 * h_sq,
+                2 * h_sq,
+                fill=False,
+                linewidth=0.9,
+                edgecolor=edge_rgba,
+                zorder=zorder + 1,
+            )
+        )
+        return
+
+    if arity == "fusion3" and len(models) >= 3:
+        r = h
+        base_spans = [(90.0, 210.0), (210.0, 330.0), (330.0, 450.0)]
+        colored = [
+            (t1, t2, color_by_model.get(models[i], "#666666"))
+            for i, (t1, t2) in enumerate(base_spans)
+        ]
+        for t1, t2, col in _merge_wedge_spans(colored):
+            w = Wedge(
+                (mx, my),
+                r,
+                t1,
+                t2,
+                facecolor=_rgba(col, fa),
+                linewidth=0,
+                zorder=zorder,
+            )
+            ax.add_patch(w)
+        ax.add_patch(
+            Ellipse(
+                (mx, my),
+                width=2 * r,
+                height=2 * r,
+                facecolor="none",
+                edgecolor=edge_rgba,
+                linewidth=0.9,
+                zorder=zorder + 1,
+            )
+        )
+        return
+
+    # Fallback: solid patch with arity-appropriate shape
+    mkey = models[0] if models else ""
+    col = color_by_model.get(mkey, "#333333")
+    if arity == "fusion2":
+        fb: Polygon | Ellipse = Polygon(
+            [
+                (mx - h, my - h),
+                (mx - h, my + h),
+                (mx + h, my + h),
+                (mx + h, my - h),
+            ],
+            closed=True,
+            facecolor=_rgba(col, fa),
+            edgecolor=edge_rgba,
+            linewidth=0.9,
+            zorder=zorder,
+        )
+    elif arity == "fusion3":
+        fb = Ellipse(
+            (mx, my),
+            width=2 * h,
+            height=2 * h,
+            facecolor=_rgba(col, fa),
+            edgecolor=edge_rgba,
+            linewidth=0.9,
+            zorder=zorder,
+        )
+    else:
+        side = 2.0 * h
+        radius = float(side / np.sqrt(3.0))
+        fb = RegularPolygon(
+            (mx, my),
+            numVertices=3,
+            radius=radius,
+            orientation=np.pi / 2.0,
+            facecolor=_rgba(col, fa),
+            edgecolor=edge_rgba,
+            linewidth=0.85,
+            zorder=zorder,
+        )
+    ax.add_patch(fb)
+
+
+def plot_dbcv_vs_hungarian_from_grid(
+    df_grid: pd.DataFrame,
+    output_path: pathlib.Path,
+) -> bool:
+    """
+    Scatter of mean DBCV vs mean Hungarian per (model, layer); shape = arity (△/□/○),
+    fill colors = base encoder model(s); text = layer spec only (e.g. fusion ``2+3``).
+    95% covariance ellipses when ``n_sample`` ≥ 2.
+
+    Expects ``sample_best_dbcv``, ``sample_hungarian_accuracy`` on the grid export.
+    Both axes are fixed to ``[0, _AXIS_MAX]``.
+
+    Returns:
+        True if a figure was written, False if required data were absent.
+    """
+    needed = {
+        "model",
+        "layer",
+        "sample_idx",
+        GRID_COL_SAMPLE_BEST_DBCV,
+        GRID_COL_SAMPLE_HUNGARIAN,
+    }
+    if not needed.issubset(df_grid.columns):
+        return False
+
+    df = df_grid.loc[
+        :,
+        [
+            "model",
+            "layer",
+            "sample_idx",
+            GRID_COL_SAMPLE_BEST_DBCV,
+            GRID_COL_SAMPLE_HUNGARIAN,
+        ],
+    ].drop_duplicates(subset=["model", "layer", "sample_idx"], keep="first")
+    df = df[df[GRID_COL_SAMPLE_HUNGARIAN].notna()].copy()
+    if df.empty:
+        return False
+
+    all_models: list[str] = []
+    for m, lyr in df[["model", "layer"]].drop_duplicates().itertuples(index=False):
+        all_models.extend(_base_models_in_row(str(m), str(lyr)))
+    color_by_model = _model_color_map(all_models)
+
+    fig, ax = plt.subplots(figsize=(8.5, 8.5))
+    arities_present: set[str] = set()
+
+    for (model, layer), g in df.groupby(["model", "layer"], sort=False):
+        xy = np.column_stack(
+            [
+                g[GRID_COL_SAMPLE_BEST_DBCV].to_numpy(dtype=np.float64),
+                g[GRID_COL_SAMPLE_HUNGARIAN].to_numpy(dtype=np.float64),
+            ]
+        )
+        mean = xy.mean(axis=0)
+        n = xy.shape[0]
+        arity = _arity_from_model(str(model))
+        arities_present.add(arity)
+        models_row = _base_models_in_row(str(model), str(layer))
+
+        # Halo drawn first: light filled ellipse + clear dashed rim, slightly inflated so
+        # it remains visible through transparent markers.
+        if n >= 2:
+            cov = np.cov(xy, rowvar=False, ddof=1)
+            ell = _covariance_ellipse_95(cov)
+            if ell is not None:
+                w, h, ang = ell
+                wi, hi = w * _ELLIPSE_INFLATE, h * _ELLIPSE_INFLATE
+                patch = Ellipse(
+                    xy=(float(mean[0]), float(mean[1])),
+                    width=wi,
+                    height=hi,
+                    angle=ang,
+                    facecolor=(0.45, 0.48, 0.52, _ELLIPSE_FILL_ALPHA),
+                    edgecolor=(0.12, 0.14, 0.18, _ELLIPSE_EDGE_ALPHA),
+                    linewidth=1.45,
+                    linestyle=(0, (4.5, 3.0)),
+                    zorder=2,
+                )
+                ax.add_patch(patch)
+
+        _draw_arity_marker(
+            ax,
+            float(mean[0]),
+            float(mean[1]),
+            arity=arity,
+            models=models_row,
+            color_by_model=color_by_model,
+            zorder=5,
+        )
+        layer_code = _layer_spec_code(str(model), str(layer))
+        if len(layer_code) > 22:
+            layer_code = layer_code[:19] + "…"
+        ax.annotate(
+            layer_code,
+            (mean[0], mean[1]),
+            textcoords="offset points",
+            # xytext=(8, 8),
+            xytext=(-3 - 1.5 * (len(layer_code) - 1), -3),
+            fontsize=8,
+            alpha=0.88,
+            zorder=6,
+        )
+
+    ax.set_xlim(0.0, _AXIS_MAX)
+    ax.set_ylim(0.0, _AXIS_MAX)
+    ax.set_aspect("equal")
+    ax.set_xlabel("DBCV (per-sample best, mean over samples)")
+    ax.set_ylabel("Hungarian accuracy (per-sample, mean over samples)")
+    ax.set_title("DBCV vs Hungarian; dashed ellipse ≈95% (n_sample ≥ 2)")
+
+    order_a = ["singleton", "fusion2", "fusion3"]
+    arity_labels = {
+        "singleton": "singleton",
+        "fusion2": "pair fusion",
+        "fusion3": "triple fusion",
+    }
+    edge_legend = (0.0, 0.0, 0.0, _MARKER_OUTLINE_ALPHA)
+    legend_shapes = [
+        Line2D(
+            [0],
+            [0],
+            marker=ARITY_MARKER_SCATTER[a],
+            color="none",
+            label=arity_labels[a],
+            markerfacecolor=_rgba("#bbbbbb", _MARKER_FACE_ALPHA),
+            markeredgecolor=edge_legend,
+            markersize=10,
+        )
+        for a in order_a
+        if a in arities_present
+    ]
+    legend_colors = [
+        Patch(
+            facecolor=_rgba(color_by_model[m], _MARKER_FACE_ALPHA),
+            edgecolor=edge_legend,
+            linewidth=0.5,
+            label=m,
+        )
+        for m in sorted(color_by_model.keys())
+    ]
+    if legend_shapes or legend_colors:
+        leg1 = ax.legend(
+            handles=legend_shapes,
+            title="Arity",
+            loc="upper left",
+            bbox_to_anchor=(1.02, 1.0),
+            borderaxespad=0.0,
+            frameon=True,
+        )
+        ax.add_artist(leg1)
+        ax.legend(
+            handles=legend_colors,
+            title="Base model",
+            loc="lower left",
+            bbox_to_anchor=(1.02, 0.0),
+            borderaxespad=0.0,
+            frameon=True,
+        )
+
+    ax.grid(True, alpha=0.28, linestyle="--", zorder=0)
+    plt.tight_layout()
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    plt.savefig(output_path, dpi=300, bbox_inches="tight")
+    plt.close(fig)
+    return True
 
 
 def plot_metrics_with_error_bars(
@@ -307,4 +765,7 @@ def plot_metrics(df: pd.DataFrame, fname):
     plt.title("Clustering metrics vs. min_cluster_size (HDBSCAN)")
     fig.tight_layout()
 
-    plt.savefig(fname, bbox_inches="tight", dpi=300)
+    try:
+        plt.savefig(fname, bbox_inches="tight", dpi=300)
+    finally:
+        plt.close(fig)
