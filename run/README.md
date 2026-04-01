@@ -92,7 +92,7 @@ Measures the quality of embeddings obtained from `embed_kb_corpus.py` by evaluat
 - **Outputs**:
   - `results.csv` - Summary table with metrics for each model/layer combination
   - `model.perf.heatmap.png` - Heatmap of best scores across models
-  - `model.hungarian_accuracy.heatmap.png` - Heatmap of Hungarian matching accuracy (if available)
+  - `model.ari.heatmap.png` - Heatmap of ARI clustering quality (if available)
   - `{model}_{layer}.png` - Metrics plots for each model/layer
   - `umap_best.html` - Interactive UMAP visualization of the best performing model
 - **Key Features**:
@@ -100,7 +100,7 @@ Measures the quality of embeddings obtained from `embed_kb_corpus.py` by evaluat
   - Optimizes cluster size using various metrics
   - Supports multiple sampling runs for statistical robustness
   - **Optional**: `--selected-labels-kb-path` parameter to evaluate quality over a specific subset of labels from a selected knowledge base CSV file
-- **Metrics**: Best cluster size, number of properties, clustering score, Hungarian matching accuracy
+- **Metrics**: Best cluster size, number of properties, clustering score, adjusted Rand index (ARI)
 
 ### `select_diverse_entities.py`
 

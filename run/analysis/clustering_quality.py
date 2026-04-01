@@ -40,8 +40,8 @@ from pelinker.ops import parse_model_filename
 from pelinker.plotting import (
     GRID_COL_CHOSEN_MIN_CLUSTER_SIZE,
     GRID_COL_SAMPLE_BEST_DBCV,
-    GRID_COL_SAMPLE_HUNGARIAN,
-    plot_dbcv_vs_hungarian_from_grid,
+    GRID_COL_SAMPLE_ARI,
+    plot_dbcv_vs_ari_from_grid,
     plot_heatmap,
     plot_metrics,
     plot_metrics_with_error_bars,
@@ -160,8 +160,8 @@ def _metrics_df_with_grid_sample_columns(
     layer: str,
     sample_idx: int,
 ) -> pd.DataFrame:
-    """Grid rows for ``results_grid_per_sample.csv`` with per-sample DBCV / Hungarian for scatter."""
-    ha = report.hungarian_accuracy
+    """Grid rows for ``results_grid_per_sample.csv`` with per-sample DBCV / ARI for scatter."""
+    ari = report.ari
     return report.metrics_df.assign(
         model=model,
         layer=layer,
@@ -171,9 +171,132 @@ def _metrics_df_with_grid_sample_columns(
                 report.hyperparameters.min_cluster_size
             ),
             GRID_COL_SAMPLE_BEST_DBCV: float(report.best_score),
-            GRID_COL_SAMPLE_HUNGARIAN: float("nan") if ha is None else float(ha),
+            GRID_COL_SAMPLE_ARI: float("nan") if ari is None else float(ari),
         },
     )
+
+
+def _fine_clustering_metadata_df(
+    report: ClusteringReport,
+    *,
+    model: str,
+    layer: str,
+    sample_idx: int,
+) -> pd.DataFrame:
+    """Per-sample clustering assignments for downstream analysis."""
+    cols = ["model", "layer", "sample_idx", "property", "class"]
+    optional_cols = ["pmid", "mention"]
+    present_optional = [c for c in optional_cols if c in report.df.columns]
+    keep = [
+        c for c in ["property", "class", *present_optional] if c in report.df.columns
+    ]
+    if "property" not in keep or "class" not in keep:
+        return pd.DataFrame(columns=cols + present_optional)
+    out = report.df[keep].copy()
+    out.insert(0, "sample_idx", sample_idx)
+    out.insert(0, "layer", layer)
+    out.insert(0, "model", model)
+    return out
+
+
+def _per_sample_grid_column_order() -> list[str]:
+    return [
+        "model",
+        "layer",
+        "sample_idx",
+        GRID_COL_CHOSEN_MIN_CLUSTER_SIZE,
+        GRID_COL_SAMPLE_BEST_DBCV,
+        GRID_COL_SAMPLE_ARI,
+        "min_cluster_size",
+        "icm",
+        "n_clusters",
+        "dbcv",
+    ]
+
+
+def _dedupe_per_sample_grid(df: pd.DataFrame) -> pd.DataFrame:
+    grid_cols = _per_sample_grid_column_order()
+    ordered = [c for c in grid_cols if c in df.columns]
+    tail = [c for c in df.columns if c not in ordered]
+    out = df[ordered + tail]
+    dup_subset = [c for c in grid_cols if c in out.columns]
+    if dup_subset:
+        out = out.drop_duplicates(subset=dup_subset, keep="last")
+    return out
+
+
+def _read_optional_csv(path: pathlib.Path) -> pd.DataFrame | None:
+    if not path.exists():
+        return None
+    try:
+        return pd.read_csv(path)
+    except Exception:
+        return None
+
+
+def _merge_new_frames_into_per_sample_grid_csv(
+    detail_path: pathlib.Path,
+    new_frames: list[pd.DataFrame],
+) -> None:
+    """Append grid rows to ``results_grid_per_sample.csv`` (merge + dedupe, atomic replace)."""
+    if not new_frames:
+        return
+    new_df = pd.concat(new_frames, ignore_index=True)
+    if new_df.empty:
+        return
+    prior = _read_optional_csv(detail_path)
+    if prior is not None and not prior.empty:
+        merged = pd.concat([prior, new_df], ignore_index=True)
+    else:
+        merged = new_df
+    merged = _dedupe_per_sample_grid(merged)
+    tmp = detail_path.with_suffix(detail_path.suffix + ".tmp")
+    merged.to_csv(tmp, index=False)
+    tmp.replace(detail_path)
+
+
+def _fine_metadata_dedupe_subset(df: pd.DataFrame) -> list[str]:
+    wanted = [
+        "model",
+        "layer",
+        "sample_idx",
+        "pmid",
+        "mention",
+        "property",
+        "class",
+    ]
+    return [c for c in wanted if c in df.columns]
+
+
+def _dedupe_fine_metadata_df(df: pd.DataFrame) -> pd.DataFrame:
+    cols = _fine_metadata_dedupe_subset(df)
+    if cols:
+        return df.drop_duplicates(subset=cols, keep="last")
+    return df
+
+
+def _merge_new_frames_into_fine_metadata_pickle(
+    fine_metadata_path: pathlib.Path,
+    new_frames: list[pd.DataFrame],
+) -> None:
+    if not new_frames:
+        return
+    new_df = pd.concat(new_frames, ignore_index=True)
+    if new_df.empty:
+        return
+    prior_frames: list[pd.DataFrame] = []
+    if fine_metadata_path.exists():
+        try:
+            prior = pd.read_pickle(fine_metadata_path, compression="gzip")
+            if prior is not None and not prior.empty:
+                prior_frames.append(prior)
+        except Exception:
+            pass
+    merged = pd.concat(prior_frames + [new_df], ignore_index=True)
+    merged = _dedupe_fine_metadata_df(merged)
+    tmp = fine_metadata_path.with_name(fine_metadata_path.name + ".tmp")
+    merged.to_pickle(tmp, compression="gzip")
+    tmp.replace(fine_metadata_path)
 
 
 def _mark_combination_done(
@@ -425,6 +548,14 @@ def main(
     output_dir.mkdir(parents=True, exist_ok=True)
     output_path = output_dir / "results.csv"
     detail_path = output_dir / "results_grid_per_sample.csv"
+    fine_metadata_path = output_dir / "fine_clustering_metadata.pkl.gz"
+    if not resume:
+        for artifact in (detail_path, fine_metadata_path):
+            try:
+                if artifact.exists():
+                    artifact.unlink()
+            except OSError:
+                pass
 
     fp_payload = fingerprint_config_from_cli(
         input_dir=input_dir,
@@ -525,6 +656,7 @@ def main(
     metrics_by_file: dict[tuple[str, str], list[pd.DataFrame]] = {}
     best_report: ClusteringReport | None = None
     detailed_grid_frames: list[pd.DataFrame] = []
+    fine_metadata_frames: list[pd.DataFrame] = []
 
     run_single = mode in ("single", "all")
     run_fusion2 = mode in ("fusion2", "all")
@@ -640,6 +772,14 @@ def main(
                                 sample_idx=sample_idx,
                             )
                         )
+                        fine_metadata_frames.append(
+                            _fine_clustering_metadata_df(
+                                report,
+                                model=model,
+                                layer=layer,
+                                sample_idx=sample_idx,
+                            )
+                        )
                         if (
                             best_report is None
                             or report.best_score > best_report.best_score
@@ -673,6 +813,15 @@ def main(
                         combination_key=comb_key,
                         summary=summary_row,
                         singleton_score_key=comb_key,
+                    )
+                    n_new = len(file_reports)
+                    _merge_new_frames_into_per_sample_grid_csv(
+                        detail_path,
+                        detailed_grid_frames[-n_new:],
+                    )
+                    _merge_new_frames_into_fine_metadata_pickle(
+                        fine_metadata_path,
+                        fine_metadata_frames[-n_new:],
                     )
                     completed.add(comb_key)
                     results = _results_from_checkpoint(ckpt)
@@ -827,6 +976,14 @@ def main(
                                     sample_idx=sample_idx,
                                 )
                             )
+                            fine_metadata_frames.append(
+                                _fine_clustering_metadata_df(
+                                    report,
+                                    model=model_label,
+                                    layer=layer_label,
+                                    sample_idx=sample_idx,
+                                )
+                            )
                             if (
                                 best_report is None
                                 or report.best_score > best_report.best_score
@@ -856,6 +1013,15 @@ def main(
                             combination_key=comb_key,
                             summary=fusion_summary,
                             singleton_score_key=None,
+                        )
+                        n_new = len(fusion_reports)
+                        _merge_new_frames_into_per_sample_grid_csv(
+                            detail_path,
+                            detailed_grid_frames[-n_new:],
+                        )
+                        _merge_new_frames_into_fine_metadata_pickle(
+                            fine_metadata_path,
+                            fine_metadata_frames[-n_new:],
                         )
                         completed.add(comb_key)
                         results = _results_from_checkpoint(ckpt)
@@ -887,40 +1053,16 @@ def main(
     df_results = df_results.sort_values(["model", "layer"])
     df_results.to_csv(output_path, index=False)
 
-    prior_detail: list[pd.DataFrame] = []
-    if detail_path.exists():
-        try:
-            prior_detail.append(pd.read_csv(detail_path))
-        except Exception:
-            pass
-    if detailed_grid_frames or prior_detail:
-        frames = prior_detail + detailed_grid_frames
-        df_grid_detail = pd.concat(frames, ignore_index=True)
-        grid_cols = [
-            "model",
-            "layer",
-            "sample_idx",
-            GRID_COL_CHOSEN_MIN_CLUSTER_SIZE,
-            GRID_COL_SAMPLE_BEST_DBCV,
-            GRID_COL_SAMPLE_HUNGARIAN,
-            "min_cluster_size",
-            "icm",
-            "n_clusters",
-            "dbcv",
-        ]
-        ordered = [c for c in grid_cols if c in df_grid_detail.columns]
-        tail = [c for c in df_grid_detail.columns if c not in ordered]
-        df_grid_detail = df_grid_detail[ordered + tail]
-        dup_subset = [c for c in grid_cols if c in df_grid_detail.columns]
-        if dup_subset:
-            df_grid_detail = df_grid_detail.drop_duplicates(
-                subset=dup_subset, keep="last"
-            )
-        df_grid_detail.to_csv(detail_path, index=False)
-        scatter_path = output_dir / "model.dbcv_vs_hungarian.png"
-        if plot_dbcv_vs_hungarian_from_grid(df_grid_detail, scatter_path):
+    df_grid_detail = _read_optional_csv(detail_path)
+    if df_grid_detail is not None and not df_grid_detail.empty:
+        df_grid_detail = _dedupe_per_sample_grid(df_grid_detail)
+        tmp_grid = detail_path.with_suffix(detail_path.suffix + ".tmp")
+        df_grid_detail.to_csv(tmp_grid, index=False)
+        tmp_grid.replace(detail_path)
+        scatter_path = output_dir / "model.dbcv_vs_ari.png"
+        if plot_dbcv_vs_ari_from_grid(df_grid_detail, scatter_path):
             console.print(
-                f"[green]✓[/green] DBCV vs Hungarian scatter saved to: "
+                f"[green]✓[/green] DBCV vs ARI scatter saved to: "
                 f"[cyan]{scatter_path}[/cyan]"
             )
 
@@ -938,15 +1080,15 @@ def main(
 
     if (
         len(df_heatmap) > 0
-        and "hungarian_accuracy" in df_heatmap.columns
-        and df_heatmap["hungarian_accuracy"].notna().any()
+        and "ari" in df_heatmap.columns
+        and df_heatmap["ari"].notna().any()
     ):
-        hungarian_heatmap_path = output_dir / "model.hungarian_accuracy.heatmap.png"
+        ari_heatmap_path = output_dir / "model.ari.heatmap.png"
         plot_heatmap(
             df_heatmap,
-            hungarian_heatmap_path,
-            metric="hungarian_accuracy",
-            metric_label="Hungarian Accuracy",
+            ari_heatmap_path,
+            metric="ari",
+            metric_label="ARI",
         )
 
     console.print("\n[bold green]Results Summary[/bold green]")
@@ -986,11 +1128,21 @@ def main(
 
     console.print(table)
     console.print(f"\n[green]✓[/green] Results saved to: [cyan]{output_path}[/cyan]")
-    if detailed_grid_frames or prior_detail:
+    if df_grid_detail is not None and not df_grid_detail.empty:
         console.print(
             f"[green]✓[/green] Per-sample grid (all min_cluster_size values) saved to: "
             f"[cyan]{detail_path}[/cyan]"
         )
+    if fine_metadata_path.exists():
+        try:
+            fm = pd.read_pickle(fine_metadata_path, compression="gzip")
+        except Exception:
+            fm = None
+        if fm is not None and not fm.empty:
+            console.print(
+                f"[green]✓[/green] Fine clustering metadata (gzipped pickle) saved to: "
+                f"[cyan]{fine_metadata_path}[/cyan]"
+            )
     if len(df_heatmap) > 0:
         console.print(f"[green]✓[/green] Heatmap saved to: [cyan]{heatmap_path}[/cyan]")
 

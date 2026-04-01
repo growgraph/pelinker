@@ -16,8 +16,7 @@ from pelinker.clustering_grid import (
 from pelinker.embedding_fusion import mention_level_concat_frames
 from pelinker.io import read_batches
 from pelinker.reporting import ClusteringHyperparameters, ClusteringReport
-from sklearn.metrics import confusion_matrix
-from scipy.optimize import linear_sum_assignment
+from sklearn.metrics import adjusted_rand_score
 from numpy.random import RandomState
 
 from pelinker.config import ClusteringOptimizationConfig, TransformConfig
@@ -136,17 +135,16 @@ def _measure_label_simplicity(
     }
 
 
-def compute_hungarian_accuracy(y_true: np.ndarray, y_pred: np.ndarray) -> float:
+def compute_adjusted_rand_index(y_true: np.ndarray, y_pred: np.ndarray) -> float:
     """
-    Compute clustering accuracy using Hungarian algorithm to optimally match
-    predicted cluster labels to true labels.
+    Compute clustering quality via adjusted Rand index (ARI).
 
     Args:
         y_true: True labels (e.g., property names)
         y_pred: Predicted cluster labels
 
     Returns:
-        Accuracy score between 0 and 1
+        ARI score.
     """
     # Filter out noise points (label -1) for accuracy computation
     valid_mask = y_pred != -1
@@ -159,17 +157,8 @@ def compute_hungarian_accuracy(y_true: np.ndarray, y_pred: np.ndarray) -> float:
     if len(y_true_valid) == 0:
         return 0.0
 
-    # Compute confusion matrix
-    cm = confusion_matrix(y_true_valid, y_pred_valid)
-
-    # Use Hungarian algorithm to find optimal assignment
-    # We negate the matrix because linear_sum_assignment minimizes cost
-    row_ind, col_ind = linear_sum_assignment(-cm)
-
-    # Compute accuracy based on optimal assignment
-    accuracy = cm[row_ind, col_ind].sum() / cm.sum()
-
-    return float(accuracy)
+    ari = adjusted_rand_score(y_true_valid, y_pred_valid)
+    return float(ari)
 
 
 def _read_batches_concat(
@@ -264,11 +253,11 @@ def estimate_clustering_from_frame(
         labels, columns=["class"], index=dfr2_final.index
     )
 
-    hungarian_acc = None
+    ari_score = None
     if "property" in dfr2_final.columns and "class" in dfr2_final.columns:
         property_labels = dfr2_final["property"].astype("category").cat.codes.values
         cluster_labels = dfr2_final["class"].values
-        hungarian_acc = compute_hungarian_accuracy(property_labels, cluster_labels)
+        ari_score = compute_adjusted_rand_index(property_labels, cluster_labels)
 
     return ClusteringReport(
         hyperparameters=ClusteringHyperparameters(min_cluster_size=best_size),
@@ -277,7 +266,7 @@ def estimate_clustering_from_frame(
         n_clusters_emergent=n_clusters_emergent,
         metrics_df=metrics_df,
         df=dfr2_final,
-        hungarian_accuracy=hungarian_acc,
+        ari=ari_score,
     )
 
 

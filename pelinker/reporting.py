@@ -50,7 +50,7 @@ class ClusteringReport:
 
     metrics_df: pd.DataFrame
     df: pd.DataFrame
-    hungarian_accuracy: float | None = None
+    ari: float | None = None
 
     @property
     def best_size(self) -> int:
@@ -72,7 +72,7 @@ class ClusteringSearchSummaryRow:
     number_properties: MeanWithUncertainty
     n_clusters_emergent: MeanWithUncertainty
     dbcv: MeanWithUncertainty
-    hungarian_accuracy: MeanWithUncertainty | None
+    ari: MeanWithUncertainty | None
 
     def to_flat_dict(self) -> dict[str, str | float | None]:
         """Keys aligned with historical ``results.csv`` and ``plot_heatmap`` expectations."""
@@ -92,13 +92,13 @@ class ClusteringSearchSummaryRow:
             "best_score": d.mean,
             "best_score_std": d.std,
         }
-        if self.hungarian_accuracy is None:
-            row["hungarian_accuracy"] = None
-            row["hungarian_accuracy_std"] = 0.0
+        if self.ari is None:
+            row["ari"] = None
+            row["ari_std"] = 0.0
         else:
-            ha = self.hungarian_accuracy
-            row["hungarian_accuracy"] = ha.mean
-            row["hungarian_accuracy_std"] = ha.std
+            ari = self.ari
+            row["ari"] = ari.mean
+            row["ari_std"] = ari.std
         return row
 
 
@@ -106,14 +106,14 @@ def clustering_search_summary_row_from_flat_dict(
     row: dict[str, str | float | None],
 ) -> ClusteringSearchSummaryRow:
     """Reconstruct :class:`ClusteringSearchSummaryRow` from :meth:`to_flat_dict` output."""
-    ha_raw = row.get("hungarian_accuracy")
-    hungarian_block: MeanWithUncertainty | None
-    if ha_raw is None or (isinstance(ha_raw, float) and math.isnan(ha_raw)):
-        hungarian_block = None
+    ari_raw = row.get("ari")
+    ari_block: MeanWithUncertainty | None
+    if ari_raw is None or (isinstance(ari_raw, float) and math.isnan(ari_raw)):
+        ari_block = None
     else:
-        hungarian_block = MeanWithUncertainty(
-            mean=float(ha_raw),
-            std=float(row.get("hungarian_accuracy_std") or 0.0),
+        ari_block = MeanWithUncertainty(
+            mean=float(ari_raw),
+            std=float(row.get("ari_std") or 0.0),
         )
     return ClusteringSearchSummaryRow(
         model=str(row["model"]),
@@ -136,7 +136,7 @@ def clustering_search_summary_row_from_flat_dict(
             mean=float(row["best_score"]),
             std=float(row["best_score_std"] or 0.0),
         ),
-        hungarian_accuracy=hungarian_block,
+        ari=ari_block,
     )
 
 
@@ -161,9 +161,7 @@ def summarize_clustering_reports_for_search(
     scores = np.array([r.best_score for r in reports], dtype=np.float64)
     nprops = np.array([r.number_properties for r in reports], dtype=np.float64)
     n_clusters = np.array([r.n_clusters_emergent for r in reports], dtype=np.float64)
-    hungarian_vals = [
-        float(r.hungarian_accuracy) for r in reports if r.hungarian_accuracy is not None
-    ]
+    ari_vals = [float(r.ari) for r in reports if r.ari is not None]
 
     n = len(reports)
     std_sizes = float(np.std(sizes)) if n > 1 else 0.0
@@ -171,15 +169,15 @@ def summarize_clustering_reports_for_search(
     std_nprops = float(np.std(nprops)) if n > 1 else 0.0
     std_n_clusters = float(np.std(n_clusters)) if n > 1 else 0.0
 
-    hungarian_block: MeanWithUncertainty | None
-    if hungarian_vals:
-        arr = np.array(hungarian_vals, dtype=np.float64)
-        hungarian_block = MeanWithUncertainty(
+    ari_block: MeanWithUncertainty | None
+    if ari_vals:
+        arr = np.array(ari_vals, dtype=np.float64)
+        ari_block = MeanWithUncertainty(
             mean=float(np.mean(arr)),
             std=float(np.std(arr)) if len(arr) > 1 else 0.0,
         )
     else:
-        hungarian_block = None
+        ari_block = None
 
     return ClusteringSearchSummaryRow(
         model=model,
@@ -202,5 +200,5 @@ def summarize_clustering_reports_for_search(
             mean=float(np.mean(scores)),
             std=std_scores,
         ),
-        hungarian_accuracy=hungarian_block,
+        ari=ari_block,
     )

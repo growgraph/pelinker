@@ -16,7 +16,7 @@ def _minimal_report(
     best_score: float,
     *,
     n_clusters_emergent: int = 3,
-    hungarian: float | None = None,
+    ari: float | None = None,
 ) -> ClusteringReport:
     metrics_df = pd.DataFrame(
         {"min_cluster_size": [min_cluster_size], "dbcv": [best_score]}
@@ -29,7 +29,7 @@ def _minimal_report(
         n_clusters_emergent=n_clusters_emergent,
         metrics_df=metrics_df,
         df=df,
-        hungarian_accuracy=hungarian,
+        ari=ari,
     )
 
 
@@ -40,8 +40,8 @@ def test_clustering_report_best_size_alias() -> None:
 
 
 def test_summarize_clustering_reports_for_search_means_and_flat_dict() -> None:
-    r1 = _minimal_report(10, 0.5, n_clusters_emergent=4, hungarian=0.8)
-    r2 = _minimal_report(20, 0.7, n_clusters_emergent=8, hungarian=0.9)
+    r1 = _minimal_report(10, 0.5, n_clusters_emergent=4, ari=0.8)
+    r2 = _minimal_report(20, 0.7, n_clusters_emergent=8, ari=0.9)
     row = summarize_clustering_reports_for_search(
         [r1, r2],
         model="m1",
@@ -58,7 +58,7 @@ def test_summarize_clustering_reports_for_search_means_and_flat_dict() -> None:
     assert flat["best_score"] == pytest.approx(0.6)
     assert flat["n_clusters_emergent"] == pytest.approx(6.0)
     assert flat["n_clusters_emergent_std"] > 0
-    assert flat["hungarian_accuracy"] == pytest.approx(0.85)
+    assert flat["ari"] == pytest.approx(0.85)
 
 
 def test_summarize_empty_raises() -> None:
@@ -66,10 +66,10 @@ def test_summarize_empty_raises() -> None:
         summarize_clustering_reports_for_search([], model="m", layer="l")
 
 
-def test_summarize_hungarian_none_when_all_missing() -> None:
-    r = _minimal_report(5, 0.3, hungarian=None)
+def test_summarize_ari_none_when_all_missing() -> None:
+    r = _minimal_report(5, 0.3, ari=None)
     row = summarize_clustering_reports_for_search([r], model="m", layer="l")
-    assert row.hungarian_accuracy is None
+    assert row.ari is None
     flat = row.to_flat_dict()
-    assert flat["hungarian_accuracy"] is None
-    assert flat["hungarian_accuracy_std"] == 0.0
+    assert flat["ari"] is None
+    assert flat["ari_std"] == 0.0

@@ -115,15 +115,15 @@ def test_summary_flat_dict_round_trip() -> None:
         number_properties=MeanWithUncertainty(mean=5.0, std=0.0),
         n_clusters_emergent=MeanWithUncertainty(mean=3.0, std=0.5),
         dbcv=MeanWithUncertainty(mean=0.44, std=0.01),
-        hungarian_accuracy=MeanWithUncertainty(mean=0.8, std=0.05),
+        ari=MeanWithUncertainty(mean=0.8, std=0.05),
     )
     flat = row.to_flat_dict()
     back = clustering_search_summary_row_from_flat_dict(flat)
     assert back.model == row.model
     assert back.layer == row.layer
     assert back.dbcv.mean == row.dbcv.mean
-    assert back.hungarian_accuracy is not None
-    assert back.hungarian_accuracy.mean == 0.8
+    assert back.ari is not None
+    assert back.ari.mean == 0.8
 
 
 def test_checkpoint_to_json_dict_sorted_keys(tmp_path: pathlib.Path) -> None:

@@ -16,7 +16,7 @@ from plotly import express as px, graph_objects as go
 # Columns appended in ``run/analysis/clustering_quality.py`` grid export (per-sample summaries).
 GRID_COL_CHOSEN_MIN_CLUSTER_SIZE = "chosen_min_cluster_size"
 GRID_COL_SAMPLE_BEST_DBCV = "sample_best_dbcv"
-GRID_COL_SAMPLE_HUNGARIAN = "sample_hungarian_accuracy"
+GRID_COL_SAMPLE_ARI = "sample_ari"
 
 # χ²(2) critical value at p≈0.95 for Gaussian 95% contour (no scipy).
 _CHI2_PPF_95_DF2 = 5.991464550106692
@@ -301,16 +301,16 @@ def _draw_arity_marker(
     ax.add_patch(fb)
 
 
-def plot_dbcv_vs_hungarian_from_grid(
+def plot_dbcv_vs_ari_from_grid(
     df_grid: pd.DataFrame,
     output_path: pathlib.Path,
 ) -> bool:
     """
-    Scatter of mean DBCV vs mean Hungarian per (model, layer); shape = arity (△/□/○),
+    Scatter of mean DBCV vs mean ARI per (model, layer); shape = arity (△/□/○),
     fill colors = base encoder model(s); text = layer spec only (e.g. fusion ``2+3``).
     95% covariance ellipses when ``n_sample`` ≥ 2.
 
-    Expects ``sample_best_dbcv``, ``sample_hungarian_accuracy`` on the grid export.
+    Expects ``sample_best_dbcv``, ``sample_ari`` on the grid export.
     Both axes are fixed to ``[0, _AXIS_MAX]``.
 
     Returns:
@@ -321,7 +321,7 @@ def plot_dbcv_vs_hungarian_from_grid(
         "layer",
         "sample_idx",
         GRID_COL_SAMPLE_BEST_DBCV,
-        GRID_COL_SAMPLE_HUNGARIAN,
+        GRID_COL_SAMPLE_ARI,
     }
     if not needed.issubset(df_grid.columns):
         return False
@@ -333,10 +333,10 @@ def plot_dbcv_vs_hungarian_from_grid(
             "layer",
             "sample_idx",
             GRID_COL_SAMPLE_BEST_DBCV,
-            GRID_COL_SAMPLE_HUNGARIAN,
+            GRID_COL_SAMPLE_ARI,
         ],
     ].drop_duplicates(subset=["model", "layer", "sample_idx"], keep="first")
-    df = df[df[GRID_COL_SAMPLE_HUNGARIAN].notna()].copy()
+    df = df[df[GRID_COL_SAMPLE_ARI].notna()].copy()
     if df.empty:
         return False
 
@@ -352,7 +352,7 @@ def plot_dbcv_vs_hungarian_from_grid(
         xy = np.column_stack(
             [
                 g[GRID_COL_SAMPLE_BEST_DBCV].to_numpy(dtype=np.float64),
-                g[GRID_COL_SAMPLE_HUNGARIAN].to_numpy(dtype=np.float64),
+                g[GRID_COL_SAMPLE_ARI].to_numpy(dtype=np.float64),
             ]
         )
         mean = xy.mean(axis=0)
@@ -409,8 +409,8 @@ def plot_dbcv_vs_hungarian_from_grid(
     ax.set_ylim(0.0, _AXIS_MAX)
     ax.set_aspect("equal")
     ax.set_xlabel("DBCV (per-sample best, mean over samples)")
-    ax.set_ylabel("Hungarian accuracy (per-sample, mean over samples)")
-    ax.set_title("DBCV vs Hungarian; dashed ellipse ≈95% (n_sample ≥ 2)")
+    ax.set_ylabel("Adjusted Rand Index (per-sample, mean over samples)")
+    ax.set_title("DBCV vs ARI; dashed ellipse ≈95% (n_sample >= 2)")
 
     order_a = ["singleton", "fusion2", "fusion3"]
     arity_labels = {

@@ -1,4 +1,4 @@
-"""Replot DBCV vs Hungarian scatter from an existing ``results_grid_per_sample.csv``."""
+"""Replot DBCV vs ARI scatter from an existing ``results_grid_per_sample.csv``."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ import sys
 import click
 import pandas as pd
 
-from pelinker.plotting import plot_dbcv_vs_hungarian_from_grid
+from pelinker.plotting import plot_dbcv_vs_ari_from_grid
 
 
 @click.command()
@@ -21,20 +21,16 @@ from pelinker.plotting import plot_dbcv_vs_hungarian_from_grid
     "-o",
     type=click.Path(path_type=pathlib.Path),
     default=None,
-    help="Output PNG path (default: alongside CSV as model.dbcv_vs_hungarian.png)",
+    help="Output PNG path (default: alongside CSV as model.dbcv_vs_ari.png)",
 )
 def main(grid_csv: pathlib.Path, output: pathlib.Path | None) -> None:
     df = pd.read_csv(grid_csv)
-    out = (
-        output
-        if output is not None
-        else grid_csv.parent / "model.dbcv_vs_hungarian.png"
-    )
-    if not plot_dbcv_vs_hungarian_from_grid(df, out):
+    out = output if output is not None else grid_csv.parent / "model.dbcv_vs_ari.png"
+    if not plot_dbcv_vs_ari_from_grid(df, out):
         click.echo(
             "Could not build figure (need model, layer, sample_idx, "
-            "sample_best_dbcv, sample_hungarian_accuracy with at least one "
-            "non-null Hungarian row).",
+            "sample_best_dbcv, sample_ari with at least one "
+            "non-null ARI row).",
             err=True,
         )
         sys.exit(1)
