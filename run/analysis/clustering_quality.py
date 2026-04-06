@@ -1,6 +1,7 @@
 import click
 import gc
 import pathlib
+import sys
 
 import pandas as pd
 from numpy.random import RandomState
@@ -139,6 +140,7 @@ def _materialize_best_report(
             file_paths=ordered_paths,
             selected_labels=selected_labels,
             all_metrics_dfs=None,
+            show_embedding_read_progress=sys.stdout.isatty(),
         )
     key = (top.model, top.layer)
     path = path_by_ml.get(key)
@@ -150,6 +152,7 @@ def _materialize_best_report(
         file_path=path,
         selected_labels=selected_labels,
         all_metrics_dfs=None,
+        show_embedding_read_progress=sys.stdout.isatty(),
     )
 
 
@@ -399,10 +402,13 @@ def _results_from_checkpoint(
     help="Fraction of dataset to sample",
 )
 @click.option(
-    "--head",
+    "--n-embedding-batches",
     type=click.INT,
     default=None,
-    help="Number of batches to take (None for all)",
+    help=(
+        "Max parquet read batches per file (see --batch-size for rows per batch); "
+        "omit to read all batches"
+    ),
 )
 @click.option(
     "--batch-size",
@@ -486,7 +492,7 @@ def main(
     min_class_size: int,
     seed: int,
     frac: float,
-    head: int | None,
+    n_embedding_batches: int | None,
     batch_size: int,
     n_sample: int,
     prefix: str,
@@ -564,7 +570,7 @@ def main(
         min_class_size=min_class_size,
         seed=seed,
         frac=frac,
-        head=head,
+        n_embedding_batches=n_embedding_batches,
         batch_size=batch_size,
         prefix=prefix,
         n_sample=n_sample,
@@ -725,7 +731,7 @@ def main(
                     max_scale=max_scale,
                     rns=RandomState(seed=seed),
                     frac=frac,
-                    head=head,
+                    n_embedding_batches=n_embedding_batches,
                     batch_size=batch_size,
                     optimization_method="mean",
                 )
@@ -753,6 +759,12 @@ def main(
                             file_path=file_path,
                             selected_labels=selected_labels,
                             all_metrics_dfs=all_metrics_dfs,
+                            embedding_read_status=lambda m, sp=status_parts: (
+                                progress.update(
+                                    task,
+                                    description=" | ".join([*sp, m]),
+                                )
+                            ),
                         )
                     except Exception as e:
                         report = None
@@ -936,21 +948,19 @@ def main(
                         max_scale=max_scale,
                         rns=RandomState(seed=seed),
                         frac=frac,
-                        head=head,
+                        n_embedding_batches=n_embedding_batches,
                         batch_size=batch_size,
                         optimization_method="mean",
                     )
 
                     for sample_idx in range(n_sample):
-                        fusion_progress.update(
-                            ftask,
-                            description=(
-                                f"[cyan]{model_label}[/cyan] "
-                                f"[yellow]{layer_label}[/yellow] "
-                                f"(Σ singles≈{sum_proxy:.3f}) "
-                                f"sample {sample_idx + 1}/{n_sample}"
-                            ),
+                        fusion_status = (
+                            f"[cyan]{model_label}[/cyan] "
+                            f"[yellow]{layer_label}[/yellow] "
+                            f"(Σ singles≈{sum_proxy:.3f}) "
+                            f"sample {sample_idx + 1}/{n_sample}"
                         )
+                        fusion_progress.update(ftask, description=fusion_status)
                         try:
                             report = estimate_model_clustering(
                                 transform_config=transform_config,
@@ -958,6 +968,12 @@ def main(
                                 file_paths=ordered_paths,
                                 selected_labels=selected_labels,
                                 all_metrics_dfs=fusion_all_metrics_dfs,
+                                embedding_read_status=lambda m, fs=fusion_status: (
+                                    fusion_progress.update(
+                                        ftask,
+                                        description=f"{fs} | [dim]{m}[/dim]",
+                                    )
+                                ),
                             )
                         except Exception as e:
                             report = None
@@ -1162,7 +1178,7 @@ def main(
             max_scale=max_scale,
             rns=RandomState(seed=seed),
             frac=frac,
-            head=head,
+            n_embedding_batches=n_embedding_batches,
             batch_size=batch_size,
             optimization_method="mean",
         )

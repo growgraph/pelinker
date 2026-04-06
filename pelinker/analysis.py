@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import pathlib
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from typing import Literal
 
 import numpy as np
@@ -13,8 +13,7 @@ from pelinker.clustering_grid import (
     evaluate_cluster_size_grid,
     solve_optimal_min_cluster_size_from_aggregated,
 )
-from pelinker.embedding_fusion import mention_level_concat_frames
-from pelinker.io import read_batches
+from pelinker.embedding_fusion import concat_mention_level_embedding_sources
 from pelinker.reporting import ClusteringHyperparameters, ClusteringReport
 from sklearn.metrics import adjusted_rand_score
 from numpy.random import RandomState
@@ -161,27 +160,6 @@ def compute_adjusted_rand_index(y_true: np.ndarray, y_pred: np.ndarray) -> float
     return float(ari)
 
 
-def _read_batches_concat(
-    path: pathlib.Path,
-    config: ClusteringOptimizationConfig,
-) -> pd.DataFrame | None:
-    if not path.exists():
-        return None
-    agg: list[pd.DataFrame] = []
-    try:
-        for i, batch in enumerate(
-            read_batches(path.as_posix(), batch_size=config.batch_size)
-        ):
-            agg.append(batch)
-            if config.head is not None and i >= config.head - 1:
-                break
-    except Exception:
-        return None
-    if not agg:
-        return None
-    return pd.concat(agg, ignore_index=True)
-
-
 def estimate_clustering_from_frame(
     dfr: pd.DataFrame,
     transform_config: TransformConfig,
@@ -279,14 +257,17 @@ def estimate_model_clustering(
     dfr: pd.DataFrame | None = None,
     selected_labels: set[str] | None = None,
     all_metrics_dfs: list[pd.DataFrame] | None = None,
+    embedding_read_status: Callable[[str], None] | None = None,
+    show_embedding_read_progress: bool = False,
 ):
     """
     Estimate optimal cluster size from parquet file(s) or a preloaded DataFrame.
 
     Provide exactly one of ``file_path``, ``file_paths``, or ``dfr``. For multiple parquets,
     rows are inner-joined on (pmid, property, mention) and ``embed`` vectors are concatenated
-    in path order (must match ``EmbeddingModelMetadata.sources``). Sampling ``frac`` / ``head``
-    are applied while loading each file (batches), then ``frac`` is applied once on the merged
+    in path order (must match ``EmbeddingModelMetadata.sources``). Sampling ``frac`` /
+    ``n_embedding_batches`` are applied while loading each file (batches), then ``frac`` is applied
+    once on the merged
     mention-level frame.
 
     Args:
@@ -298,6 +279,10 @@ def estimate_model_clustering(
         dfr: Optional pre-built frame (e.g. fused) with ``property`` and ``embed`` columns.
         selected_labels: Optional set of labels from selected labels KB to filter by
         all_metrics_dfs: Optional list of metrics DataFrames from previous samples.
+        embedding_read_status: Callback for embedding parquet batch progress lines
+            (e.g. append to an existing Rich ``Progress`` task description).
+        show_embedding_read_progress: When True and ``embedding_read_status`` is omitted,
+            show a transient Rich progress display while loading parquet batches.
 
     Returns:
         ClusteringReport or None if processing failed
@@ -314,28 +299,21 @@ def estimate_model_clustering(
     frame: pd.DataFrame | None
     if dfr is not None:
         frame = dfr.copy()
-    elif file_paths is not None:
-        paths = list(file_paths)
+    else:
+        if file_paths is not None:
+            paths = list(file_paths)
+        else:
+            assert file_path is not None
+            paths = [file_path]
         if len(paths) == 0:
             return None
-        parts: list[pd.DataFrame] = []
-        for p in paths:
-            part = _read_batches_concat(p, config)
-            if part is None or len(part) == 0:
-                return None
-            parts.append(part)
-        if len(parts) == 1:
-            frame = parts[0]
-        else:
-            try:
-                frame = mention_level_concat_frames(parts)
-            except Exception:
-                return None
-        if frame is None or len(frame) == 0:
-            return None
-    else:
-        assert file_path is not None
-        frame = _read_batches_concat(file_path, config)
+        frame = concat_mention_level_embedding_sources(
+            paths,
+            batch_size=config.batch_size,
+            n_embedding_batches=config.n_embedding_batches,
+            read_status=embedding_read_status,
+            show_read_progress=show_embedding_read_progress,
+        )
         if frame is None or len(frame) == 0:
             return None
 
@@ -351,6 +329,54 @@ def estimate_model_clustering(
         all_metrics_dfs=all_metrics_dfs,
         aggregation_level="mention",
     )
+
+
+def mention_frame_from_embedding_paths(
+    paths: Sequence[pathlib.Path],
+    *,
+    optimization_config: ClusteringOptimizationConfig | None = None,
+    read_status: Callable[[str], None] | None = None,
+    show_read_progress: bool = False,
+) -> pd.DataFrame | None:
+    """
+    Load mention-level rows from parquet file(s) like ``estimate_model_clustering``
+    (batched read, optional multi-source inner join on keys), without ``frac`` subsampling.
+    """
+    cfg = optimization_config or ClusteringOptimizationConfig()
+    return concat_mention_level_embedding_sources(
+        paths,
+        batch_size=cfg.batch_size,
+        n_embedding_batches=cfg.n_embedding_batches,
+        read_status=read_status,
+        show_read_progress=show_read_progress,
+    )
+
+
+def filter_mention_frame_by_kb_labels(
+    frame: pd.DataFrame,
+    kb_labels: set[str] | None,
+) -> pd.DataFrame:
+    """Restrict rows to ``property`` values present in ``kb_labels`` (skip if ``kb_labels`` is None)."""
+    if kb_labels is None:
+        return frame.copy()
+    return frame.loc[frame["property"].isin(kb_labels)].copy()
+
+
+def drop_properties_with_few_mentions(
+    frame: pd.DataFrame,
+    min_mentions_per_property: int,
+) -> pd.DataFrame:
+    """
+    Drop properties with fewer than ``min_mentions_per_property`` rows (same rule as
+    ``estimate_clustering_from_frame`` with ``aggregation_level='mention'``).
+    """
+    if "property" not in frame.columns:
+        raise ValueError("frame must contain a 'property' column")
+    mention_count = frame["property"].value_counts()
+    low_count = mention_count[
+        ~(mention_count >= min_mentions_per_property)
+    ].index.to_list()
+    return frame.loc[~frame["property"].isin(low_count)].copy()
 
 
 def embeddings_dict_to_dataframe(

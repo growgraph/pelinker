@@ -133,7 +133,7 @@ Hydra’s **`hydra.output_subdir`** defaults to **`null`** here (no `.hydra` fol
 | `batch_size` | `1000` | Stage (B): rows per batch when **reading large embedding parquet files**; same role as `clustering_quality.py --batch-size`. |
 | `nlp_model` | `en_core_web_trf` | spaCy pipeline for mention extraction (`uv run spacy download en_core_web_trf`). |
 | `max_input_buffers` | *(unset)* | Stage (A): stop after this many text-table read passes (each up to `input_buffer_rows` rows); unrelated to `encoder_batch_size`. |
-| `head` | *(unset)* | Stage B only: max number of parquet read batches (see `pelinker.analysis` / `clustering_quality.py --head`). |
+| `n_embedding_batches` | *(unset)* | Stage B only: max parquet read batches per file (see `pelinker.analysis` / `clustering_quality.py --n-embedding-batches`). |
 | **`kb_name`** | stem of `kb_path` | Display name stored in `KBConfig`. |
 | **`kb_version`** | `0.1.0` | KB version string stored on the model. |
 | **`kb_created_at`** | today | ISO date string (`YYYY-MM-DD`); defaults to **today** if omitted. |

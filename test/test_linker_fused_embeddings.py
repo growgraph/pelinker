@@ -1,8 +1,14 @@
-"""Fused embedding paths for ``Linker.fit`` (property-level concat)."""
+"""Mention-level fused parquets for ``Linker.fit`` (inner join + concat, analysis-aligned)."""
 
 import pandas as pd
 
-from pelinker.config import EmbeddingModelMetadata, EmbeddingSourceSpec
+from numpy.random import RandomState
+
+from pelinker.config import (
+    ClusteringOptimizationConfig,
+    EmbeddingModelMetadata,
+    EmbeddingSourceSpec,
+)
 from pelinker.model import Linker
 from pelinker.transform import TransformConfig
 
@@ -36,24 +42,94 @@ def test_fused_fit_two_parquets_stacks_embedding_dim(tmp_path):
     pd.DataFrame(rows1).to_parquet(p1)
     pd.DataFrame(rows2).to_parquet(p2)
 
+    opt = ClusteringOptimizationConfig(
+        min_class_size=1,
+        max_scale=30,
+        batch_size=500,
+    )
     linker = Linker(labels_map=labels_map, embedding_metadata=metadata)
     linker.fit(
         [p1, p2],
         transform_config=TransformConfig(
             pca_components=4, umap_components=2, umap_viz_components=2
         ),
-        min_cluster_size=5,
+        min_cluster_size=2,
+        clustering_optimization_config=opt,
     )
     assert linker.transformer is not None
     assert len(linker.vocabulary) == n_ent
     assert linker.transformer.pca is not None
     assert linker.transformer.pca.n_features_in_ == 4
+    assert linker.clusterer is not None
+    assert getattr(linker.clusterer, "prediction_data_", None) is not None
+    assert linker.training_cluster_frame is not None
+    assert len(linker.training_cluster_frame) == n_ent
+    assert set(linker.training_cluster_frame.columns) >= {
+        "pmid",
+        "property",
+        "mention",
+        "cluster",
+    }
+
+
+def test_fused_fit_optimize_clustering_grid_then_full_fit(tmp_path):
+    """Grid search uses ``frac`` subsample; final model fits on all prepared rows."""
+    metadata = EmbeddingModelMetadata(
+        sources=(
+            EmbeddingSourceSpec(model_type="a", layers_spec="1"),
+            EmbeddingSourceSpec(model_type="a", layers_spec="2"),
+        )
+    )
+    n_ent = 20
+    labels_map = {f"e{k}": f"p{k}" for k in range(n_ent)}
+    p1 = tmp_path / "s0.parquet"
+    p2 = tmp_path / "s1.parquet"
+    rows1 = []
+    rows2 = []
+    for k in range(n_ent):
+        for pmid in ("a", "b", "c", "d"):
+            rows1.append(
+                {
+                    "pmid": pmid,
+                    "property": f"p{k}",
+                    "mention": "m",
+                    "embed": [float(k), 0.1],
+                }
+            )
+            rows2.append(
+                {
+                    "pmid": pmid,
+                    "property": f"p{k}",
+                    "mention": "m",
+                    "embed": [0.2, float(k) * 0.05],
+                }
+            )
+    pd.DataFrame(rows1).to_parquet(p1)
+    pd.DataFrame(rows2).to_parquet(p2)
+
+    opt = ClusteringOptimizationConfig(
+        min_class_size=4,
+        max_scale=25,
+        frac=0.7,
+        rns=RandomState(7),
+        batch_size=500,
+    )
+    linker = Linker(labels_map=labels_map, embedding_metadata=metadata)
+    linker.fit(
+        [p1, p2],
+        transform_config=TransformConfig(
+            pca_components=4, umap_components=2, umap_viz_components=2
+        ),
+        optimize_clustering=True,
+        clustering_optimization_config=opt,
+    )
+    assert linker.clusterer is not None
+    assert linker.training_cluster_frame is not None
+    assert len(linker.training_cluster_frame) == 4 * n_ent
 
 
 def test_estimate_model_clustering_multi_file_paths(tmp_path):
     from pelinker.analysis import estimate_model_clustering
-    from pelinker.config import ClusteringOptimizationConfig
-    from numpy.random import RandomState
 
     p1 = tmp_path / "s0.parquet"
     p2 = tmp_path / "s1.parquet"

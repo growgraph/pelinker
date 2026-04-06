@@ -1,7 +1,10 @@
+import sys
 import tempfile
+from collections import Counter
 from collections.abc import Sequence
 from dataclasses import replace
 
+import pandas as pd
 import torch
 import joblib
 import numpy as np
@@ -18,6 +21,12 @@ from pelinker.config import (
     KBConfig,
     TransformConfig,
 )
+from pelinker.analysis import (
+    drop_properties_with_few_mentions,
+    estimate_clustering_from_frame,
+    filter_mention_frame_by_kb_labels,
+    mention_frame_from_embedding_paths,
+)
 from pelinker.embedder import embed_kb_corpus
 from pelinker.embedding_fusion import (
     fused_property_vectors_from_paths,
@@ -28,6 +37,42 @@ from pelinker.transform import EmbeddingTransformer
 from pelinker.util import load_models, texts_to_vrep
 
 logger = logging.getLogger(__name__)
+
+
+def _modal_cluster_deterministic(clusters: list[int]) -> int | None:
+    """Most frequent cluster among ``clusters``, excluding HDBSCAN noise (-1); ties → smallest id."""
+    vals = [int(c) for c in clusters if int(c) != -1]
+    if not vals:
+        return None
+    cnt = Counter(vals)
+    best_n = max(cnt.values())
+    candidates = sorted(k for k, v in cnt.items() if v == best_n)
+    return candidates[0]
+
+
+def _provisional_cluster_assignments_from_training_frame(
+    labels_map: dict[str, str],
+    training: pd.DataFrame,
+) -> dict[str, int]:
+    """
+    Map each ``entity_id`` to a single cluster id for ``predict`` compatibility.
+
+    Heuristic: modal training cluster among rows whose ``property`` equals
+    ``labels_map[entity_id]``, ignoring -1. Interpretation of clusters is otherwise
+    left to downstream analysis (see ``Linker.training_cluster_frame``).
+    """
+    out: dict[str, int] = {}
+    if "property" not in training.columns or "cluster" not in training.columns:
+        return out
+    for entity_id, label in labels_map.items():
+        rows = training.loc[training["property"] == label, "cluster"]
+        if len(rows) == 0:
+            continue
+        mode = _modal_cluster_deterministic(rows.astype(int).tolist())
+        if mode is None:
+            continue
+        out[str(entity_id)] = int(mode)
+    return out
 
 
 class Linker:
@@ -49,6 +94,7 @@ class Linker:
 
         self.vocabulary: list[str] = []
         self.labels_map: dict[str, str] = kwargs.pop("labels_map", dict())
+        self.training_cluster_frame: pd.DataFrame | None = None
         self._hf_tokenizer = None
         self._hf_model = None
         self._hf_models_by_type: dict[str, tuple[object, object]] = {}
@@ -70,6 +116,8 @@ class Linker:
             pe_model.kb_config = None
         if "_hf_models_by_type" not in pe_model.__dict__:
             pe_model._hf_models_by_type = {}
+        if "training_cluster_frame" not in pe_model.__dict__:
+            pe_model.training_cluster_frame = None
         return pe_model
 
     @staticmethod
@@ -100,17 +148,21 @@ class Linker:
         b) Clustering the embeddings
 
         Args:
-            embeddings: Path or sequence of paths to parquet file(s) (columns ``property``,
-                        ``embed``; mention-level rows). Order must match
-                        ``embedding_metadata.sources``. Vectors are averaged per property per
-                        file, then concatenated across files for each property (intersection).
+            embeddings: Path or sequence of paths to parquet file(s) (mention-level rows:
+                        ``pmid``, ``property``, ``mention``, ``embed``). Multiple files are
+                        fused like ``estimate_model_clustering`` (inner join on keys, concat
+                        embeddings). Order must match ``embedding_metadata.sources``.
                         If None, ``embed_kb_corpus`` is run (one output file per source).
             transform_config: TransformConfig instance
-            min_cluster_size: Minimum cluster size for HDBSCAN. If None and optimize_clustering=False,
-                            uses default from transform_config or 20.
-            kb_labels: Set of KB property labels to filter by (only used when embeddings is a file path)
-            optimize_clustering: If True, optimize min_cluster_size using grid search
-            clustering_optimization_config: Config object for clustering optimization.
+            min_cluster_size: Minimum cluster size for HDBSCAN when ``optimize_clustering`` is
+                False. If None, uses 20.
+            kb_labels: Restrict training rows to these ``property`` labels (optional).
+            optimize_clustering: If True, run ``min_cluster_size`` grid search on a
+                ``clustering_optimization_config.frac`` subsample (analysis-aligned), then
+                fit the serialized model on **all** prepared rows (no subsampling).
+            clustering_optimization_config: Parquet batching (``batch_size``,
+                ``n_embedding_batches``), grid bounds (``min_class_size``, ``max_scale``),
+                grid subsample ``frac``, and RNG ``rns`` / ``frac`` for phase 1 only.
             embedding_training: Corpus paths and embedding runtime. Required when embeddings=None.
             embedding_metadata: If provided, overrides or sets ``self.embedding_metadata`` for
                 this fit (required when embeddings=None unless already set on the linker).
@@ -127,6 +179,8 @@ class Linker:
         try:
             if embedding_metadata is not None:
                 self.embedding_metadata = embedding_metadata
+
+            read_cfg = clustering_optimization_config or ClusteringOptimizationConfig()
 
             if embeddings is None:
                 if embedding_training is None:
@@ -145,7 +199,7 @@ class Linker:
                     embeddings_paths.append(pathlib.Path(tf.name))
                     tf.close()
 
-                logger.info("Step (a): Embedding corpus (%s source(s))...", k)
+                logger.info("Stage (a): Embedding corpus (%s source(s))...", k)
                 embed_kb_corpus(
                     metadata=self.embedding_metadata,
                     training=embedding_training,
@@ -163,55 +217,46 @@ class Linker:
                         f"got {len(embeddings_paths)}"
                     )
                 logger.info(
-                    "Step (a): Using provided embeddings (%s file(s)): %s",
+                    "Stage (A): Using provided embeddings (%s file(s)): %s",
                     len(embeddings_paths),
                     embeddings_paths,
                 )
 
-            if optimize_clustering:
-                logger.info("Optimizing clustering parameters...")
-                min_cluster_size = self._optimize_clustering(
-                    embeddings_paths,
-                    transform_config,
-                    kb_labels,
-                    clustering_optimization_config,
-                )
-
             logger.info(
-                "Loading embeddings from %s parquet file(s)", len(embeddings_paths)
+                "Stage (B): mention-level load from %s parquet file(s)",
+                len(embeddings_paths),
             )
-            embeddings_data, entity_ids = self._load_fused_embeddings_from_files(
-                embeddings_paths, kb_labels
+            raw = mention_frame_from_embedding_paths(
+                embeddings_paths,
+                optimization_config=read_cfg,
+                show_read_progress=True,
             )
-            self.vocabulary = entity_ids
-
-            self.transform_config = transform_config
-
-            self.transformer = EmbeddingTransformer(self.transform_config)
-            umap_clustering, _ = self.transformer.fit_transform(embeddings_data)
-
-            if min_cluster_size is None:
-                min_cluster_size = 20
-
-            self.clusterer = hdbscan.HDBSCAN(
-                min_cluster_size=min_cluster_size,
-                gen_min_span_tree=True,
-                prediction_data=True,
+            if raw is None or len(raw) == 0:
+                raise ValueError(
+                    "No mention-level embedding rows loaded from parquet (check paths "
+                    "and columns pmid, property, mention, embed)."
+                )
+            filtered = filter_mention_frame_by_kb_labels(raw, kb_labels)
+            if len(filtered) == 0:
+                raise ValueError("No rows left after KB property-label filter")
+            prepared = drop_properties_with_few_mentions(
+                filtered, read_cfg.min_class_size
             )
-            cluster_labels = self.clusterer.fit_predict(umap_clustering)
+            if len(prepared) == 0:
+                raise ValueError(
+                    "No rows left after dropping properties with fewer than "
+                    f"{read_cfg.min_class_size} mentions each"
+                )
+            prepared = prepared.reset_index(drop=True)
 
-            self.cluster_assignments = {
-                entity_id: int(cluster_id)
-                for entity_id, cluster_id in zip(self.vocabulary, cluster_labels)
-            }
-
-            if kb_config is not None:
-                if kb_config.entity_count is None:
-                    self.kb_config = replace(
-                        kb_config, entity_count=len(self.vocabulary)
-                    )
-                else:
-                    self.kb_config = kb_config
+            self._fit_clustering_on_prepared_mentions(
+                prepared=prepared,
+                transform_config=transform_config,
+                read_cfg=read_cfg,
+                optimize_clustering=optimize_clustering,
+                min_cluster_size_arg=min_cluster_size,
+                kb_config=kb_config,
+            )
 
             return self
         finally:
@@ -225,6 +270,95 @@ class Linker:
                             "Failed to remove temporary parquet file %s: %s", p, e
                         )
 
+    def _fit_clustering_on_prepared_mentions(
+        self,
+        *,
+        prepared: pd.DataFrame,
+        transform_config: TransformConfig,
+        read_cfg: ClusteringOptimizationConfig,
+        optimize_clustering: bool,
+        min_cluster_size_arg: int | None,
+        kb_config: KBConfig | None,
+    ) -> None:
+        """Grid search (optional) on subsample; final PCA/UMAP + HDBSCAN on full ``prepared`` frame."""
+        if optimize_clustering:
+            grid_sample = prepared.sample(
+                frac=read_cfg.frac,
+                random_state=read_cfg.rns,
+                replace=False,
+            )
+            if len(grid_sample) == 0:
+                logger.warning(
+                    "Empty grid subsample (frac=%s); using full prepared frame for grid",
+                    read_cfg.frac,
+                )
+                grid_sample = prepared
+            report = estimate_clustering_from_frame(
+                grid_sample,
+                transform_config,
+                optimization_config=read_cfg,
+                selected_labels=None,
+                all_metrics_dfs=None,
+                aggregation_level="mention",
+            )
+            if report is None:
+                logger.warning(
+                    "Clustering grid failed; falling back to min_class_size=%s",
+                    read_cfg.min_class_size,
+                )
+                best_mcs = int(read_cfg.min_class_size)
+            else:
+                best_mcs = int(report.hyperparameters.min_cluster_size)
+                logger.info(
+                    "Grid search selected min_cluster_size=%s (dbcv=%.4f)",
+                    best_mcs,
+                    report.best_score,
+                )
+        else:
+            best_mcs = int(
+                min_cluster_size_arg if min_cluster_size_arg is not None else 20
+            )
+
+        embeddings = np.stack(prepared["embed"].values).astype(np.float32, copy=False)
+        self.transform_config = transform_config
+        self.transformer = EmbeddingTransformer(transform_config)
+        umap_clustering, _ = self.transformer.fit_transform(embeddings)
+
+        self.clusterer = hdbscan.HDBSCAN(
+            min_cluster_size=best_mcs,
+            gen_min_span_tree=True,
+            prediction_data=True,
+        )
+        cluster_labels_arr = self.clusterer.fit_predict(umap_clustering)
+        cluster_labels = cluster_labels_arr.astype(int, copy=False)
+
+        tc_cols = ["pmid", "property", "mention"]
+        missing = [c for c in tc_cols if c not in prepared.columns]
+        if missing:
+            raise ValueError(
+                "Prepared mention frame missing columns required for "
+                f"training_cluster_frame: {missing}"
+            )
+        self.training_cluster_frame = prepared[tc_cols].copy()
+        self.training_cluster_frame["cluster"] = cluster_labels
+
+        self.cluster_assignments = _provisional_cluster_assignments_from_training_frame(
+            self.labels_map,
+            self.training_cluster_frame,
+        )
+        self.vocabulary = sorted(self.cluster_assignments.keys())
+        if not self.vocabulary:
+            raise ValueError(
+                "No entity_ids received provisional cluster assignments after fit "
+                "(check labels_map and training property labels)"
+            )
+
+        if kb_config is not None:
+            if kb_config.entity_count is None:
+                self.kb_config = replace(kb_config, entity_count=len(self.vocabulary))
+            else:
+                self.kb_config = kb_config
+
     def _load_embeddings_from_file(
         self, embeddings_path: pathlib.Path, kb_labels: set[str] | None = None
     ) -> tuple[np.ndarray, list[str]]:
@@ -235,90 +369,41 @@ class Linker:
         self,
         embeddings_paths: Sequence[pathlib.Path],
         kb_labels: set[str] | None = None,
+        *,
+        read_config: ClusteringOptimizationConfig | None = None,
     ) -> tuple[np.ndarray, list[str]]:
         """
         Per-file per-property mean embeddings, intersection across sources, concat features.
+
+        Legacy helper for property-level loads; ``Linker.fit`` uses mention-level fusion instead.
         """
+        cfg = read_config or ClusteringOptimizationConfig()
         logger.info(
             "Reading %s parquet source(s) and fusing per-property vectors...",
             len(embeddings_paths),
         )
-        fused = fused_property_vectors_from_paths(embeddings_paths, kb_labels)
+        fused = fused_property_vectors_from_paths(
+            embeddings_paths,
+            kb_labels,
+            batch_size=cfg.batch_size,
+            n_embedding_batches=cfg.n_embedding_batches,
+            show_read_progress=sys.stdout.isatty(),
+        )
         if not fused:
             raise ValueError("No fused property vectors (empty intersection or inputs)")
 
-        entity_ids: list[str] = []
-        embeddings_list: list[np.ndarray] = []
-        for prop_label in sorted(fused.keys()):
-            entity_id = None
-            for eid, label in self.labels_map.items():
-                if label == prop_label:
-                    entity_id = eid
-                    break
-
-            if entity_id is not None:
-                entity_ids.append(entity_id)
-                embeddings_list.append(fused[prop_label])
-            else:
-                logger.warning(
-                    "Property label '%s' not found in labels_map, skipping", prop_label
-                )
-
-        if len(embeddings_list) == 0:
+        dfr = property_fused_dataframe_for_linker_order(fused, self.labels_map)
+        if len(dfr) == 0:
             raise ValueError("No valid embeddings after mapping to entity_ids")
 
-        embeddings = np.stack(embeddings_list)
+        embeddings = np.stack([np.asarray(e, dtype=np.float64) for e in dfr["embed"]])
+        entity_ids = list(dfr["entity_id"])
         logger.info(
             "Embedded %s KB properties into %s-dimensional fused vectors",
             len(embeddings),
             embeddings.shape[1],
         )
         return embeddings, entity_ids
-
-    def _optimize_clustering(
-        self,
-        embeddings_paths: Sequence[pathlib.Path],
-        transform_config: TransformConfig,
-        kb_labels: set[str] | None,
-        optimization_config: Optional[ClusteringOptimizationConfig] = None,
-    ) -> int:
-        """
-        Optimize min_cluster_size on the same property-level fused matrix as ``fit`` uses
-        (not mention-level; differs from ``estimate_model_clustering`` on raw corpora).
-        """
-        from pelinker.analysis import estimate_clustering_from_frame
-
-        effective_config = optimization_config or ClusteringOptimizationConfig()
-
-        fused = fused_property_vectors_from_paths(embeddings_paths, kb_labels)
-        dfr = property_fused_dataframe_for_linker_order(fused, self.labels_map)
-        if len(dfr) == 0:
-            logger.warning(
-                "Clustering optimization skipped (empty fused property frame)"
-            )
-            return effective_config.min_class_size
-
-        clustering_report = estimate_clustering_from_frame(
-            dfr,
-            transform_config,
-            optimization_config=effective_config,
-            selected_labels=None,
-            all_metrics_dfs=None,
-            aggregation_level="property",
-        )
-
-        if clustering_report is None:
-            logger.warning(
-                "Clustering estimation failed, using default min_cluster_size"
-            )
-            return effective_config.min_class_size
-
-        logger.info(
-            "Optimal min_cluster_size: %s (score: %.3f)",
-            clustering_report.hyperparameters.min_cluster_size,
-            clustering_report.best_score,
-        )
-        return clustering_report.hyperparameters.min_cluster_size
 
     def _ensure_hf_models_for_sources(self, *, use_gpu: bool = False) -> None:
         """Load tokenizer+encoder once per distinct ``model_type`` in metadata sources."""

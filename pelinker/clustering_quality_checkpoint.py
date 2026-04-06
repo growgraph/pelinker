@@ -135,7 +135,7 @@ def fingerprint_config_from_cli(
     min_class_size: int,
     seed: int,
     frac: float,
-    head: int | None,
+    n_embedding_batches: int | None,
     batch_size: int,
     prefix: str,
     n_sample: int,
@@ -157,7 +157,7 @@ def fingerprint_config_from_cli(
     return {
         "batch_size": batch_size,
         "frac": frac,
-        "head": head,
+        "n_embedding_batches": n_embedding_batches,
         "input_dir": str(input_dir.expanduser().resolve()),
         "max_scale": max_scale,
         "min_class_size": min_class_size,

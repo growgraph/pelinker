@@ -8,6 +8,7 @@ from typing import Any, Literal, cast
 import hydra
 import pandas as pd
 from hydra.core.config_store import ConfigStore
+from numpy.random import RandomState
 from omegaconf import MISSING, OmegaConf
 
 from pelinker.clustering_quality_checkpoint import combination_key_from_members
@@ -28,6 +29,16 @@ logger = logging.getLogger(__name__)
 FitPipeline = Literal["auto", "embed_only", "fit_only", "both"]
 _PIPELINE_VALUES: frozenset[str] = frozenset(("auto", "embed_only", "fit_only", "both"))
 
+# Longest first so e.g. ``biobert`` does not steal a match from ``biobert-stsb``.
+_KNOWN_EMBEDDING_MODEL_TYPES: tuple[str, ...] = (
+    "biobert-stsb",
+    "pubmedbert",
+    "bluebert",
+    "scibert",
+    "biobert",
+    "bert",
+)
+
 
 @dataclass
 class FitCliConfig:
@@ -41,7 +52,7 @@ class FitCliConfig:
     min_class_size: int = 20
     max_scale: int = 120
     output_path: str | None = None
-    # Mention-level parquet path(s). Order matches ``model_types`` / ``layers_specs`` (or scalars broadcast).
+    # Mention-level parquet path(s). Order matches ``embedding_metadata.sources`` (see fit() docstring).
     embeddings_parquet: Any = MISSING
     input_text_table_path: str | None = None
     use_gpu: bool = False
@@ -50,10 +61,13 @@ class FitCliConfig:
     input_buffer_rows: int = 1000
     encoder_batch_size: int = 200
     max_input_buffers: int | None = None
-    # Stage (B): sampling / parquet read batching (``batch_size`` = rows per embedding file batch).
+    # Stage (B): parquet batching (``batch_size`` rows per read batch).
+    # ``frac`` subsamples rows only for ``min_cluster_size`` grid search when ``optimize_clustering`` is on; final fit uses all prepared rows.
     frac: float = 1.0
-    head: int | None = None
+    n_embedding_batches: int | None = None  # max read batches per parquet; None = all
     batch_size: int = 1000
+    # RNG seed for grid-search row subsampling (``ClusteringOptimizationConfig.rns``); final fit is not subsampled.
+    clustering_seed: int = 13
     kb_name: str | None = None
     kb_version: str = "0.1.0"
     kb_created_at: str | None = None
@@ -63,6 +77,8 @@ class FitCliConfig:
     # str (not Literal): OmegaConf structured configs reject Literal annotations on fields.
     pipeline: str = "embed_only"
     # Per-parquet backbone/layer (length 1 broadcast, or same length as ``embeddings_parquet``).
+    # When omitted, ``model_type`` / ``layers_spec`` scalars apply unless the parquet stem matches
+    # ``..._<model>_<layers>`` (see ``_parse_embedding_parquet_stem``).
     model_types: list[str] | None = None
     layers_specs: list[str] | None = None
 
@@ -97,46 +113,128 @@ def _coerce_optional_str_list(val: object) -> list[str] | None:
     return [str(resolved)]
 
 
-def _broadcast_specs(
-    model_type: str,
-    layers_spec: str,
-    model_types: list[str] | None,
-    layers_specs: list[str] | None,
-    n: int,
-) -> tuple[tuple[str, ...], tuple[str, ...]]:
-    if n < 1:
-        raise ValueError("At least one embeddings parquet path is required")
+def _parquet_stem_for_embedding_meta(path: Path) -> str:
+    """Filename stem used to infer backbone/layers (supports ``.parquet`` and ``.parquet.gz``)."""
+    name = path.name
+    if name.endswith(".parquet.gz"):
+        return name[: -len(".parquet.gz")]
+    if name.endswith(".parquet"):
+        return name[: -len(".parquet")]
+    return path.stem
+
+
+def _normalize_layers_filename_part(layer_part: str) -> str | None:
+    """
+    Map a filename layer segment to ``layers_spec``.
+
+    Accepts a compact digit string (e.g. ``12`` → layers 1 and 2) or underscore-separated
+    indices as produced by ``run/loop.fit.sh`` (``1_2_3`` → ``1,2,3``).
+    """
+    s = layer_part.strip()
+    if not s:
+        return None
+    if "_" in s:
+        parts = s.split("_")
+        if not parts or not all(p.isdigit() for p in parts):
+            return None
+        return ",".join(parts)
+    if s.isdigit():
+        return s
+    return None
+
+
+def _parse_embedding_parquet_stem(stem: str) -> tuple[str, str] | None:
+    """
+    Parse ``<prefix>_<model>_<layers>`` or ``<model>_<layers>`` (``layers`` as in
+    ``res_pubmedbert_1.parquet`` / ``res_pubmedbert_1_2_3.parquet``).
+    """
+    for mt in _KNOWN_EMBEDDING_MODEL_TYPES:
+        needle = f"_{mt}_"
+        idx = stem.rfind(needle)
+        if idx >= 0:
+            layer_part = stem[idx + len(needle) :]
+            ls = _normalize_layers_filename_part(layer_part)
+            if ls is not None:
+                return mt, ls
+        prefix = f"{mt}_"
+        if stem.startswith(prefix):
+            layer_part = stem[len(prefix) :]
+            ls = _normalize_layers_filename_part(layer_part)
+            if ls is not None:
+                return mt, ls
+    return None
+
+
+def _parse_embedding_parquet_path(path: Path) -> tuple[str, str] | None:
+    return _parse_embedding_parquet_stem(_parquet_stem_for_embedding_meta(path))
+
+
+def _broadcast_model_types(
+    model_type: str, model_types: list[str] | None, n: int
+) -> tuple[str, ...]:
     if model_types is None:
-        mts: tuple[str, ...] = (model_type,) * n
-    elif len(model_types) == 1 and n > 1:
-        mts = (model_types[0],) * n
-    elif len(model_types) == n:
-        mts = tuple(model_types)
-    else:
-        raise ValueError(
-            f"model_types must have length 1 or {n} (one per parquet), got {len(model_types)}"
-        )
+        return (model_type,) * n
+    if len(model_types) == 1 and n > 1:
+        return (model_types[0],) * n
+    if len(model_types) == n:
+        return tuple(model_types)
+    raise ValueError(
+        f"model_types must have length 1 or {n} (one per parquet), got {len(model_types)}"
+    )
+
+
+def _broadcast_layers_specs(
+    layers_spec: str, layers_specs: list[str] | None, n: int
+) -> tuple[str, ...]:
     if layers_specs is None:
-        lss: tuple[str, ...] = (layers_spec,) * n
-    elif len(layers_specs) == 1 and n > 1:
-        lss = (layers_specs[0],) * n
-    elif len(layers_specs) == n:
-        lss = tuple(layers_specs)
-    else:
-        raise ValueError(
-            f"layers_specs must have length 1 or {n} (one per parquet), got {len(layers_specs)}"
-        )
-    return mts, lss
+        return (layers_spec,) * n
+    if len(layers_specs) == 1 and n > 1:
+        return (layers_specs[0],) * n
+    if len(layers_specs) == n:
+        return tuple(layers_specs)
+    raise ValueError(
+        f"layers_specs must have length 1 or {n} (one per parquet), got {len(layers_specs)}"
+    )
 
 
 def _embedding_metadata(
+    embed_paths: list[Path],
     model_type: str,
     layers_spec: str,
     model_types: list[str] | None,
     layers_specs: list[str] | None,
-    n: int,
 ) -> EmbeddingModelMetadata:
-    mts, lss = _broadcast_specs(model_type, layers_spec, model_types, layers_specs, n)
+    n = len(embed_paths)
+    if n < 1:
+        raise ValueError("At least one embeddings parquet path is required")
+
+    parsed_per_path = [_parse_embedding_parquet_path(p) for p in embed_paths]
+
+    if model_types is not None:
+        mts = _broadcast_model_types(model_type, model_types, n)
+    else:
+        mts = tuple(pc[0] if pc is not None else model_type for pc in parsed_per_path)
+
+    if layers_specs is not None:
+        lss = _broadcast_layers_specs(layers_spec, layers_specs, n)
+    else:
+        lss = tuple(pc[1] if pc is not None else layers_spec for pc in parsed_per_path)
+
+    for p, pc in zip(embed_paths, parsed_per_path):
+        if pc is None:
+            continue
+        inferred_bits: list[str] = []
+        if model_types is None:
+            inferred_bits.append(f"model_type={pc[0]!r}")
+        if layers_specs is None:
+            inferred_bits.append(f"layers_spec={pc[1]!r}")
+        if inferred_bits:
+            logger.info(
+                "Inferred %s from parquet filename %s",
+                ", ".join(inferred_bits),
+                p.name,
+            )
+
     return EmbeddingModelMetadata(
         sources=tuple(EmbeddingSourceSpec(m, ls) for m, ls in zip(mts, lss))
     )
@@ -174,12 +272,15 @@ def fit(cfg: FitCliConfig) -> None:
     - ``pipeline=auto``: if ``input_text_table_path`` is set, embed then fit (unless outputs exist);
       if unset, fit only from existing parquet(s).
     - ``pipeline=embed_only``: write parquet(s) only.
-    - ``pipeline=fit_only``: load parquet(s), fuse like ``clustering_quality`` / ``Linker.fit``, train, save.
+    - ``pipeline=fit_only``: load mention-level parquet(s), train like ``estimate_model_clustering`` / ``Linker.fit``, save.
     - ``pipeline=both``: require a text table; write parquet(s) then fit and save.
 
-    Multiple values for ``embeddings_parquet`` fuse mention-level files in list order (see
-    ``Linker.fit`` / ``fused_property_vectors_from_paths``); use ``model_types`` and
-    ``layers_specs`` (or scalar ``model_type`` / ``layers_spec`` broadcast) so metadata matches.
+    Multiple values for ``embeddings_parquet`` fuse mention-level files in list order (inner join on
+    pmid/property/mention, same as ``estimate_model_clustering``). Set ``model_types`` /
+    ``layers_specs`` (or scalars ``model_type`` / ``layers_spec``) so ``embedding_metadata.sources``
+    matches that order. If a list field is omitted, each path may supply ``model_type`` and/or
+    ``layers_spec`` via a matching filename stem (``..._<model>_<layers>.parquet``, as in
+    ``run/loop.fit.sh``); otherwise the scalar defaults apply for that component.
     """
     logging.basicConfig(
         level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
@@ -234,7 +335,7 @@ def fit(cfg: FitCliConfig) -> None:
     mts = _coerce_optional_str_list(cfg.model_types)
     lss = _coerce_optional_str_list(cfg.layers_specs)
     embedding_metadata = _embedding_metadata(
-        cfg.model_type, cfg.layers_spec, mts, lss, len(embed_paths)
+        embed_paths, cfg.model_type, cfg.layers_spec, mts, lss
     )
 
     pipeline = cfg.pipeline
@@ -304,8 +405,9 @@ def fit(cfg: FitCliConfig) -> None:
     clustering_config = ClusteringOptimizationConfig(
         min_class_size=cfg.min_class_size,
         max_scale=cfg.max_scale,
+        rns=RandomState(cfg.clustering_seed),
         frac=cfg.frac,
-        head=cfg.head,
+        n_embedding_batches=cfg.n_embedding_batches,
         batch_size=cfg.batch_size,
     )
 

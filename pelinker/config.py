@@ -123,7 +123,8 @@ class ClusteringOptimizationConfig:
     max_scale: int = 100
     rns: RandomState = field(default_factory=lambda: RandomState(seed=13))
     frac: float = 1.0
-    head: int | None = None
+    n_embedding_batches: int | None = None
+    """Cap parquet reads at this many batches (`batch_size` rows each); None = read all."""
     batch_size: int = 1000
     """Rows per batch when **reading mention-level embedding parquet** (not encoder batch size)."""
     optimization_method: str = "mean"
@@ -144,8 +145,8 @@ class ClusteringOptimizationConfig:
             raise ValueError("batch_size must be >= 1")
         if not 0 < self.frac <= 1:
             raise ValueError("frac must be in range (0, 1]")
-        if self.head is not None and self.head < 1:
-            raise ValueError("head must be >= 1 when provided")
+        if self.n_embedding_batches is not None and self.n_embedding_batches < 1:
+            raise ValueError("n_embedding_batches must be >= 1 when provided")
         if not self.optimization_method:
             raise ValueError("optimization_method must be a non-empty string")
         if self.grid_smooth_window < 1:
