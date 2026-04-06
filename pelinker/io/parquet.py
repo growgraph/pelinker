@@ -72,7 +72,6 @@ class ParquetWriter:
             if self.writer is None:
                 self.schema = self._get_schema()
                 self.writer = pq.ParquetWriter(self.output_path, self.schema)
-                logger.info(f"Initialized Parquet writer with schema: {self.schema}")
 
             if self.use_record_batch:
                 # Use RecordBatch for better memory efficiency
@@ -84,7 +83,6 @@ class ParquetWriter:
                 self.writer.write_table(table)
 
             self.total_rows += len(data)
-            logger.info(f"Wrote batch with {len(data)} rows. Total: {self.total_rows}")
 
         except Exception as e:
             logger.error(f"Error writing batch: {e}")

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from dataclasses import asdict, dataclass, field
 from datetime import date
 from pathlib import Path
@@ -91,20 +92,27 @@ class EmbeddingTrainingConfig:
     input_text_table_path: Path
     kb_csv_path: Path
     use_gpu: bool = False
-    chunk_size: int = 1000
-    batch_size: int = 200
+    input_buffer_rows: int = 1000
+    """Rows read per ``pandas.read_csv(..., chunksize=...)`` pass over the text table (I/O buffer only)."""
+    encoder_batch_size: int = 200
+    """How many table rows are encoded per transformer forward pass; lower if GPU memory is tight."""
     nlp_model: str = "en_core_web_trf"
-    head: int | None = None
+    max_input_buffers: int | None = None
+    """If set, stop after this many text-table read passes (each up to ``input_buffer_rows`` rows)."""
 
     def __post_init__(self) -> None:
-        if self.chunk_size < 1:
-            raise ValueError("chunk_size must be >= 1")
-        if self.batch_size < 1:
-            raise ValueError("batch_size must be >= 1")
-        if self.head is not None and self.head < 1:
-            raise ValueError("head must be >= 1 when provided")
-        self.input_text_table_path = Path(self.input_text_table_path).expanduser()
-        self.kb_csv_path = Path(self.kb_csv_path).expanduser()
+        if self.input_buffer_rows < 1:
+            raise ValueError("input_buffer_rows must be >= 1")
+        if self.encoder_batch_size < 1:
+            raise ValueError("encoder_batch_size must be >= 1")
+        if self.max_input_buffers is not None and self.max_input_buffers < 1:
+            raise ValueError("max_input_buffers must be >= 1 when provided")
+        self.input_text_table_path = Path(
+            os.path.expandvars(os.fspath(self.input_text_table_path))
+        ).expanduser()
+        self.kb_csv_path = Path(
+            os.path.expandvars(os.fspath(self.kb_csv_path))
+        ).expanduser()
 
 
 @dataclass
@@ -117,6 +125,7 @@ class ClusteringOptimizationConfig:
     frac: float = 1.0
     head: int | None = None
     batch_size: int = 1000
+    """Rows per batch when **reading mention-level embedding parquet** (not encoder batch size)."""
     optimization_method: str = "mean"
     """How to build the objective f(min_cluster_size) before smoothing (mean / lower_bound / weighted)."""
     grid_smooth_window: int = 3

@@ -1,11 +1,12 @@
 # pylint: disable=E1120
 
+import os
 import re
+from pathlib import Path
 
+from collections.abc import Callable
 from string import punctuation, whitespace
 from typing import List
-
-import tqdm
 from transformers import AutoModel, AutoTokenizer
 from sentence_transformers import SentenceTransformer
 import torch
@@ -27,6 +28,13 @@ from pelinker.onto import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def expand_config_path(path: str | os.PathLike[str] | None) -> Path | None:
+    """Expand environment variables and ``~`` in config or CLI path strings."""
+    if path is None:
+        return None
+    return Path(os.path.expandvars(os.fspath(path))).expanduser()
 
 
 def load_models(model_type, sentence=False):
@@ -578,10 +586,14 @@ def extract_and_embed_mentions(
     layers,
     batch_size,
     word_modes=(WordGrouping.W1, WordGrouping.W2, WordGrouping.W3),
+    on_encoder_batch: Callable[[int, int, int], None] | None = None,
 ) -> List[dict]:
     """
     Modified to return list of dicts instead of DataFrame for better memory management
     and consistent schema handling.
+
+    If ``on_encoder_batch`` is set, it is invoked after each encoder mini-batch with
+    ``(batch_index_0based, n_batches, n_mention_rows_accumulated)``.
     """
     data_pmids = pmids
 
@@ -594,7 +606,8 @@ def extract_and_embed_mentions(
     prop_tokens = {p: text_to_tokens(nlp=nlp, text=p) for p in entities}
 
     rows = []
-    for ibatch, text_batch in enumerate((pbar := tqdm.tqdm(data_batched))):
+    n_batches = len(data_batched)
+    for ibatch, text_batch in enumerate(data_batched):
         report_batch = texts_to_vrep(
             text_batch,
             tokenizer=tokenizer,
@@ -641,6 +654,7 @@ def extract_and_embed_mentions(
                         }
                     )
 
-        pbar.set_description(f"Entities added in chunk : {len(rows)}")
+        if on_encoder_batch is not None:
+            on_encoder_batch(ibatch, n_batches, len(rows))
 
     return rows

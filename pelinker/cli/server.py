@@ -9,7 +9,6 @@ from pathlib import Path
 from typing import Annotated, Any
 
 import hydra
-import spacy
 import uvicorn
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -37,7 +36,6 @@ class ServerCliConfig:
     model_type: str = "pubmedbert"
     layers_spec: str = "1"
     thr_score: float = 0.5
-    nlp_model: str = "en_core_web_trf"
     use_gpu: bool = False
     cors_allow_origins: list[str] = field(default_factory=lambda: ["*"])
 
@@ -148,11 +146,8 @@ def create_app(cfg: ServerCliConfig) -> FastAPI:
         )
         linker, resolved = _load_linker(cfg)
         logger.info("Loaded linker from %s.gz", resolved)
-        logger.info("Loading spaCy: %s", cfg.nlp_model)
-        nlp = spacy.load(cfg.nlp_model)
         state_holder["state"] = ServerState(
             linker=linker,
-            nlp=nlp,
             cfg=cfg,
             resolved_model_path=resolved,
         )
@@ -212,7 +207,7 @@ CONFIG_STORE = ConfigStore.instance()
 CONFIG_STORE.store(name="server_config", node=ServerCliConfig)
 
 
-@hydra.main(version_base=None, config_path=None, config_name="server_config")
+@hydra.main(version_base=None, config_path="pkg://pelinker.conf", config_name="server")
 def run(cfg: ServerCliConfig) -> None:
     logger.info("Running server with config:\n%s", OmegaConf.to_yaml(cfg))
     try:

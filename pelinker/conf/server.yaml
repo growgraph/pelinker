@@ -1,0 +1,6 @@
+defaults:
+-   server_config
+-   _self_
+
+hydra:
+    output_subdir:

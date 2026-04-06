@@ -408,7 +408,7 @@ def _results_from_checkpoint(
     "--batch-size",
     type=click.INT,
     default=1000,
-    help="Batch size for reading files",
+    help="Rows per batch when reading mention-level embedding parquet files",
 )
 @click.option(
     "--prefix",

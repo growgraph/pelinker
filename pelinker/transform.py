@@ -54,12 +54,19 @@ class EmbeddingTransformer:
 
         n_samples, n_features = embeddings.shape
 
-        # Fit PCA
-        self.pca = PCA(n_components=self.config.pca_components)
+        # PCA allows at most min(n_samples, n_features) components (svd_solver='full').
+        pca_n = min(self.config.pca_components, n_samples, n_features)
+        self.pca = PCA(n_components=pca_n)
         pca_reduced = self.pca.fit_transform(embeddings)
+
+        # UMAP requires n_neighbors < n_samples; cap the default (15) for tiny frames.
+        n_neighbors = min(15, max(2, n_samples - 1))
+        if n_neighbors >= n_samples:
+            n_neighbors = max(1, n_samples - 1)
 
         # Fit UMAP for clustering
         self.umap = umap.UMAP(
+            n_neighbors=n_neighbors,
             n_components=self.config.umap_components,
             metric=self.config.umap_metric,
         )
@@ -67,6 +74,7 @@ class EmbeddingTransformer:
 
         # Fit UMAP for visualization
         self.umap_viz = umap.UMAP(
+            n_neighbors=n_neighbors,
             n_components=self.config.umap_viz_components,
             metric=self.config.umap_viz_metric,
         )
@@ -124,7 +132,8 @@ def transform_embeddings(
     Transform embeddings in a DataFrame using PCA -> UMAP pipeline.
 
     This function adds columns to the DataFrame:
-    - PCA columns: p_00, p_01, ..., p_{pca_components-1:02d}
+    - PCA columns: p_00, p_01, ... (one per fitted component; may be fewer than
+      ``pca_components`` when the sample count is small)
     - UMAP clustering columns: u_00, u_01, ..., u_{umap_components-1:02d}
     - UMAP visualization columns: uviz_00, uviz_01, ..., uviz_{umap_viz_components-1:02d}
 
@@ -155,11 +164,12 @@ def transform_embeddings(
     umap_clustering = transformer.umap.transform(pca_reduced)
     umap_visualization = transformer.umap_viz.transform(pca_reduced)
 
-    # Create DataFrames for each transformation
+    # Create DataFrames for each transformation (widths follow fitted dims when PCA is capped).
+    n_pca = int(pca_reduced.shape[1])
     df_pca = pd.DataFrame(
         pca_reduced,
         index=df.index,
-        columns=[f"p_{j:02d}" for j in range(config.pca_components)],
+        columns=[f"p_{j:02d}" for j in range(n_pca)],
     )
 
     df_umap = pd.DataFrame(
