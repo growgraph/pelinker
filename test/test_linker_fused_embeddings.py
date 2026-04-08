@@ -28,17 +28,24 @@ def test_fused_fit_two_parquets_stacks_embedding_dim(tmp_path):
     rows1 = []
     rows2 = []
     for k in range(n_ent):
-        rows1.append(
-            {"pmid": "1", "property": f"p{k}", "mention": "m", "embed": [float(k), 1.0]}
-        )
-        rows2.append(
-            {
-                "pmid": "1",
-                "property": f"p{k}",
-                "mention": "m",
-                "embed": [0.5, float(k) * 0.1],
-            }
-        )
+        # Two mentions per property so HDBSCAN min_cluster_size=2 can assign non-noise labels.
+        for pmid in ("1", "2"):
+            rows1.append(
+                {
+                    "pmid": pmid,
+                    "property": f"p{k}",
+                    "mention": "m",
+                    "embed": [float(k), 1.0],
+                }
+            )
+            rows2.append(
+                {
+                    "pmid": pmid,
+                    "property": f"p{k}",
+                    "mention": "m",
+                    "embed": [0.5, float(k) * 0.1],
+                }
+            )
     pd.DataFrame(rows1).to_parquet(p1)
     pd.DataFrame(rows2).to_parquet(p2)
 
@@ -63,7 +70,7 @@ def test_fused_fit_two_parquets_stacks_embedding_dim(tmp_path):
     assert linker.clusterer is not None
     assert getattr(linker.clusterer, "prediction_data_", None) is not None
     assert linker.training_cluster_frame is not None
-    assert len(linker.training_cluster_frame) == n_ent
+    assert len(linker.training_cluster_frame) == 2 * n_ent
     assert set(linker.training_cluster_frame.columns) >= {
         "pmid",
         "property",
@@ -126,6 +133,66 @@ def test_fused_fit_optimize_clustering_grid_then_full_fit(tmp_path):
     assert linker.clusterer is not None
     assert linker.training_cluster_frame is not None
     assert len(linker.training_cluster_frame) == 4 * n_ent
+
+
+def test_fit_writes_clustering_report_artifacts_when_report_dir_set(tmp_path):
+    """``clustering_report_dir`` mirrors clustering_quality-style CSV, pickle, and metrics plot."""
+    metadata = EmbeddingModelMetadata(
+        sources=(
+            EmbeddingSourceSpec(model_type="a", layers_spec="1"),
+            EmbeddingSourceSpec(model_type="a", layers_spec="2"),
+        )
+    )
+    n_ent = 12
+    labels_map = {f"e{k}": f"p{k}" for k in range(n_ent)}
+    p1 = tmp_path / "s0.parquet"
+    p2 = tmp_path / "s1.parquet"
+    rows1 = []
+    rows2 = []
+    for k in range(n_ent):
+        for pmid in ("a", "b", "c", "d"):
+            rows1.append(
+                {
+                    "pmid": pmid,
+                    "property": f"p{k}",
+                    "mention": "m",
+                    "embed": [float(k), 0.1],
+                }
+            )
+            rows2.append(
+                {
+                    "pmid": pmid,
+                    "property": f"p{k}",
+                    "mention": "m",
+                    "embed": [0.2, float(k) * 0.05],
+                }
+            )
+    pd.DataFrame(rows1).to_parquet(p1)
+    pd.DataFrame(rows2).to_parquet(p2)
+
+    opt = ClusteringOptimizationConfig(
+        min_class_size=4,
+        max_scale=25,
+        frac=1.0,
+        rns=RandomState(0),
+        batch_size=500,
+    )
+    report_dir = tmp_path / "clustering_report"
+    linker = Linker(labels_map=labels_map, embedding_metadata=metadata)
+    linker.fit(
+        [p1, p2],
+        transform_config=TransformConfig(
+            pca_components=4, umap_components=2, umap_viz_components=2
+        ),
+        optimize_clustering=True,
+        clustering_optimization_config=opt,
+        clustering_report_dir=report_dir,
+    )
+
+    assert (report_dir / "results.csv").is_file()
+    assert (report_dir / "results_grid_per_sample.csv").is_file()
+    assert (report_dir / "fine_clustering_metadata.pkl.gz").is_file()
+    assert (report_dir / "fusion2_a_1__a_2.png").is_file()
 
 
 def test_estimate_model_clustering_multi_file_paths(tmp_path):

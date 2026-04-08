@@ -214,6 +214,7 @@ def _per_sample_grid_column_order() -> list[str]:
         "icm",
         "n_clusters",
         "dbcv",
+        "ari",
     ]
 
 
@@ -813,6 +814,9 @@ def main(
                         plot_metrics_with_error_bars(
                             file_metrics,
                             output_dir / f"{model}_{layer}_error_bars.png",
+                            chosen_min_cluster_size=float(
+                                file_reports[-1].hyperparameters.min_cluster_size
+                            ),
                         )
                     else:
                         plot_metrics(
@@ -957,7 +961,7 @@ def main(
                         fusion_status = (
                             f"[cyan]{model_label}[/cyan] "
                             f"[yellow]{layer_label}[/yellow] "
-                            f"(Σ singles≈{sum_proxy:.3f}) "
+                            f"(mean singles≈{sum_proxy / len(paths):.3f}) "
                             f"sample {sample_idx + 1}/{n_sample}"
                         )
                         fusion_progress.update(ftask, description=fusion_status)
@@ -1019,7 +1023,13 @@ def main(
                         safe = layer_label.replace("/", "_").replace("+", "__")
                         out_metric = output_dir / f"{model_label}_{safe}.png"
                         if len(fusion_metrics) > 1:
-                            plot_metrics_with_error_bars(fusion_metrics, out_metric)
+                            plot_metrics_with_error_bars(
+                                fusion_metrics,
+                                out_metric,
+                                chosen_min_cluster_size=float(
+                                    fusion_reports[-1].hyperparameters.min_cluster_size
+                                ),
+                            )
                         else:
                             plot_metrics(fusion_metrics[0], out_metric)
 

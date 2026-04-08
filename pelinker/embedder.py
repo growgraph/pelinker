@@ -111,7 +111,7 @@ def _embed_corpus_single_source(
     show_progress = not _progress_disabled()
     console = Console(
         stderr=True,
-        width=120,
+        width=180,
         legacy_windows=False,
         force_terminal=show_progress,
     )

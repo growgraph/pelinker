@@ -26,6 +26,7 @@ def _report_from_arrays(
             dbcv=ScalarMetricAggregate(mean=m, std=sd, count=c),
             icm_mean=float("nan"),
             n_clusters_mean=float("nan"),
+            ari=ScalarMetricAggregate(mean=float("nan"), std=0.0, count=0),
         )
         for s, m, sd, c in zip(sizes, means, stds, counts, strict=True)
     ]
@@ -44,6 +45,7 @@ def test_aggregate_grid_metrics_preserves_std_and_count() -> None:
             "icm": [0.1, 0.2],
             "n_clusters": [3, 4],
             "dbcv": [0.5, 0.6],
+            "ari": [0.3, 0.4],
         }
     )
     b = pd.DataFrame(
@@ -52,6 +54,7 @@ def test_aggregate_grid_metrics_preserves_std_and_count() -> None:
             "icm": [0.15, 0.25],
             "n_clusters": [3, 5],
             "dbcv": [0.7, 0.4],
+            "ari": [0.5, 0.35],
         }
     )
     r = aggregate_grid_metrics([a, b])
@@ -60,6 +63,9 @@ def test_aggregate_grid_metrics_preserves_std_and_count() -> None:
     assert p10.dbcv.mean == pytest.approx(0.6)
     assert p10.dbcv.count == 2
     assert p10.dbcv.std == pytest.approx(np.std([0.5, 0.7], ddof=1))
+    assert p10.ari.mean == pytest.approx(0.4)
+    assert p10.ari.count == 2
+    assert p10.ari.std == pytest.approx(np.std([0.3, 0.5], ddof=1))
 
 
 def test_aggregated_grid_report_to_dataframe_columns() -> None:
@@ -72,6 +78,9 @@ def test_aggregated_grid_report_to_dataframe_columns() -> None:
         "dbcv_count",
         "icm_mean",
         "n_clusters_mean",
+        "ari_mean",
+        "ari_std",
+        "ari_count",
     ]
     assert df.iloc[0]["dbcv_count"] == 3
 
@@ -82,12 +91,14 @@ def test_aggregated_grid_report_rejects_unsorted_points() -> None:
         ScalarMetricAggregate(1.0, 0.0, 1),
         0.0,
         0.0,
+        ScalarMetricAggregate(float("nan"), 0.0, 0),
     )
     p2 = AggregatedGridPoint(
         5,
         ScalarMetricAggregate(1.0, 0.0, 1),
         0.0,
         0.0,
+        ScalarMetricAggregate(float("nan"), 0.0, 0),
     )
     with pytest.raises(ValueError, match="sorted"):
         AggregatedGridReport(points=(p1, p2))

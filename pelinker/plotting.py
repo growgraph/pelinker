@@ -472,13 +472,16 @@ def plot_dbcv_vs_ari_from_grid(
 def plot_metrics_with_error_bars(
     metrics_list: list[pd.DataFrame],
     output_path: pathlib.Path,
+    *,
+    chosen_min_cluster_size: float | None = None,
 ):
     """
     Plot metrics across multiple runs with error bars using seaborn lineplot.
 
     Args:
-        metrics_list: List of DataFrames, each with columns: min_cluster_size, icm, n_clusters, dbcv
+        metrics_list: List of DataFrames, each with columns: min_cluster_size, icm, n_clusters, dbcv, ari
         output_path: Path to save the figure
+        chosen_min_cluster_size: Optional vertical marker for the selected grid value (e.g. from smoother / argmax).
     """
     # Combine all metrics DataFrames, adding a run_id column
     combined_metrics = []
@@ -498,18 +501,36 @@ def plot_metrics_with_error_bars(
         )
         return
 
-    # Create figure with subplots
-    fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+    has_ari = "ari" in df_combined.columns and bool(df_combined["ari"].notna().any())
+    ncols = 3 if has_ari else 2
+    fig, axes = plt.subplots(1, ncols, figsize=(6 * ncols, 5))
+    if ncols == 2:
+        ax_dbcv, ax_k = axes[0], axes[1]
+        ax_ari = None
+    else:
+        ax_dbcv, ax_k, ax_ari = axes[0], axes[1], axes[2]
 
     # Color palette for different plots
     colors = ["#2E86AB", "#A23B72", "#F18F01"]  # Blue, Purple, Orange
+
+    def _maybe_vline(ax) -> None:
+        if chosen_min_cluster_size is None:
+            return
+        ax.axvline(
+            chosen_min_cluster_size,
+            color="0.35",
+            linestyle="--",
+            linewidth=1.5,
+            alpha=0.9,
+            zorder=0,
+        )
 
     # Plot DBCV score with error bars
     sns.lineplot(
         data=df_combined,
         x="min_cluster_size",
         y="dbcv",
-        ax=axes[0],
+        ax=ax_dbcv,
         errorbar="sd",  # Standard deviation error bars
         marker="o",
         color=colors[0],
@@ -517,44 +538,21 @@ def plot_metrics_with_error_bars(
         markersize=8,
         err_kws={"alpha": 0.3, "linewidth": 1.5},
     )
-    axes[0].set_xlabel("min_cluster_size", fontsize=12, fontweight="bold")
-    axes[0].set_ylabel("DBCV Score", fontsize=12, fontweight="bold", color=colors[0])
-    axes[0].set_title("DBCV Score vs. min_cluster_size", fontsize=13, fontweight="bold")
-    axes[0].grid(True, alpha=0.3, linestyle="--")
-    axes[0].tick_params(axis="y", labelcolor=colors[0])
-    axes[0].spines["top"].set_visible(False)
-    axes[0].spines["right"].set_visible(False)
-
-    # # Plot ICM with error bars (log scale)
-    # sns.lineplot(
-    #     data=df_combined,
-    #     x="min_cluster_size",
-    #     y="icm",
-    #     ax=axes[1],
-    #     errorbar="sd",
-    #     marker="s",
-    #     color=colors[1],
-    #     linewidth=2,
-    #     markersize=8,
-    #     err_kws={"alpha": 0.3, "linewidth": 1.5},
-    # )
-    # # axes[1].set_yscale("log")
-    # axes[1].set_xlabel("min_cluster_size", fontsize=12, fontweight="bold")
-    # axes[1].set_ylabel(
-    #     "ICM (log scale)", fontsize=12, fontweight="bold", color=colors[1]
-    # )
-    # axes[1].set_title("ICM vs. min_cluster_size", fontsize=13, fontweight="bold")
-    # axes[1].grid(True, alpha=0.3, linestyle="--")
-    # axes[1].tick_params(axis="y", labelcolor=colors[1])
-    # axes[1].spines["top"].set_visible(False)
-    # axes[1].spines["right"].set_visible(False)
+    _maybe_vline(ax_dbcv)
+    ax_dbcv.set_xlabel("min_cluster_size", fontsize=12, fontweight="bold")
+    ax_dbcv.set_ylabel("DBCV Score", fontsize=12, fontweight="bold", color=colors[0])
+    ax_dbcv.set_title("DBCV Score vs. min_cluster_size", fontsize=13, fontweight="bold")
+    ax_dbcv.grid(True, alpha=0.3, linestyle="--")
+    ax_dbcv.tick_params(axis="y", labelcolor=colors[0])
+    ax_dbcv.spines["top"].set_visible(False)
+    ax_dbcv.spines["right"].set_visible(False)
 
     # Plot n_clusters with error bars (log scale)
     sns.lineplot(
         data=df_combined,
         x="min_cluster_size",
         y="n_clusters",
-        ax=axes[1],
+        ax=ax_k,
         errorbar="sd",
         marker="^",
         color=colors[1],
@@ -562,15 +560,38 @@ def plot_metrics_with_error_bars(
         markersize=8,
         err_kws={"alpha": 0.3, "linewidth": 1.5},
     )
-    axes[1].set_xlabel("min_cluster_size", fontsize=12, fontweight="bold")
-    axes[1].set_ylabel("n clusters", fontsize=12, fontweight="bold", color=colors[2])
-    axes[1].set_title(
+    _maybe_vline(ax_k)
+    ax_k.set_xlabel("min_cluster_size", fontsize=12, fontweight="bold")
+    ax_k.set_ylabel("n clusters", fontsize=12, fontweight="bold", color=colors[1])
+    ax_k.set_title(
         "Number of Clusters vs. min_cluster_size", fontsize=13, fontweight="bold"
     )
-    axes[1].grid(True, alpha=0.3, linestyle="--")
-    axes[1].tick_params(axis="y", labelcolor=colors[2])
-    axes[1].spines["top"].set_visible(False)
-    axes[1].spines["right"].set_visible(False)
+    ax_k.grid(True, alpha=0.3, linestyle="--")
+    ax_k.tick_params(axis="y", labelcolor=colors[1])
+    ax_k.spines["top"].set_visible(False)
+    ax_k.spines["right"].set_visible(False)
+
+    if ax_ari is not None:
+        sns.lineplot(
+            data=df_combined,
+            x="min_cluster_size",
+            y="ari",
+            ax=ax_ari,
+            errorbar="sd",
+            marker="D",
+            color=colors[2],
+            linewidth=2,
+            markersize=7,
+            err_kws={"alpha": 0.3, "linewidth": 1.5},
+        )
+        _maybe_vline(ax_ari)
+        ax_ari.set_xlabel("min_cluster_size", fontsize=12, fontweight="bold")
+        ax_ari.set_ylabel("ARI", fontsize=12, fontweight="bold", color=colors[2])
+        ax_ari.set_title("ARI vs. min_cluster_size", fontsize=13, fontweight="bold")
+        ax_ari.grid(True, alpha=0.3, linestyle="--")
+        ax_ari.tick_params(axis="y", labelcolor=colors[2])
+        ax_ari.spines["top"].set_visible(False)
+        ax_ari.spines["right"].set_visible(False)
 
     plt.tight_layout()
     plt.savefig(output_path, dpi=300, bbox_inches="tight")

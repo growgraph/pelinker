@@ -62,9 +62,9 @@ def _maybe_emit_read_line(
     if not _should_emit_read_progress(batch_idx, total_batches):
         return
     if total_batches is not None:
-        status_fn(f"embeddings {path.name}: batch {batch_idx}/{total_batches}")
+        status_fn(f"batch {batch_idx}/{total_batches}")
     else:
-        status_fn(f"embeddings {path.name}: batch {batch_idx}")
+        status_fn(f"batch {batch_idx}")
 
 
 def _for_each_embedding_parquet_batch(
@@ -104,7 +104,7 @@ def _for_each_embedding_parquet_batch(
             BarColumn(),
             TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
             TimeElapsedColumn(),
-            console=Console(),
+            console=Console(force_terminal=True),
             transient=True,
             refresh_per_second=4,
         ) as progress:

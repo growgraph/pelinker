@@ -51,8 +51,12 @@ class FitCliConfig:
     umap_dim: int = 8
     min_class_size: int = 20
     max_scale: int = 120
+    # Filesystem path for the saved model; None → bundled store filename under ``pelinker.store``.
     output_path: str | None = None
-    # Mention-level parquet path(s). Order matches ``embedding_metadata.sources`` (see fit() docstring).
+    # If set, clustering reports are written exactly here. If unset, defaults to
+    # ``{base}/reports/{YYYY-MM-DD}_{model-abbrev}/`` with ``base`` = parent of
+    # ``output_path`` when that is set, else the process working directory.
+    clustering_report_dir: str | None = None
     embeddings_parquet: Any = MISSING
     input_text_table_path: str | None = None
     use_gpu: bool = False
@@ -252,6 +256,45 @@ def _default_model_store_name(meta: EmbeddingModelMetadata) -> str:
     return f"pelinker.model.{safe}"
 
 
+def _embedding_model_report_abbrev(meta: EmbeddingModelMetadata) -> str:
+    """Short, path-safe tag for default clustering report subdirs (aligned with store naming)."""
+    if len(meta.sources) == 1:
+        s0 = meta.sources[0]
+        raw = f"{s0.model_type}.{layers2str(str2layers(s0.layers_spec))}"
+    else:
+        members = [(s.model_type, s.layers_spec) for s in meta.sources]
+        raw = combination_key_from_members(members)
+    return "".join(c if c.isalnum() or c in "-_" else "_" for c in raw)
+
+
+def _clustering_report_path_for_fit(
+    *,
+    explicit_dir: object,
+    output_path: Path | None,
+    embedding_metadata: EmbeddingModelMetadata,
+    today: date | None = None,
+) -> Path:
+    """
+    Where to write clustering optimization reports.
+
+    - Non-empty ``explicit_dir`` (config ``clustering_report_dir``): that directory
+      exactly (after expanduser / env vars).
+    - Otherwise: ``{base}/reports/{iso-date}_{model-abbrev}/`` where ``base`` is
+      ``output_path.parent`` if the model is saved to a path, else ``Path.cwd()``.
+    """
+    if explicit_dir is not None and explicit_dir is not MISSING:
+        s = str(explicit_dir).strip()
+        if s:
+            cr = expand_config_path(s)
+            if cr is None:
+                raise ValueError(f"Invalid clustering_report_dir: {explicit_dir!r}")
+            return Path(cr)
+    day = today or date.today()
+    run_tag = f"{day.isoformat()}_{_embedding_model_report_abbrev(embedding_metadata)}"
+    base = Path(output_path).parent if output_path is not None else Path.cwd()
+    return base / "reports" / run_tag
+
+
 def _abort_if_outputs_exist(paths: list[Path], *, context: str) -> None:
     existing = [p for p in paths if p.is_file()]
     if not existing:
@@ -429,6 +472,13 @@ def fit(cfg: FitCliConfig) -> None:
         embedding_metadata=embedding_metadata,
     )
 
+    resolved_clustering_reports = _clustering_report_path_for_fit(
+        explicit_dir=cfg.clustering_report_dir,
+        output_path=output_path,
+        embedding_metadata=embedding_metadata,
+    )
+    logger.info("Clustering reports directory: %s", resolved_clustering_reports)
+
     logger.info("Stage (B): Linker.fit from %s", embed_paths)
     linker.fit(
         embeddings=embed_paths if len(embed_paths) > 1 else embed_paths[0],
@@ -439,6 +489,7 @@ def fit(cfg: FitCliConfig) -> None:
         clustering_optimization_config=clustering_config,
         embedding_training=None,
         kb_config=kb_config,
+        clustering_report_dir=resolved_clustering_reports,
     )
 
     logger.info("Fitted Linker model with %s entities", len(linker.vocabulary))

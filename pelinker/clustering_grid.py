@@ -9,6 +9,7 @@ import hdbscan
 import numpy as np
 import pandas as pd
 import torch
+from sklearn.metrics import adjusted_rand_score
 from torch.nn import functional as F
 
 
@@ -29,6 +30,7 @@ class AggregatedGridPoint:
     dbcv: ScalarMetricAggregate
     icm_mean: float
     n_clusters_mean: float
+    ari: ScalarMetricAggregate
 
 
 @dataclass(frozen=True)
@@ -238,6 +240,9 @@ def aggregated_grid_report_to_dataframe(report: AggregatedGridReport) -> pd.Data
                 "dbcv_count": p.dbcv.count,
                 "icm_mean": p.icm_mean,
                 "n_clusters_mean": p.n_clusters_mean,
+                "ari_mean": p.ari.mean,
+                "ari_std": p.ari.std,
+                "ari_count": p.ari.count,
             }
         )
     return pd.DataFrame(rows)
@@ -281,6 +286,21 @@ def cosine_similarity_std(
     return torch.std(cos_similarities)
 
 
+def _adjusted_rand_index_vs_property_codes(
+    property_codes: np.ndarray,
+    cluster_labels: np.ndarray,
+) -> float:
+    """ARI between KB property codes and HDBSCAN labels; noise (-1) excluded (matches analysis)."""
+    valid_mask = cluster_labels != -1
+    if not valid_mask.any():
+        return 0.0
+    y_true = property_codes[valid_mask]
+    y_pred = cluster_labels[valid_mask]
+    if len(y_pred) == 0:
+        return 0.0
+    return float(adjusted_rand_score(y_true, y_pred))
+
+
 def evaluate_cluster_size_grid(
     dfr2: pd.DataFrame,
     umap_columns: list[str],
@@ -290,12 +310,20 @@ def evaluate_cluster_size_grid(
     """
     Evaluate clustering metrics on a grid of min_cluster_size values.
 
-    Uses DBCV (Density-Based Clustering Validation) metric.
+    Uses DBCV (Density-Based Clustering Validation) and, when ``property`` is present,
+    adjusted Rand index vs. property codes (noise label -1 excluded).
 
     Returns:
-        DataFrame with columns: min_cluster_size, icm, n_clusters, dbcv
+        DataFrame with columns: min_cluster_size, icm, n_clusters, dbcv, ari
     """
     umap_values = dfr2[umap_columns].to_numpy(dtype=np.float32, copy=False)
+    property_codes: np.ndarray | None = None
+    if "property" in dfr2.columns:
+        property_codes = (
+            dfr2["property"]
+            .astype("category")
+            .cat.codes.to_numpy(dtype=np.int64, copy=False)
+        )
 
     metrics = []
     for size in sizes:
@@ -326,11 +354,16 @@ def evaluate_cluster_size_grid(
         else:
             dbcv = np.nan
 
+        if property_codes is not None:
+            ari = _adjusted_rand_index_vs_property_codes(property_codes, labels)
+        else:
+            ari = float("nan")
+
         if n_clusters >= 1:
-            metrics += [(size, icm, n_clusters, dbcv)]
+            metrics += [(size, icm, n_clusters, dbcv, ari)]
 
     return pd.DataFrame(
-        metrics, columns=["min_cluster_size", "icm", "n_clusters", "dbcv"]
+        metrics, columns=["min_cluster_size", "icm", "n_clusters", "dbcv", "ari"]
     )
 
 
@@ -345,6 +378,8 @@ def aggregate_grid_metrics(all_metrics_dfs: list[pd.DataFrame]) -> AggregatedGri
         return AggregatedGridReport(points=())
 
     combined = pd.concat(all_metrics_dfs, ignore_index=True)
+    if "ari" not in combined.columns:
+        combined["ari"] = np.nan
 
     aggregated = (
         combined.groupby("min_cluster_size")
@@ -353,6 +388,7 @@ def aggregate_grid_metrics(all_metrics_dfs: list[pd.DataFrame]) -> AggregatedGri
                 "dbcv": ["mean", "std", "count"],
                 "icm": "mean",
                 "n_clusters": "mean",
+                "ari": ["mean", "std", "count"],
             }
         )
         .reset_index()
@@ -365,10 +401,15 @@ def aggregate_grid_metrics(all_metrics_dfs: list[pd.DataFrame]) -> AggregatedGri
         "dbcv_count",
         "icm_mean",
         "n_clusters_mean",
+        "ari_mean",
+        "ari_std",
+        "ari_count",
     ]
 
     aggregated["dbcv_std"] = aggregated["dbcv_std"].fillna(0.0)
     aggregated["dbcv_count"] = aggregated["dbcv_count"].astype(int)
+    aggregated["ari_std"] = aggregated["ari_std"].fillna(0.0)
+    aggregated["ari_count"] = aggregated["ari_count"].astype(int)
 
     points: list[AggregatedGridPoint] = []
     for _, row in aggregated.sort_values("min_cluster_size").iterrows():
@@ -383,6 +424,11 @@ def aggregate_grid_metrics(all_metrics_dfs: list[pd.DataFrame]) -> AggregatedGri
                 ),
                 icm_mean=float(row["icm_mean"]),
                 n_clusters_mean=float(row["n_clusters_mean"]),
+                ari=ScalarMetricAggregate(
+                    mean=float(row["ari_mean"]),
+                    std=float(row["ari_std"]),
+                    count=int(row["ari_count"]),
+                ),
             )
         )
 

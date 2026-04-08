@@ -8,7 +8,6 @@ import pandas as pd
 import torch
 import joblib
 import numpy as np
-from typing import Optional
 import hdbscan
 from hdbscan import approximate_predict
 import pathlib
@@ -27,6 +26,16 @@ from pelinker.analysis import (
     filter_mention_frame_by_kb_labels,
     mention_frame_from_embedding_paths,
 )
+from pelinker.plotting import (
+    GRID_COL_CHOSEN_MIN_CLUSTER_SIZE,
+    GRID_COL_SAMPLE_ARI,
+    GRID_COL_SAMPLE_BEST_DBCV,
+    plot_metrics_with_error_bars,
+)
+from pelinker.reporting import (
+    ClusteringReport,
+    summarize_clustering_reports_for_search,
+)
 from pelinker.embedder import embed_kb_corpus
 from pelinker.embedding_fusion import (
     fused_property_vectors_from_paths,
@@ -37,6 +46,116 @@ from pelinker.transform import EmbeddingTransformer
 from pelinker.util import load_models, texts_to_vrep
 
 logger = logging.getLogger(__name__)
+
+
+def _clustering_quality_model_layer_from_metadata(
+    meta: EmbeddingModelMetadata | None,
+) -> tuple[str, str]:
+    """Labels aligned with ``run/analysis/clustering_quality.py`` search rows."""
+    if meta is None or not meta.sources:
+        return "linker", "unknown"
+    if len(meta.sources) == 1:
+        s = meta.sources[0]
+        return s.model_type, s.layers_spec
+    layer = "+".join(f"{s.model_type}/{s.layers_spec}" for s in meta.sources)
+    return f"fusion{len(meta.sources)}", layer
+
+
+def _safe_plot_stem(model: str, layer: str) -> str:
+    safe_layer = layer.replace("/", "_").replace("+", "__")
+    return f"{model}_{safe_layer}"
+
+
+def _metrics_df_with_grid_sample_columns(
+    report: ClusteringReport,
+    *,
+    model: str,
+    layer: str,
+    sample_idx: int,
+) -> pd.DataFrame:
+    ari = report.ari
+    return report.metrics_df.assign(
+        model=model,
+        layer=layer,
+        sample_idx=sample_idx,
+        **{
+            GRID_COL_CHOSEN_MIN_CLUSTER_SIZE: int(
+                report.hyperparameters.min_cluster_size
+            ),
+            GRID_COL_SAMPLE_BEST_DBCV: float(report.best_score),
+            GRID_COL_SAMPLE_ARI: float("nan") if ari is None else float(ari),
+        },
+    )
+
+
+def _fine_clustering_metadata_df(
+    report: ClusteringReport,
+    *,
+    model: str,
+    layer: str,
+    sample_idx: int,
+) -> pd.DataFrame:
+    cols = ["model", "layer", "sample_idx", "property", "class"]
+    optional_cols = ["pmid", "mention"]
+    present_optional = [c for c in optional_cols if c in report.df.columns]
+    keep = [
+        c for c in ["property", "class", *present_optional] if c in report.df.columns
+    ]
+    if "property" not in keep or "class" not in keep:
+        return pd.DataFrame(columns=cols + present_optional)
+    out = report.df[keep].copy()
+    out.insert(0, "sample_idx", sample_idx)
+    out.insert(0, "layer", layer)
+    out.insert(0, "model", model)
+    return out
+
+
+def _write_clustering_validation_artifacts(
+    report_dir: pathlib.Path,
+    report: ClusteringReport,
+    *,
+    model: str,
+    layer: str,
+    sample_idx: int = 0,
+) -> None:
+    """
+    Persist grid metrics, summary row, metric plot, and fine metadata like
+    ``run/analysis/clustering_quality.py`` (single sample).
+    """
+    report_dir = report_dir.expanduser()
+    report_dir.mkdir(parents=True, exist_ok=True)
+
+    summary = summarize_clustering_reports_for_search(
+        [report], model=model, layer=layer
+    )
+    pd.DataFrame([summary.to_flat_dict()]).to_csv(
+        report_dir / "results.csv", index=False
+    )
+
+    grid_detail = _metrics_df_with_grid_sample_columns(
+        report, model=model, layer=layer, sample_idx=sample_idx
+    )
+    grid_detail.to_csv(report_dir / "results_grid_per_sample.csv", index=False)
+
+    fine = _fine_clustering_metadata_df(
+        report, model=model, layer=layer, sample_idx=sample_idx
+    )
+    fine_path = report_dir / "fine_clustering_metadata.pkl.gz"
+    tmp_fine = fine_path.with_name(fine_path.name + ".tmp")
+    fine.to_pickle(tmp_fine, compression="gzip")
+    tmp_fine.replace(fine_path)
+
+    plot_path = report_dir / f"{_safe_plot_stem(model, layer)}.png"
+    plot_metrics_with_error_bars(
+        [report.metrics_df],
+        plot_path,
+        chosen_min_cluster_size=float(report.hyperparameters.min_cluster_size),
+    )
+    logger.info(
+        "Wrote clustering validation artifacts under %s (metrics plot: %s)",
+        report_dir,
+        plot_path.name,
+    )
 
 
 def _modal_cluster_deterministic(clusters: list[int]) -> int | None:
@@ -132,13 +251,14 @@ class Linker:
         self,
         embeddings: pathlib.Path | Sequence[pathlib.Path] | None,
         transform_config: TransformConfig,
-        min_cluster_size: Optional[int] = None,
-        kb_labels: Optional[set[str]] = None,
+        min_cluster_size: int | None = None,
+        kb_labels: set[str] | None = None,
         optimize_clustering: bool = False,
-        clustering_optimization_config: Optional[ClusteringOptimizationConfig] = None,
+        clustering_optimization_config: ClusteringOptimizationConfig | None = None,
         embedding_training: EmbeddingTrainingConfig | None = None,
         embedding_metadata: EmbeddingModelMetadata | None = None,
         kb_config: KBConfig | None = None,
+        clustering_report_dir: pathlib.Path | None = None,
     ):
         """
         Fit the Linker model with embeddings.
@@ -168,6 +288,12 @@ class Linker:
                 this fit (required when embeddings=None unless already set on the linker).
             kb_config: Knowledge-base metadata stored on the linker; ``entity_count`` is set
                 from fitted vocabulary when omitted (None).
+            clustering_report_dir: If set, write clustering grid metrics, ``results.csv``,
+                ``results_grid_per_sample.csv``, ``fine_clustering_metadata.pkl.gz``, and a
+                DBCV/ICM plot (same layout as ``run/analysis/clustering_quality.py``). When
+                ``optimize_clustering`` is False, a diagnostic grid is run on the same
+                ``frac`` subsample as configured in ``clustering_optimization_config`` without
+                changing the chosen ``min_cluster_size``.
 
         Returns:
             self
@@ -256,6 +382,7 @@ class Linker:
                 optimize_clustering=optimize_clustering,
                 min_cluster_size_arg=min_cluster_size,
                 kb_config=kb_config,
+                clustering_report_dir=clustering_report_dir,
             )
 
             return self
@@ -279,9 +406,12 @@ class Linker:
         optimize_clustering: bool,
         min_cluster_size_arg: int | None,
         kb_config: KBConfig | None,
+        clustering_report_dir: pathlib.Path | None,
     ) -> None:
         """Grid search (optional) on subsample; final PCA/UMAP + HDBSCAN on full ``prepared`` frame."""
-        if optimize_clustering:
+        need_grid_frame = optimize_clustering or clustering_report_dir is not None
+        grid_sample: pd.DataFrame | None = None
+        if need_grid_frame:
             grid_sample = prepared.sample(
                 frac=read_cfg.frac,
                 random_state=read_cfg.rns,
@@ -293,6 +423,10 @@ class Linker:
                     read_cfg.frac,
                 )
                 grid_sample = prepared
+
+        report: ClusteringReport | None = None
+        if optimize_clustering:
+            assert grid_sample is not None
             report = estimate_clustering_from_frame(
                 grid_sample,
                 transform_config,
@@ -318,6 +452,34 @@ class Linker:
             best_mcs = int(
                 min_cluster_size_arg if min_cluster_size_arg is not None else 20
             )
+
+        if clustering_report_dir is not None:
+            diagnostic = report
+            if not optimize_clustering:
+                assert grid_sample is not None
+                diagnostic = estimate_clustering_from_frame(
+                    grid_sample,
+                    transform_config,
+                    optimization_config=read_cfg,
+                    selected_labels=None,
+                    all_metrics_dfs=None,
+                    aggregation_level="mention",
+                )
+            if diagnostic is not None:
+                m, lyr = _clustering_quality_model_layer_from_metadata(
+                    self.embedding_metadata
+                )
+                _write_clustering_validation_artifacts(
+                    clustering_report_dir,
+                    diagnostic,
+                    model=m,
+                    layer=lyr,
+                    sample_idx=0,
+                )
+            else:
+                logger.warning(
+                    "Skipping clustering validation artifacts (grid/diagnostic report is None)"
+                )
 
         embeddings = np.stack(prepared["embed"].values).astype(np.float32, copy=False)
         self.transform_config = transform_config
