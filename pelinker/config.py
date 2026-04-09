@@ -4,9 +4,20 @@ import os
 from dataclasses import asdict, dataclass, field
 from datetime import date
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from numpy.random import RandomState
+
+GridObjectiveSpec = Literal[
+    "dbcv",
+    "ari",
+    "dbcv_ari_mean_minmax",
+    "dbcv_ari_mean_raw",
+]
+
+_GRID_OBJECTIVES: frozenset[str] = frozenset(
+    ("dbcv", "ari", "dbcv_ari_mean_minmax", "dbcv_ari_mean_raw")
+)
 
 
 def _validate_semver(version: str) -> None:
@@ -129,10 +140,12 @@ class ClusteringOptimizationConfig:
     """Rows per batch when **reading mention-level embedding parquet** (not encoder batch size)."""
     optimization_method: str = "mean"
     """How to build the objective f(min_cluster_size) before smoothing (mean / lower_bound / weighted)."""
+    grid_objective: GridObjectiveSpec = "dbcv_ari_mean_minmax"
+    """Which scalar to optimize on the grid (single metric or pooled DBCV+ARI; see ``clustering_grid``)."""
     grid_smooth_window: int = 3
     """Odd-length centered moving-average window for smoothing f(x). Even values are bumped up by one."""
     grid_plateau_fraction: float = 0.92
-    """Require smoothed f(x) >= this fraction of the smoothed maximum to accept a plateau point."""
+    """Plateau threshold on the **smoothed** curve: ``y_min + this * (y_max - y_min)`` (finite values only)."""
     grid_derivative_rel_tol: float = 0.12
     """|df/dx| below this times max|df/dx| counts as “derivative near zero” on the smoothed curve."""
 
@@ -149,6 +162,10 @@ class ClusteringOptimizationConfig:
             raise ValueError("n_embedding_batches must be >= 1 when provided")
         if not self.optimization_method:
             raise ValueError("optimization_method must be a non-empty string")
+        if self.grid_objective not in _GRID_OBJECTIVES:
+            raise ValueError(
+                f"grid_objective must be one of {sorted(_GRID_OBJECTIVES)}"
+            )
         if self.grid_smooth_window < 1:
             raise ValueError("grid_smooth_window must be >= 1")
         if not 0 < self.grid_plateau_fraction <= 1:

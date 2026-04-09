@@ -171,6 +171,15 @@ def test_solve_unknown_method_raises() -> None:
         solve_optimal_min_cluster_size_from_aggregated(r, method="nope")
 
 
+def test_solve_unknown_objective_raises() -> None:
+    r = _report_from_arrays([10], [1.0], [0.0], [1])
+    with pytest.raises(ValueError, match="Unknown grid objective"):
+        solve_optimal_min_cluster_size_from_aggregated(
+            r,
+            objective="not_an_objective",  # type: ignore[arg-type]
+        )
+
+
 def test_user_style_noisy_sequence_reasonable_choice() -> None:
     """Noisy scores that rise then wiggle near a ceiling (similar to user example)."""
     sizes = list(range(10, 10 + 8 * 5, 5))
@@ -189,6 +198,34 @@ def test_user_style_noisy_sequence_reasonable_choice() -> None:
     assert out.chosen_min_cluster_size in set(sizes)
     assert out.score_mean_at_chosen in means
     assert len(out.dy_dx) == len(out.x)
+
+
+def test_noisy_dbcv_does_not_pick_spurious_early_plateau() -> None:
+    """Regression: fractional ``plateau_fraction * y_max`` used to admit mediocre early points."""
+    sizes = [10, 15, 20, 25, 30, 35, 40, 45, 50, 55]
+    means = [
+        0.399424,
+        0.379638,
+        0.412020,
+        0.369532,
+        0.414304,
+        0.389333,
+        0.400889,
+        0.402151,
+        0.396124,
+        0.464974,
+    ]
+    r = _report_from_arrays(sizes, means, [0.02] * len(sizes), [5] * len(sizes))
+    out = solve_optimal_min_cluster_size_from_aggregated(
+        r,
+        objective="dbcv",
+        method="mean",
+        smooth_window=3,
+        plateau_fraction=0.92,
+        derivative_rel_tol=0.12,
+        precision_weighted_smooth=False,
+    )
+    assert out.chosen_min_cluster_size == 55
 
 
 def test_finite_mask_drops_non_finite_objective() -> None:

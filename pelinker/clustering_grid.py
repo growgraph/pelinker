@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
+from pelinker.config import GridObjectiveSpec
+
 import hdbscan
 import numpy as np
 import pandas as pd
@@ -53,7 +55,11 @@ class AggregatedGridReport:
 
 @dataclass(frozen=True)
 class SmoothedGridOptimumResult:
-    """Diagnostics for ``solve_optimal_min_cluster_size_from_aggregated``."""
+    """Diagnostics for ``solve_optimal_min_cluster_size_from_aggregated``.
+
+    ``score_mean_at_chosen`` / ``score_std_at_chosen`` refer to the raw objective (before
+    smoothing) at the chosen grid point.
+    """
 
     chosen_min_cluster_size: int
     score_mean_at_chosen: float
@@ -112,25 +118,111 @@ def _uniform_centered_moving_average(values: np.ndarray, window: int) -> np.ndar
     return out
 
 
-def _build_objective_y(
+def _metric_vectors(
     report: AggregatedGridReport,
+    which: Literal["dbcv", "ari"],
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    if which == "dbcv":
+        means = np.array([p.dbcv.mean for p in report.points], dtype=np.float64)
+        stds = np.array([p.dbcv.std for p in report.points], dtype=np.float64)
+        counts = np.array([p.dbcv.count for p in report.points], dtype=np.float64)
+    else:
+        means = np.array([p.ari.mean for p in report.points], dtype=np.float64)
+        stds = np.array([p.ari.std for p in report.points], dtype=np.float64)
+        counts = np.array([p.ari.count for p in report.points], dtype=np.float64)
+    return means, stds, counts
+
+
+def _minmax_norm_per_curve(values: np.ndarray, *, eps: float = 1e-12) -> np.ndarray:
+    """Per-grid min–max to [0, 1] using finite values only; constant curves → 1.0."""
+    out = np.full_like(values, np.nan, dtype=np.float64)
+    finite = np.isfinite(values)
+    if not np.any(finite):
+        return out
+    lo = float(np.min(values[finite]))
+    hi = float(np.max(values[finite]))
+    if hi - lo <= eps:
+        out[finite] = 1.0
+    else:
+        out[finite] = (values[finite] - lo) / (hi - lo)
+    return out
+
+
+def _combine_mean_std_count(
+    m1: np.ndarray,
+    s1: np.ndarray,
+    c1: np.ndarray,
+    m2: np.ndarray,
+    s2: np.ndarray,
+    c2: np.ndarray,
+    *,
+    use_minmax: bool,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Pairwise combine two metrics (same length). Missing values use the other series only."""
+    n = len(m1)
+    means = np.empty(n, dtype=np.float64)
+    stds = np.empty(n, dtype=np.float64)
+    counts = np.empty(n, dtype=np.float64)
+    v1 = _minmax_norm_per_curve(m1) if use_minmax else m1
+    v2 = _minmax_norm_per_curve(m2) if use_minmax else m2
+    for i in range(n):
+        f1 = np.isfinite(v1[i]) and np.isfinite(m1[i])
+        f2 = np.isfinite(v2[i]) and np.isfinite(m2[i])
+        if f1 and f2:
+            means[i] = 0.5 * (v1[i] + v2[i])
+            stds[i] = float(np.sqrt((s1[i] * s1[i] + s2[i] * s2[i]) / 4.0))
+            counts[i] = float(min(c1[i], c2[i]))
+        elif f1:
+            means[i] = v1[i]
+            stds[i] = float(s1[i])
+            counts[i] = float(c1[i])
+        elif f2:
+            means[i] = v2[i]
+            stds[i] = float(s2[i])
+            counts[i] = float(c2[i])
+        else:
+            means[i] = float("nan")
+            stds[i] = float("nan")
+            counts[i] = 0.0
+    return means, stds, counts
+
+
+def _objective_mean_std_count(
+    report: AggregatedGridReport,
+    objective: GridObjectiveSpec,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    if objective == "dbcv":
+        return _metric_vectors(report, "dbcv")
+    if objective == "ari":
+        return _metric_vectors(report, "ari")
+    md, sd, cd = _metric_vectors(report, "dbcv")
+    ma, sa, ca = _metric_vectors(report, "ari")
+    if objective == "dbcv_ari_mean_minmax":
+        return _combine_mean_std_count(md, sd, cd, ma, sa, ca, use_minmax=True)
+    if objective == "dbcv_ari_mean_raw":
+        return _combine_mean_std_count(md, sd, cd, ma, sa, ca, use_minmax=False)
+    raise ValueError(f"Unknown grid objective: {objective!r}")
+
+
+def _apply_optimization_method(
+    means: np.ndarray,
+    stds: np.ndarray,
     method: str,
     uncertainty_penalty: float,
 ) -> np.ndarray:
-    means = np.array([p.dbcv.mean for p in report.points], dtype=np.float64)
-    stds = np.array([p.dbcv.std for p in report.points], dtype=np.float64)
     if method == "mean":
-        return means
+        return means.copy()
     if method == "lower_bound":
         return means - uncertainty_penalty * stds
     if method == "weighted":
-        return means
+        return means.copy()
     raise ValueError(f"Unknown optimization method: {method!r}")
 
 
 def solve_optimal_min_cluster_size_from_aggregated(
     report: AggregatedGridReport,
     *,
+    objective: GridObjectiveSpec = "dbcv",
     method: str = "mean",
     uncertainty_penalty: float = 1.0,
     smooth_window: int = 3,
@@ -141,11 +233,11 @@ def solve_optimal_min_cluster_size_from_aggregated(
     """
     Choose ``min_cluster_size`` from aggregated noisy grid scores.
 
-    Builds an objective f(x) from per-point means (optionally mean - penalty·std), smooths f
-    with a centered moving average (uniform or precision-weighted by count / variance), then
-    prefers the **leftmost** x where the smoothed curve is near its plateau
-    (f ≥ ``plateau_fraction`` · max f and |df/dx| small). If none qualify, uses the smoothed
-    maximum.
+    Builds f(x) from ``objective`` (single metric or pooled DBCV+ARI), then optionally
+    ``method`` (mean / lower_bound / weighted). Smooths f with a centered moving average,
+    then prefers the **leftmost** x where the smoothed curve is near the top of its **range**
+    (f ≥ ``y_min + plateau_fraction · (y_max - y_min)`` on the smoothed curve, with
+    ``|df/dx|`` small). If none qualify, uses the smoothed argmax.
 
     ``precision_weighted_smooth`` defaults to True for ``lower_bound`` and ``weighted``,
     and False for ``mean``.
@@ -154,10 +246,8 @@ def solve_optimal_min_cluster_size_from_aggregated(
         raise ValueError("No aggregated grid points provided")
 
     x = np.array([p.min_cluster_size for p in report.points], dtype=np.float64)
-    y = _build_objective_y(report, method, uncertainty_penalty)
-    stds = np.array([p.dbcv.std for p in report.points], dtype=np.float64)
-    counts = np.array([p.dbcv.count for p in report.points], dtype=np.float64)
-    dbcv_means = np.array([p.dbcv.mean for p in report.points], dtype=np.float64)
+    base_means, stds, counts = _objective_mean_std_count(report, objective)
+    y = _apply_optimization_method(base_means, stds, method, uncertainty_penalty)
 
     finite = np.isfinite(x) & np.isfinite(y)
     if not np.any(finite):
@@ -165,15 +255,15 @@ def solve_optimal_min_cluster_size_from_aggregated(
 
     x = x[finite]
     y = y[finite]
+    base_means = base_means[finite]
     stds = stds[finite]
     counts = counts[finite]
-    dbcv_means = dbcv_means[finite]
     order = np.argsort(x)
     x = x[order]
     y = y[order]
+    base_means = base_means[order]
     stds = stds[order]
     counts = counts[order]
-    dbcv_means = dbcv_means[order]
 
     if precision_weighted_smooth is None:
         precision_weighted_smooth = method in ("lower_bound", "weighted")
@@ -187,7 +277,11 @@ def solve_optimal_min_cluster_size_from_aggregated(
     dydx = np.gradient(y_s, x)
     d2ydx2 = np.gradient(dydx, x)
 
-    y_max = float(np.nanmax(y_s))
+    smooth_finite = np.isfinite(y_s)
+    if not np.any(smooth_finite):
+        raise ValueError("Smoothed objective is non-finite")
+    y_max = float(np.max(y_s[smooth_finite]))
+    y_min = float(np.min(y_s[smooth_finite]))
     if not np.isfinite(y_max):
         raise ValueError("Smoothed objective is non-finite")
 
@@ -196,7 +290,7 @@ def solve_optimal_min_cluster_size_from_aggregated(
     if not np.isfinite(scale) or scale <= 0:
         scale = 1.0
     thresh = derivative_rel_tol * scale
-    level = plateau_fraction * y_max
+    level = y_min + plateau_fraction * (y_max - y_min)
 
     chosen_idx: int | None = None
     selection: Literal["plateau_derivative", "smoothed_argmax"] = "smoothed_argmax"
@@ -212,7 +306,7 @@ def solve_optimal_min_cluster_size_from_aggregated(
         chosen_idx = int(np.nanargmax(y_s))
 
     chosen_x = int(x[chosen_idx])
-    score_mean_at = float(dbcv_means[chosen_idx])
+    score_mean_at = float(base_means[chosen_idx])
     score_std_at = float(stds[chosen_idx])
 
     return SmoothedGridOptimumResult(

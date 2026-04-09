@@ -25,13 +25,9 @@ from pelinker.analysis import (
     estimate_clustering_from_frame,
     filter_mention_frame_by_kb_labels,
     mention_frame_from_embedding_paths,
+    metrics_df_with_grid_sample_columns,
 )
-from pelinker.plotting import (
-    GRID_COL_CHOSEN_MIN_CLUSTER_SIZE,
-    GRID_COL_SAMPLE_ARI,
-    GRID_COL_SAMPLE_BEST_DBCV,
-    plot_metrics_with_error_bars,
-)
+from pelinker.plotting import plot_metrics_with_error_bars
 from pelinker.reporting import (
     ClusteringReport,
     summarize_clustering_reports_for_search,
@@ -72,19 +68,14 @@ def _metrics_df_with_grid_sample_columns(
     model: str,
     layer: str,
     sample_idx: int,
+    chosen_min_cluster_size: int | None = None,
 ) -> pd.DataFrame:
-    ari = report.ari
-    return report.metrics_df.assign(
+    return metrics_df_with_grid_sample_columns(
+        report,
         model=model,
         layer=layer,
         sample_idx=sample_idx,
-        **{
-            GRID_COL_CHOSEN_MIN_CLUSTER_SIZE: int(
-                report.hyperparameters.min_cluster_size
-            ),
-            GRID_COL_SAMPLE_BEST_DBCV: float(report.best_score),
-            GRID_COL_SAMPLE_ARI: float("nan") if ari is None else float(ari),
-        },
+        chosen_min_cluster_size=chosen_min_cluster_size,
     )
 
 

@@ -15,7 +15,11 @@ from rich.progress import (
 )
 from rich.table import Table
 
-from pelinker.analysis import estimate_model_clustering
+from pelinker.analysis import (
+    estimate_model_clustering,
+    metrics_df_with_grid_sample_columns,
+    pooled_min_cluster_size_from_metrics_dfs,
+)
 from pelinker.clustering_fusion_ranking import (
     singleton_items_by_dbcv_score,
     top_k_fusion_candidates_by_dbcv_proxy,
@@ -153,29 +157,6 @@ def _materialize_best_report(
         selected_labels=selected_labels,
         all_metrics_dfs=None,
         show_embedding_read_progress=sys.stdout.isatty(),
-    )
-
-
-def _metrics_df_with_grid_sample_columns(
-    report: ClusteringReport,
-    *,
-    model: str,
-    layer: str,
-    sample_idx: int,
-) -> pd.DataFrame:
-    """Grid rows for ``results_grid_per_sample.csv`` with per-sample DBCV / ARI for scatter."""
-    ari = report.ari
-    return report.metrics_df.assign(
-        model=model,
-        layer=layer,
-        sample_idx=sample_idx,
-        **{
-            GRID_COL_CHOSEN_MIN_CLUSTER_SIZE: int(
-                report.hyperparameters.min_cluster_size
-            ),
-            GRID_COL_SAMPLE_BEST_DBCV: float(report.best_score),
-            GRID_COL_SAMPLE_ARI: float("nan") if ari is None else float(ari),
-        },
     )
 
 
@@ -726,6 +707,7 @@ def main(
                 file_metrics: list[pd.DataFrame] = []
                 file_reports: list[ClusteringReport] = []
                 all_metrics_dfs: list[pd.DataFrame] = []
+                grid_batch: list[pd.DataFrame] = []
 
                 optimization_config = ClusteringOptimizationConfig(
                     min_class_size=min_class_size,
@@ -777,8 +759,8 @@ def main(
                     if report is not None:
                         file_metrics.append(report.metrics_df)
                         file_reports.append(report)
-                        detailed_grid_frames.append(
-                            _metrics_df_with_grid_sample_columns(
+                        grid_batch.append(
+                            metrics_df_with_grid_sample_columns(
                                 report,
                                 model=model,
                                 layer=layer,
@@ -803,20 +785,27 @@ def main(
                     gc.collect()
 
                 if file_reports:
+                    pooled_mcs, _ = pooled_min_cluster_size_from_metrics_dfs(
+                        all_metrics_dfs,
+                        optimization_config,
+                    )
+                    for _gf in grid_batch:
+                        _gf[GRID_COL_CHOSEN_MIN_CLUSTER_SIZE] = pooled_mcs
+                    detailed_grid_frames.extend(grid_batch)
+
                     metrics_by_file[(model, layer)] = file_metrics
                     summary_row = summarize_clustering_reports_for_search(
                         file_reports,
                         model=model,
                         layer=layer,
+                        pooled_min_cluster_size=pooled_mcs,
                     )
 
                     if len(file_metrics) > 1:
                         plot_metrics_with_error_bars(
                             file_metrics,
                             output_dir / f"{model}_{layer}_error_bars.png",
-                            chosen_min_cluster_size=float(
-                                file_reports[-1].hyperparameters.min_cluster_size
-                            ),
+                            chosen_min_cluster_size=float(pooled_mcs),
                         )
                     else:
                         plot_metrics(
@@ -833,7 +822,7 @@ def main(
                     n_new = len(file_reports)
                     _merge_new_frames_into_per_sample_grid_csv(
                         detail_path,
-                        detailed_grid_frames[-n_new:],
+                        grid_batch,
                     )
                     _merge_new_frames_into_fine_metadata_pickle(
                         fine_metadata_path,
@@ -946,6 +935,7 @@ def main(
                     fusion_metrics: list[pd.DataFrame] = []
                     fusion_reports: list[ClusteringReport] = []
                     fusion_all_metrics_dfs: list[pd.DataFrame] = []
+                    fusion_grid_batch: list[pd.DataFrame] = []
 
                     optimization_config = ClusteringOptimizationConfig(
                         min_class_size=min_class_size,
@@ -988,8 +978,8 @@ def main(
                         if report is not None:
                             fusion_metrics.append(report.metrics_df)
                             fusion_reports.append(report)
-                            detailed_grid_frames.append(
-                                _metrics_df_with_grid_sample_columns(
+                            fusion_grid_batch.append(
+                                metrics_df_with_grid_sample_columns(
                                     report,
                                     model=model_label,
                                     layer=layer_label,
@@ -1013,10 +1003,19 @@ def main(
                         gc.collect()
 
                     if fusion_reports:
+                        pooled_mcs, _ = pooled_min_cluster_size_from_metrics_dfs(
+                            fusion_all_metrics_dfs,
+                            optimization_config,
+                        )
+                        for _gf in fusion_grid_batch:
+                            _gf[GRID_COL_CHOSEN_MIN_CLUSTER_SIZE] = pooled_mcs
+                        detailed_grid_frames.extend(fusion_grid_batch)
+
                         fusion_summary = summarize_clustering_reports_for_search(
                             fusion_reports,
                             model=model_label,
                             layer=layer_label,
+                            pooled_min_cluster_size=pooled_mcs,
                         )
                         metrics_by_file[(model_label, layer_label)] = fusion_metrics
 
@@ -1026,9 +1025,7 @@ def main(
                             plot_metrics_with_error_bars(
                                 fusion_metrics,
                                 out_metric,
-                                chosen_min_cluster_size=float(
-                                    fusion_reports[-1].hyperparameters.min_cluster_size
-                                ),
+                                chosen_min_cluster_size=float(pooled_mcs),
                             )
                         else:
                             plot_metrics(fusion_metrics[0], out_metric)
@@ -1043,7 +1040,7 @@ def main(
                         n_new = len(fusion_reports)
                         _merge_new_frames_into_per_sample_grid_csv(
                             detail_path,
-                            detailed_grid_frames[-n_new:],
+                            fusion_grid_batch,
                         )
                         _merge_new_frames_into_fine_metadata_pickle(
                             fine_metadata_path,

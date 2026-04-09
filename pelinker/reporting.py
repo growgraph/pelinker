@@ -145,9 +145,17 @@ def summarize_clustering_reports_for_search(
     *,
     model: str,
     layer: str,
+    pooled_min_cluster_size: int | None = None,
 ) -> ClusteringSearchSummaryRow:
     """
     Aggregate repeated :class:`ClusteringReport` runs into one search summary row.
+
+    When ``pooled_min_cluster_size`` is set (after aggregating grid curves across samples),
+    ``best_size`` / ``best_size_std`` report that single consensus hyperparameter (std is 0)
+    and ``dbcv`` is the mean (and std) of each sample's DBCV **at that grid point**.
+
+    Otherwise (independent runs or legacy callers) ``best_size`` is the mean of per-report
+    chosen sizes and ``dbcv`` is the mean of each report's ``best_score``.
 
     Raises:
         ValueError: if ``reports`` is empty.
@@ -164,10 +172,30 @@ def summarize_clustering_reports_for_search(
     ari_vals = [float(r.ari) for r in reports if r.ari is not None]
 
     n = len(reports)
-    std_sizes = float(np.std(sizes)) if n > 1 else 0.0
-    std_scores = float(np.std(scores)) if n > 1 else 0.0
     std_nprops = float(np.std(nprops)) if n > 1 else 0.0
     std_n_clusters = float(np.std(n_clusters)) if n > 1 else 0.0
+
+    if pooled_min_cluster_size is not None:
+        sizes_mean = float(pooled_min_cluster_size)
+        std_sizes = 0.0
+        dbcv_at: list[float] = []
+        for r in reports:
+            m = r.metrics_df
+            hit = m.loc[m["min_cluster_size"] == pooled_min_cluster_size, "dbcv"]
+            if len(hit) > 0:
+                dbcv_at.append(float(hit.iloc[0]))
+        if dbcv_at:
+            arr_dbcv = np.array(dbcv_at, dtype=np.float64)
+            dbcv_mean = float(np.mean(arr_dbcv))
+            dbcv_std = float(np.std(arr_dbcv)) if len(arr_dbcv) > 1 else 0.0
+        else:
+            dbcv_mean = float(np.mean(scores))
+            dbcv_std = float(np.std(scores)) if n > 1 else 0.0
+    else:
+        sizes_mean = float(np.mean(sizes))
+        std_sizes = float(np.std(sizes)) if n > 1 else 0.0
+        dbcv_mean = float(np.mean(scores))
+        dbcv_std = float(np.std(scores)) if n > 1 else 0.0
 
     ari_block: MeanWithUncertainty | None
     if ari_vals:
@@ -184,7 +212,7 @@ def summarize_clustering_reports_for_search(
         layer=layer,
         hyperparameters=HyperparameterSearchStats(
             min_cluster_size=MeanWithUncertainty(
-                mean=float(np.mean(sizes)),
+                mean=sizes_mean,
                 std=std_sizes,
             ),
         ),
@@ -197,8 +225,8 @@ def summarize_clustering_reports_for_search(
             std=std_n_clusters,
         ),
         dbcv=MeanWithUncertainty(
-            mean=float(np.mean(scores)),
-            std=std_scores,
+            mean=dbcv_mean,
+            std=dbcv_std,
         ),
         ari=ari_block,
     )

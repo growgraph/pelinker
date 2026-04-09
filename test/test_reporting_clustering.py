@@ -73,3 +73,47 @@ def test_summarize_ari_none_when_all_missing() -> None:
     flat = row.to_flat_dict()
     assert flat["ari"] is None
     assert flat["ari_std"] == 0.0
+
+
+def test_summarize_with_pooled_min_cluster_size_uses_consensus_and_per_sample_dbcv() -> (
+    None
+):
+    """Pooled summary reports one ``best_size`` and DBCV mean/std at that grid point."""
+    r1 = ClusteringReport(
+        hyperparameters=ClusteringHyperparameters(min_cluster_size=10),
+        best_score=0.5,
+        number_properties=5,
+        n_clusters_emergent=3,
+        metrics_df=pd.DataFrame(
+            {
+                "min_cluster_size": [10, 20],
+                "dbcv": [0.4, 0.55],
+            }
+        ),
+        df=pd.DataFrame({"x": [1.0]}),
+        ari=0.8,
+    )
+    r2 = ClusteringReport(
+        hyperparameters=ClusteringHyperparameters(min_cluster_size=15),
+        best_score=0.6,
+        number_properties=5,
+        n_clusters_emergent=4,
+        metrics_df=pd.DataFrame(
+            {
+                "min_cluster_size": [10, 20],
+                "dbcv": [0.45, 0.50],
+            }
+        ),
+        df=pd.DataFrame({"x": [1.0]}),
+        ari=0.85,
+    )
+    row = summarize_clustering_reports_for_search(
+        [r1, r2],
+        model="m",
+        layer="L0",
+        pooled_min_cluster_size=20,
+    )
+    assert row.hyperparameters.min_cluster_size.mean == 20.0
+    assert row.hyperparameters.min_cluster_size.std == 0.0
+    assert row.dbcv.mean == pytest.approx((0.55 + 0.50) / 2)
+    assert row.dbcv.std > 0

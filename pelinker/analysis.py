@@ -13,6 +13,11 @@ from pelinker.clustering_grid import (
     evaluate_cluster_size_grid,
     solve_optimal_min_cluster_size_from_aggregated,
 )
+from pelinker.plotting import (
+    GRID_COL_CHOSEN_MIN_CLUSTER_SIZE,
+    GRID_COL_SAMPLE_ARI,
+    GRID_COL_SAMPLE_BEST_DBCV,
+)
 from pelinker.embedding_fusion import concat_mention_level_embedding_sources
 from pelinker.reporting import ClusteringHyperparameters, ClusteringReport
 from sklearn.metrics import adjusted_rand_score
@@ -160,6 +165,64 @@ def compute_adjusted_rand_index(y_true: np.ndarray, y_pred: np.ndarray) -> float
     return float(ari)
 
 
+def pooled_min_cluster_size_from_metrics_dfs(
+    metrics_dfs: Sequence[pd.DataFrame],
+    optimization_config: ClusteringOptimizationConfig | None = None,
+) -> tuple[int, float]:
+    """
+    After all bootstrap samples have run a min_cluster_size grid, aggregate their metrics
+    once and return the smoothed ``(chosen_min_cluster_size, raw objective mean at that grid point)``.
+    The objective is set by ``ClusteringOptimizationConfig.grid_objective`` (default: pooled
+    min–max normalized DBCV and ARI).
+    """
+    if not metrics_dfs:
+        raise ValueError("metrics_dfs must be non-empty")
+    config = optimization_config or ClusteringOptimizationConfig()
+    aggregated = aggregate_grid_metrics(list(metrics_dfs))
+    solved = solve_optimal_min_cluster_size_from_aggregated(
+        aggregated,
+        objective=config.grid_objective,
+        method=config.optimization_method,
+        smooth_window=config.grid_smooth_window,
+        plateau_fraction=config.grid_plateau_fraction,
+        derivative_rel_tol=config.grid_derivative_rel_tol,
+    )
+    return solved.chosen_min_cluster_size, solved.score_mean_at_chosen
+
+
+def metrics_df_with_grid_sample_columns(
+    report: ClusteringReport,
+    *,
+    model: str,
+    layer: str,
+    sample_idx: int,
+    chosen_min_cluster_size: int | None = None,
+) -> pd.DataFrame:
+    """
+    Per-sample grid rows for ``results_grid_per_sample.csv``.
+
+    ``chosen_min_cluster_size`` defaults to the value used to fit this sample's clusters
+    (per-sample grid argmax). Pass the pooled choice from
+    :func:`pooled_min_cluster_size_from_metrics_dfs` so every row shares one consensus marker.
+    """
+    ari = report.ari
+    h = (
+        chosen_min_cluster_size
+        if chosen_min_cluster_size is not None
+        else report.hyperparameters.min_cluster_size
+    )
+    return report.metrics_df.assign(
+        model=model,
+        layer=layer,
+        sample_idx=sample_idx,
+        **{
+            GRID_COL_CHOSEN_MIN_CLUSTER_SIZE: int(h),
+            GRID_COL_SAMPLE_BEST_DBCV: float(report.best_score),
+            GRID_COL_SAMPLE_ARI: float("nan") if ari is None else float(ari),
+        },
+    )
+
+
 def estimate_clustering_from_frame(
     dfr: pd.DataFrame,
     transform_config: TransformConfig,
@@ -170,7 +233,13 @@ def estimate_clustering_from_frame(
     aggregation_level: Literal["mention", "property"] = "mention",
 ) -> ClusteringReport | None:
     """
-    Run clustering grid search and optional aggregation on a pre-built frame with an ``embed`` column.
+    Run clustering grid search and optional **accumulation** of per-sample grid tables.
+
+    When ``all_metrics_dfs`` is provided, each call appends this sample's ``metrics_df`` to
+    that list. The optimal ``min_cluster_size`` for the final HDBSCAN fit **on this sample**
+    is always the per-sample DBCV argmax on its own grid; run
+    :func:`pooled_min_cluster_size_from_metrics_dfs` after all samples to obtain one consensus
+    choice across bootstraps (for summaries, plots, and optional grid CSV markers).
 
     ``aggregation_level="property"`` expects one row per distinct ``property`` (e.g. fused
     KB vectors) and skips min-mention-per-property trimming used for mention-level corpora.
@@ -202,25 +271,15 @@ def estimate_clustering_from_frame(
 
     sizes = list(np.arange(int(0.5 * config.min_class_size), config.max_scale, 5))
     metrics_df = evaluate_cluster_size_grid(dfr2, umap_columns, sizes)
+    if len(metrics_df) == 0:
+        return None
 
     if all_metrics_dfs is not None:
         all_metrics_dfs.append(metrics_df)
-        aggregated = aggregate_grid_metrics(all_metrics_dfs)
-        solved = solve_optimal_min_cluster_size_from_aggregated(
-            aggregated,
-            method=config.optimization_method,
-            smooth_window=config.grid_smooth_window,
-            plateau_fraction=config.grid_plateau_fraction,
-            derivative_rel_tol=config.grid_derivative_rel_tol,
-        )
-        best_size = solved.chosen_min_cluster_size
-        best_score = solved.score_mean_at_chosen
-    else:
-        if len(metrics_df) == 0:
-            return None
-        best_idx = metrics_df["dbcv"].idxmax()
-        best_size = int(metrics_df.loc[best_idx, "min_cluster_size"])
-        best_score = float(metrics_df.loc[best_idx, "dbcv"])
+
+    best_idx = metrics_df["dbcv"].idxmax()
+    best_size = int(metrics_df.loc[best_idx, "min_cluster_size"])
+    best_score = float(metrics_df.loc[best_idx, "dbcv"])
 
     clusterer = hdbscan.HDBSCAN(min_cluster_size=best_size, gen_min_span_tree=True)
     labels = clusterer.fit_predict(dfr2[umap_columns])
@@ -278,7 +337,8 @@ def estimate_model_clustering(
         file_paths: Multiple parquets to fuse at mention level before clustering.
         dfr: Optional pre-built frame (e.g. fused) with ``property`` and ``embed`` columns.
         selected_labels: Optional set of labels from selected labels KB to filter by
-        all_metrics_dfs: Optional list of metrics DataFrames from previous samples.
+        all_metrics_dfs: Optional mutable list that receives each sample's grid ``DataFrame``
+            (for a pooled choice after the batch via :func:`pooled_min_cluster_size_from_metrics_dfs`).
         embedding_read_status: Callback for embedding parquet batch progress lines
             (e.g. append to an existing Rich ``Progress`` task description).
         show_embedding_read_progress: When True and ``embedding_read_status`` is omitted,
