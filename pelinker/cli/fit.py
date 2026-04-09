@@ -51,6 +51,9 @@ class FitCliConfig:
     umap_dim: int = 8
     min_class_size: int = 20
     max_scale: int = 120
+    # None → max(1, min_class_size // 2) in ClusteringOptimizationConfig.resolved_min_scale
+    min_scale: int | None = None
+    clustering_grid_step: int = 5
     # Filesystem path for the saved model; None → bundled store filename under ``pelinker.store``.
     output_path: str | None = None
     # If set, clustering reports are written exactly here. If unset, defaults to
@@ -448,6 +451,8 @@ def fit(cfg: FitCliConfig) -> None:
     clustering_config = ClusteringOptimizationConfig(
         min_class_size=cfg.min_class_size,
         max_scale=cfg.max_scale,
+        min_scale=cfg.min_scale,
+        clustering_grid_step=cfg.clustering_grid_step,
         rns=RandomState(cfg.clustering_seed),
         frac=cfg.frac,
         n_embedding_batches=cfg.n_embedding_batches,

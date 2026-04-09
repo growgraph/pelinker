@@ -141,6 +141,8 @@ def fingerprint_config_from_cli(
     n_sample: int,
     selected_labels_kb_path: pathlib.Path | None,
     max_scale: int,
+    min_scale: int | None = None,
+    clustering_grid_step: int = 5,
 ) -> dict[str, Any]:
     """Parameters that must match between checkpoint and resume.
 
@@ -154,13 +156,18 @@ def fingerprint_config_from_cli(
     kb = None
     if selected_labels_kb_path is not None:
         kb = str(selected_labels_kb_path.expanduser().resolve())
+    resolved_min_scale = (
+        min_scale if min_scale is not None else max(1, min_class_size // 2)
+    )
     return {
         "batch_size": batch_size,
+        "clustering_grid_step": clustering_grid_step,
         "frac": frac,
         "n_embedding_batches": n_embedding_batches,
         "input_dir": str(input_dir.expanduser().resolve()),
         "max_scale": max_scale,
         "min_class_size": min_class_size,
+        "min_scale": resolved_min_scale,
         "n_sample": n_sample,
         "pca_components": pca_components,
         "prefix": prefix,

@@ -131,7 +131,17 @@ class ClusteringOptimizationConfig:
     """Configuration for clustering optimization grid search."""
 
     min_class_size: int = 20
+    # Exclusive end of ``np.arange(resolved_min_scale(), max_scale, clustering_grid_step)``.
     max_scale: int = 100
+    min_scale: int | None = None
+    """Lower bound (inclusive) for the ``min_cluster_size`` grid.
+
+    When ``None``, defaults to ``max(1, min_class_size // 2)`` (legacy behavior: half of
+    :attr:`min_class_size`). Set explicitly to decouple grid start from mention-level
+    filtering (:attr:`min_class_size`).
+    """
+    clustering_grid_step: int = 5
+    """Step between consecutive ``min_cluster_size`` values on the grid (``numpy.arange`` step)."""
     rns: RandomState = field(default_factory=lambda: RandomState(seed=13))
     frac: float = 1.0
     n_embedding_batches: int | None = None
@@ -149,11 +159,24 @@ class ClusteringOptimizationConfig:
     grid_derivative_rel_tol: float = 0.12
     """|df/dx| below this times max|df/dx| counts as “derivative near zero” on the smoothed curve."""
 
+    def resolved_min_scale(self) -> int:
+        """Inclusive start of the ``min_cluster_size`` grid (HDBSCAN hyperparameter)."""
+        if self.min_scale is not None:
+            return self.min_scale
+        return max(1, self.min_class_size // 2)
+
     def __post_init__(self) -> None:
         if self.min_class_size < 1:
             raise ValueError("min_class_size must be >= 1")
-        if self.max_scale < self.min_class_size:
-            raise ValueError("max_scale must be >= min_class_size")
+        if self.min_scale is not None and self.min_scale < 1:
+            raise ValueError("min_scale must be >= 1 when provided")
+        lo = self.resolved_min_scale()
+        if self.max_scale < lo:
+            raise ValueError(
+                f"max_scale must be >= resolved min_scale ({lo}); got max_scale={self.max_scale}"
+            )
+        if self.clustering_grid_step < 1:
+            raise ValueError("clustering_grid_step must be >= 1")
         if self.batch_size < 1:
             raise ValueError("batch_size must be >= 1")
         if not 0 < self.frac <= 1:

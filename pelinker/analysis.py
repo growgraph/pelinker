@@ -269,7 +269,13 @@ def estimate_clustering_from_frame(
     umap_columns = get_umap_columns(transform_config)
     dfr2 = transform_embeddings(dfr, config=transform_config, embed_column="embed")
 
-    sizes = list(np.arange(int(0.5 * config.min_class_size), config.max_scale, 5))
+    sizes = list(
+        np.arange(
+            config.resolved_min_scale(),
+            config.max_scale,
+            config.clustering_grid_step,
+        )
+    )
     metrics_df = evaluate_cluster_size_grid(dfr2, umap_columns, sizes)
     if len(metrics_df) == 0:
         return None

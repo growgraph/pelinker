@@ -2,7 +2,7 @@ from datetime import date
 
 import pytest
 
-from pelinker.config import KBConfig
+from pelinker.config import ClusteringOptimizationConfig, KBConfig
 
 
 def test_kb_config_ok():
@@ -51,3 +51,20 @@ def test_kb_config_rejects_negative_entity_count():
             created_at=date.today(),
             entity_count=-1,
         )
+
+
+def test_clustering_optimization_resolved_min_scale_default() -> None:
+    c = ClusteringOptimizationConfig(min_class_size=20, max_scale=100)
+    assert c.resolved_min_scale() == 10
+
+
+def test_clustering_optimization_resolved_min_scale_explicit() -> None:
+    c = ClusteringOptimizationConfig(
+        min_class_size=20, min_scale=5, max_scale=100, clustering_grid_step=5
+    )
+    assert c.resolved_min_scale() == 5
+
+
+def test_clustering_optimization_rejects_max_below_resolved_min() -> None:
+    with pytest.raises(ValueError, match="max_scale must be >="):
+        ClusteringOptimizationConfig(min_class_size=20, min_scale=50, max_scale=40)

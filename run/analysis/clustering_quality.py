@@ -421,7 +421,23 @@ def _results_from_checkpoint(
     type=click.INT,
     default=60,
     show_default=True,
-    help="Maximum value for grid evaluation of min_cluster_size",
+    help="Exclusive upper bound for grid evaluation of min_cluster_size (numpy.arange end).",
+)
+@click.option(
+    "--min-scale",
+    type=click.INT,
+    default=None,
+    help=(
+        "Inclusive lower bound for min_cluster_size on the grid. "
+        "Default: max(1, min_class_size // 2) (legacy: half of --min-class-size)."
+    ),
+)
+@click.option(
+    "--clustering-grid-step",
+    type=click.INT,
+    default=5,
+    show_default=True,
+    help="Step between consecutive min_cluster_size values on the optimization grid.",
 )
 @click.option(
     "--fusion-pairs",
@@ -480,6 +496,8 @@ def main(
     prefix: str,
     selected_labels_kb_path: pathlib.Path | None,
     max_scale: int,
+    min_scale: int | None,
+    clustering_grid_step: int,
     fusion_pairs: int,
     fusion_triples: int,
     resume: bool,
@@ -558,6 +576,8 @@ def main(
         n_sample=n_sample,
         selected_labels_kb_path=selected_labels_kb_path,
         max_scale=max_scale,
+        min_scale=min_scale,
+        clustering_grid_step=clustering_grid_step,
     )
     run_fingerprint = compute_run_fingerprint(fp_payload)
 
@@ -712,6 +732,8 @@ def main(
                 optimization_config = ClusteringOptimizationConfig(
                     min_class_size=min_class_size,
                     max_scale=max_scale,
+                    min_scale=min_scale,
+                    clustering_grid_step=clustering_grid_step,
                     rns=RandomState(seed=seed),
                     frac=frac,
                     n_embedding_batches=n_embedding_batches,
@@ -940,6 +962,8 @@ def main(
                     optimization_config = ClusteringOptimizationConfig(
                         min_class_size=min_class_size,
                         max_scale=max_scale,
+                        min_scale=min_scale,
+                        clustering_grid_step=clustering_grid_step,
                         rns=RandomState(seed=seed),
                         frac=frac,
                         n_embedding_batches=n_embedding_batches,
@@ -1183,6 +1207,8 @@ def main(
         viz_config = ClusteringOptimizationConfig(
             min_class_size=min_class_size,
             max_scale=max_scale,
+            min_scale=min_scale,
+            clustering_grid_step=clustering_grid_step,
             rns=RandomState(seed=seed),
             frac=frac,
             n_embedding_batches=n_embedding_batches,

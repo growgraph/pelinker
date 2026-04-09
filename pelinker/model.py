@@ -272,8 +272,9 @@ class Linker:
                 ``clustering_optimization_config.frac`` subsample (analysis-aligned), then
                 fit the serialized model on **all** prepared rows (no subsampling).
             clustering_optimization_config: Parquet batching (``batch_size``,
-                ``n_embedding_batches``), grid bounds (``min_class_size``, ``max_scale``),
-                grid subsample ``frac``, and RNG ``rns`` / ``frac`` for phase 1 only.
+                ``n_embedding_batches``), grid bounds (``min_scale`` / resolved default,
+                ``max_scale``, ``clustering_grid_step``), mention filter ``min_class_size``,
+                grid subsample ``frac``, and RNG ``rns`` for phase 1 only.
             embedding_training: Corpus paths and embedding runtime. Required when embeddings=None.
             embedding_metadata: If provided, overrides or sets ``self.embedding_metadata`` for
                 this fit (required when embeddings=None unless already set on the linker).
