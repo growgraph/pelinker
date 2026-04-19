@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import sys
 import tempfile
-from collections import Counter
+from collections import Counter, defaultdict
 from collections.abc import Sequence
 from dataclasses import replace
 
@@ -16,6 +16,7 @@ import pathlib
 import logging
 
 from pelinker.config import (
+    ClusterCompositionSnapshot,
     ClusteringOptimizationConfig,
     EmbeddingModelMetadata,
     EmbeddingTrainingConfig,
@@ -170,6 +171,134 @@ def _modal_cluster_deterministic(clusters: list[int]) -> int | None:
     return candidates[0]
 
 
+def cluster_composition_from_training_frame(
+    training: pd.DataFrame,
+) -> ClusterCompositionSnapshot:
+    """
+    Aggregate mention counts per ``property`` and per ``cluster`` from a fitted training frame.
+
+    Rows are weighted equally (each row is one mention). Proportions in
+    :attr:`ClusterCompositionSnapshot.cluster_within_fraction` are relative to each cluster’s
+    total mass; :attr:`ClusterCompositionSnapshot.cluster_fraction_of_property_mass` is
+    relative to each property’s global mass in this frame.
+    """
+    if "property" not in training.columns or "cluster" not in training.columns:
+        raise ValueError("training frame must contain 'property' and 'cluster' columns")
+    work = training[["property", "cluster"]].copy()
+    work["property"] = work["property"].astype(str)
+    global_vc = work["property"].value_counts()
+    global_property_mass = {str(k): int(v) for k, v in global_vc.items()}
+    cluster_within: dict[int, dict[str, float]] = {}
+    cluster_capture: dict[int, dict[str, float]] = {}
+    for cid, grp in work.groupby("cluster", sort=True):
+        c = int(cid)
+        counts = grp["property"].value_counts()
+        total = int(counts.sum())
+        if total == 0:
+            continue
+        cluster_within[c] = {
+            str(p): float(counts[p]) / float(total) for p in counts.index
+        }
+        cap: dict[str, float] = {}
+        for p, cnt in counts.items():
+            gp = global_property_mass[str(p)]
+            if gp > 0:
+                cap[str(p)] = float(int(cnt)) / float(gp)
+        cluster_capture[c] = cap
+    return ClusterCompositionSnapshot(
+        global_property_mass=global_property_mass,
+        cluster_within_fraction=cluster_within,
+        cluster_fraction_of_property_mass=cluster_capture,
+    )
+
+
+def _is_near_uniform_mixture(mass_frac: dict[str, float], *, width_tol: float) -> bool:
+    """Several properties with similar shares (flat admixture), not a single dominant."""
+    if len(mass_frac) <= 1:
+        return False
+    vals = list(mass_frac.values())
+    return (max(vals) - min(vals)) <= width_tol
+
+
+def _singular_dominant_property(
+    mass_frac: dict[str, float],
+    *,
+    min_share: float,
+    min_gap: float,
+) -> str | None:
+    """Return the dominant property label if one clearly leads, else ``None``."""
+    if len(mass_frac) == 1:
+        return next(iter(mass_frac))
+    items = sorted(mass_frac.items(), key=lambda x: (-x[1], x[0]))
+    top_p, top_v = items[0]
+    second_v = items[1][1] if len(items) > 1 else 0.0
+    if top_v >= min_share and (top_v - second_v) >= min_gap:
+        return top_p
+    return None
+
+
+def _hyphen_join_properties(mass_frac: dict[str, float]) -> str:
+    return "-".join(sorted(mass_frac.keys()))
+
+
+def consensus_cluster_names(
+    composition: ClusterCompositionSnapshot,
+    *,
+    uniform_width_tol: float = 0.15,
+    dominance_min_share: float = 0.52,
+    dominance_min_gap: float = 0.12,
+    noise_cluster_label: str = "noise",
+) -> dict[int, str]:
+    """
+    Derive a short human-readable name per cluster from within-cluster property mixtures.
+
+    * Single-property clusters use that property name.
+    * Flat / near-uniform admixture uses hyphenated sorted property names.
+    * Clear single dominant property uses that name; duplicate dominant names across clusters
+      get ``_A``, ``_B``, … suffixes (stable order by cluster id).
+    * Remaining mixed cases use hyphenated sorted names; collisions are disambiguated the same way.
+    * Cluster ``-1`` (HDBSCAN noise) is named ``noise_cluster_label`` unless overridden by callers.
+    """
+    raw: dict[int, str] = {}
+    for cid, mass_frac in composition.cluster_within_fraction.items():
+        if cid == -1:
+            raw[cid] = noise_cluster_label
+            continue
+        if not mass_frac:
+            raw[cid] = str(cid)
+            continue
+        k = len(mass_frac)
+        width_tol = min(uniform_width_tol, 0.5 / float(max(k, 1)))
+        if k == 1:
+            base = next(iter(mass_frac))
+        elif _is_near_uniform_mixture(mass_frac, width_tol=width_tol):
+            base = _hyphen_join_properties(mass_frac)
+        else:
+            dom = _singular_dominant_property(
+                mass_frac,
+                min_share=dominance_min_share,
+                min_gap=dominance_min_gap,
+            )
+            base = dom if dom is not None else _hyphen_join_properties(mass_frac)
+        raw[cid] = base
+    return _disambiguate_consensus_names(raw)
+
+
+def _disambiguate_consensus_names(names: dict[int, str]) -> dict[int, str]:
+    buckets: dict[str, list[int]] = defaultdict(list)
+    for cid in sorted(names.keys()):
+        buckets[names[cid]].append(cid)
+    out: dict[int, str] = {}
+    for name, cids in buckets.items():
+        if len(cids) == 1:
+            out[cids[0]] = name
+            continue
+        for i, cid in enumerate(sorted(cids)):
+            suffix = chr(ord("A") + i)
+            out[cid] = f"{name}_{suffix}"
+    return out
+
+
 def _provisional_cluster_assignments_from_training_frame(
     labels_map: dict[str, str],
     training: pd.DataFrame,
@@ -215,6 +344,8 @@ class Linker:
         self.vocabulary: list[str] = []
         self.labels_map: dict[str, str] = kwargs.pop("labels_map", dict())
         self.training_cluster_frame: pd.DataFrame | None = None
+        self.cluster_composition: ClusterCompositionSnapshot | None = None
+        self.cluster_consensus_names: dict[int, str] = {}
         self._hf_tokenizer = None
         self._hf_model = None
         self._hf_models_by_type: dict[str, tuple[object, object]] = {}
@@ -243,6 +374,10 @@ class Linker:
             pe_model._hf_models_by_type = {}
         if "training_cluster_frame" not in pe_model.__dict__:
             pe_model.training_cluster_frame = None
+        if "cluster_composition" not in pe_model.__dict__:
+            pe_model.cluster_composition = None
+        if "cluster_consensus_names" not in pe_model.__dict__:
+            pe_model.cluster_consensus_names = {}
         if "nlp_model_name" not in pe_model.__dict__:
             pe_model.nlp_model_name = "en_core_web_trf"
         if "_nlp" not in pe_model.__dict__:
@@ -305,6 +440,10 @@ class Linker:
                 ``optimize_clustering`` is False, a diagnostic grid is run on the same
                 ``frac`` subsample as configured in ``clustering_optimization_config`` without
                 changing the chosen ``min_cluster_size``.
+
+        Side effects:
+            Sets ``cluster_composition`` (mention-weighted property mass and per-cluster
+            mixtures) and ``cluster_consensus_names`` (short labels from those mixtures).
 
         Returns:
             self
@@ -515,6 +654,11 @@ class Linker:
             )
         self.training_cluster_frame = prepared[tc_cols].copy()
         self.training_cluster_frame["cluster"] = cluster_labels
+
+        self.cluster_composition = cluster_composition_from_training_frame(
+            self.training_cluster_frame
+        )
+        self.cluster_consensus_names = consensus_cluster_names(self.cluster_composition)
 
         self.cluster_assignments = _provisional_cluster_assignments_from_training_frame(
             self.labels_map,

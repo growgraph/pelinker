@@ -77,6 +77,9 @@ def test_fused_fit_two_parquets_stacks_embedding_dim(tmp_path):
         "mention",
         "cluster",
     }
+    assert linker.cluster_composition is not None
+    assert linker.cluster_composition.global_property_mass
+    assert linker.cluster_consensus_names
 
 
 def test_fused_fit_optimize_clustering_grid_then_full_fit(tmp_path):

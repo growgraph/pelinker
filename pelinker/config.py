@@ -45,6 +45,26 @@ def _validate_semver(version: str) -> None:
 
 
 @dataclass(frozen=True)
+class ClusterCompositionSnapshot:
+    """
+    Mention-weighted mixture of KB ``property`` labels per HDBSCAN cluster after ``Linker.fit``.
+
+    * :attr:`global_property_mass` — total mention count per property in the fitted corpus
+      (denominator for “fraction of that property’s mass” views).
+    * :attr:`cluster_within_fraction` — within each cluster, each property’s share of that
+      cluster’s mention mass (sums to 1.0 per cluster).
+    * :attr:`cluster_fraction_of_property_mass` — for each cluster and property,
+      ``mentions(cluster ∩ property) / global_property_mass[property]`` (how much of that
+      property’s corpus sits in this cluster; sums to ≤ 1.0 across disjoint cluster rows
+      for a fixed property, excluding double-counting issues from overlapping keys).
+    """
+
+    global_property_mass: dict[str, int]
+    cluster_within_fraction: dict[int, dict[str, float]]
+    cluster_fraction_of_property_mass: dict[int, dict[str, float]]
+
+
+@dataclass(frozen=True)
 class KBConfig:
     """Metadata for the knowledge base packaged with a fitted Linker."""
 
