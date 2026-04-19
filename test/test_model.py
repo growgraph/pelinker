@@ -17,7 +17,7 @@ def text():
 
 
 @pytest.mark.skip("fix later")
-def test_load(text, nlp):
+def test_load(text):
     layer_spec = "sent"
     layers = Linker.str2layers(layer_spec)
 
@@ -28,5 +28,5 @@ def test_load(text, nlp):
     )
     model = Linker.load(file_path)
 
-    r = model.predict([text], nlp, MAX_LENGTH, threshold=1.0)
+    r = model.predict([text], max_length=MAX_LENGTH, threshold=1.0)
     assert r["entities"][-1]["mention"] == "decreased"

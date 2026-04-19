@@ -8,13 +8,15 @@ from importlib.resources import files
 from pathlib import Path
 from typing import Annotated, Any
 
+from typing_extensions import Self
+
 import hydra
 import uvicorn
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from hydra.core.config_store import ConfigStore
 from omegaconf import OmegaConf
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from starlette.middleware.gzip import GZipMiddleware
 
 from pelinker.config import EmbeddingModelMetadata, KBConfig
@@ -43,9 +45,24 @@ class ServerCliConfig:
 class LinkRequest(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
-    text: str = Field(..., min_length=1)
+    text: str | None = Field(default=None, min_length=1)
+    texts: list[str] | None = None
     thr_score: float | None = None
     use_gpu: bool | None = None
+
+    @model_validator(mode="after")
+    def _coalesce_texts(self) -> Self:
+        if self.texts is not None:
+            if not self.texts:
+                raise ValueError("texts must contain at least one item")
+            for i, t in enumerate(self.texts):
+                if not str(t).strip():
+                    raise ValueError(f"texts[{i}] must be non-empty")
+            return self
+        if self.text is not None:
+            object.__setattr__(self, "texts", [self.text])
+            return self
+        raise ValueError("Provide 'text' or non-empty 'texts'")
 
 
 class ServerState:
@@ -53,12 +70,10 @@ class ServerState:
         self,
         *,
         linker: Linker,
-        nlp: Any,
         cfg: ServerCliConfig,
         resolved_model_path: str,
     ) -> None:
         self.linker = linker
-        self.nlp = nlp
         self.cfg = cfg
         self.resolved_model_path = resolved_model_path
 
@@ -178,12 +193,12 @@ def create_app(cfg: ServerCliConfig) -> FastAPI:
 
     @app.post("/link")
     def link(body: LinkRequest, state: StateDep) -> dict[str, Any]:
+        assert body.texts is not None
         thr_s = body.thr_score if body.thr_score is not None else state.cfg.thr_score
         use_gpu = body.use_gpu if body.use_gpu is not None else state.cfg.use_gpu
         try:
             r = state.linker.predict(
-                [body.text],
-                state.nlp,
+                body.texts,
                 MAX_LENGTH,
                 threshold=0.0,
                 use_gpu=use_gpu,

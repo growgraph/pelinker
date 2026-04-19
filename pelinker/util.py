@@ -26,6 +26,7 @@ from pelinker.onto import (
     ReportBatch,
     _wg_for_property,
 )
+from spacy.language import Language
 
 logger = logging.getLogger(__name__)
 
@@ -73,26 +74,92 @@ def layers2str(layers: str | list[int]) -> str:
     return layers_str
 
 
-def str2layers(layers_spec: str | list[int]) -> list[int]:
-    if "," in layers_spec:
-        layers_spec = "".join(layers_spec.split(","))
-    if layers_spec.isdigit():
-        try:
-            layers = list(set([-abs(int(x)) for x in layers_spec]))
-        except:
-            raise ValueError(f"{layers_spec} could not be parsed into layers")
+def normalize_layers_spec(
+    layers_spec: str | list[int],
+    *,
+    n_hidden_states: int | None = None,
+) -> list[int]:
+    """Parse and validate indices for the stacked ``hidden_states`` tensor.
+
+    String form follows the same convention as historical :func:`str2layers`: each
+    digit is a distinct layer counted from the end, e.g. ``\"1\"`` → ``[-1]``,
+    ``\"12\"`` → ``[-2, -1]``. Commas in the string are ignored.
+
+    Args:
+        layers_spec: Digit-only string or list of **negative** indices (HF convention).
+        n_hidden_states: If set (length of first dim of stacked hidden states), indices
+            must satisfy ``layer >= -n_hidden_states``.
+
+    Returns:
+        Sorted unique negative layer indices.
+
+    Raises:
+        ValueError: Empty spec, positive indices, ``\"sent\"``, or out-of-range indices.
+    """
+    if isinstance(layers_spec, str):
+        spec = layers_spec.strip()
+        if not spec:
+            raise ValueError("layers_spec string is empty")
+        if spec == "sent":
+            raise ValueError(
+                "layers_spec 'sent' is not valid for transformer hidden-state pooling"
+            )
+        if "," in spec:
+            spec = "".join(spec.split(","))
+        if not spec.isdigit():
+            raise ValueError(
+                f"layers_spec string must be digits only (e.g. '1' or '12'), got {layers_spec!r}"
+            )
+        layers = sorted({-abs(int(ch)) for ch in spec})
     else:
-        layers = layers_spec
+        if not layers_spec:
+            raise ValueError("layers_spec list is empty")
+        for i, layer in enumerate(layers_spec):
+            if layer >= 0:
+                raise ValueError(
+                    f"layer index must be negative (HF hidden_states convention), got {layer} at position {i}"
+                )
+        layers = sorted(set(layers_spec))
+    if n_hidden_states is not None:
+        for layer in layers:
+            if layer < -n_hidden_states:
+                raise ValueError(
+                    f"layer {layer} is out of range for {n_hidden_states} stacked hidden states"
+                )
     return layers
 
 
-def text_to_tokens_embeddings(texts: list[str], tokenizer, model):
-    """
+def str2layers(layers_spec: str | list[int]) -> list[int]:
+    """Parse layer specification; same rules as :func:`normalize_layers_spec`."""
+    return normalize_layers_spec(layers_spec, n_hidden_states=None)
 
-    :param texts:
-    :param tokenizer:
-    :param model:
-    :return: tensor of encoded tokes, token boundaries
+
+def text_to_tokens_embeddings(
+    texts: list[str],
+    tokenizer,
+    model,
+    *,
+    keep_hidden_states_on_device: bool = False,
+):
+    """Run the transformer encoder and return hidden states plus character spans per token.
+
+    Encodes ``texts`` without special tokens, pads to a batch, runs ``model`` with
+    ``output_hidden_states=True``, and zeroes padded positions using the attention mask.
+    By default hidden states are moved to CPU; set ``keep_hidden_states_on_device=True``
+    to keep them on the model device (lower host RAM, higher GPU memory use).
+
+    Args:
+        texts: Batch of strings to encode (one chunk per row after batching).
+        tokenizer: A Hugging Face ``PreTrainedTokenizer`` compatible with ``model``.
+        model: A Hugging Face ``PreTrainedModel`` with ``output_hidden_states`` support.
+        keep_hidden_states_on_device: If False (default), stack hidden states on CPU.
+
+    Returns:
+        Tuple ``(hidden_states, token_char_spans)``. ``hidden_states`` has shape
+        ``(n_layers_including_emb, batch, seq_len, hidden_size)`` (stacked model
+        ``hidden_states``). ``token_char_spans`` is one list per batch row; each row
+        lists ``(start, end)`` character intervals for each non-empty token (empty
+        span pairs from ``offset_mapping`` are dropped).
     """
 
     encoding = tokenizer.batch_encode_plus(
@@ -118,10 +185,16 @@ def text_to_tokens_embeddings(texts: list[str], tokenizer, model):
     with torch.inference_mode():
         outputs = model(output_hidden_states=True, **inputs)
         # n_layers x n_batch x n_len x n_emb
-        tt = torch.stack([x.detach().to("cpu") for x in outputs.hidden_states])
+        states = [x.detach() for x in outputs.hidden_states]
+        if keep_hidden_states_on_device:
+            tt = torch.stack(states)
+        else:
+            tt = torch.stack([x.to("cpu") for x in states])
 
     # fill with zeros latent vectors for padded tokens
     mask = encoding["attention_mask"]
+    if keep_hidden_states_on_device:
+        mask = mask.to(tt.device)
     mask = mask.unsqueeze(-1).unsqueeze(0)
     tt = tt.masked_fill(mask.logical_not(), 0)
 
@@ -199,13 +272,30 @@ def split_into_sentences(text):
     return phrases_
 
 
-def process_text(batched_texts: list[list[str]], tokenizer, model) -> ChunkMapper:
-    """
+def process_text(
+    batched_texts: list[list[str]],
+    tokenizer,
+    model,
+    *,
+    keep_hidden_states_on_device: bool = False,
+) -> ChunkMapper:
+    """Encode all text chunks in one forward pass and build a :class:`~pelinker.onto.ChunkMapper`.
 
-    :param batched_texts:
-    :param tokenizer:
-    :param model:
-    :return: ChunkMapper
+    Flattens ``batched_texts`` (each inner list is one logical document split into
+    length-limited chunks), runs :func:`text_to_tokens_embeddings` once, and packages
+    tensors with bookkeeping to map chunk indices back to ``(document_index,
+    chunk_index_within_document)`` and cumulative character offsets within each document.
+
+    Args:
+        batched_texts: ``batched_texts[i]`` is the list of chunk strings for document ``i``.
+        tokenizer: Hugging Face tokenizer for ``model``.
+        model: Hugging Face model used with hidden states.
+        keep_hidden_states_on_device: If True, leave activations on the model device
+            (see :func:`text_to_tokens_embeddings`).
+
+    Returns:
+        A :class:`~pelinker.onto.ChunkMapper` whose ``tensor`` axis ``1`` runs over all
+        chunks in flatten order (same order as ``chunks``).
     """
 
     flattened_chunks: list[str] = [s for group in batched_texts for s in group]
@@ -219,7 +309,12 @@ def process_text(batched_texts: list[list[str]], tokenizer, model) -> ChunkMappe
         for chunks in batched_texts
     ]
 
-    tt, offsets = text_to_tokens_embeddings(flattened_chunks, tokenizer, model)
+    tt, offsets = text_to_tokens_embeddings(
+        flattened_chunks,
+        tokenizer,
+        model,
+        keep_hidden_states_on_device=keep_hidden_states_on_device,
+    )
 
     return ChunkMapper(
         tensor=tt,
@@ -282,11 +377,23 @@ def tt_aggregate_normalize(tt: torch.Tensor, ls):
 
 
 def tt_normalize(cm: ChunkMapper, layers) -> list[list[torch.Tensor]]:
-    """
+    """Average selected layers, then average token vectors per word span to form word vectors.
 
-    :param cm:
-    :param layers:
-    :return:
+    Indexes ``cm.tensor`` with ``layers`` (layer indices on the first dimension),
+    averages across those layers and batch/time to get per-token embeddings, then for
+    each chunk takes contiguous token ranges from ``cm.token_word_spans_list`` and
+    averages those token vectors (mean pooling) to produce one vector per word span.
+
+    Args:
+        cm: Chunk mapper with ``token_word_spans_list`` set by
+            :meth:`~pelinker.onto.ChunkMapper.set_token_word_spans` /
+            :meth:`~pelinker.onto.ChunkMapper.set_mapping_table`.
+        layers: Layer indices (typically negative indices into ``hidden_states``, e.g.
+            ``[-1]`` or ``[-2, -1]``).
+
+    Returns:
+        Outer list is per chunk; inner list is one ``torch.Tensor`` (embedding) per
+        word span in that chunk, in order.
     """
     tt_norm = cm.tensor[layers].mean(0)
     tt_r = []
@@ -332,7 +439,8 @@ def encode(texts, tokenizer, model, ls):
         tt_labels_layered, labels_spans = text_to_tokens_embeddings(
             texts, tokenizer, model
         )
-        tt_labels = tt_aggregate_normalize(tt_labels_layered, ls)
+        layers = normalize_layers_spec(ls, n_hidden_states=tt_labels_layered.shape[0])
+        tt_labels = tt_aggregate_normalize(tt_labels_layered, layers)
     return tt_labels
 
 
@@ -351,7 +459,20 @@ def fetch_latest_kb(path_derived) -> tuple[str | None, int]:
         return None, -1
 
 
-def split_text_into_batches(text: str, max_length) -> list[str]:
+def split_text_into_batches(text: str, max_length: int) -> list[str]:
+    """Split a single string into chunks no longer than ``max_length`` characters.
+
+    Uses a regex that prefers breaking after whitespace near the limit; a chunk may
+    reach ``max_length`` when no earlier break exists.
+
+    Args:
+        text: Full document or segment to split.
+        max_length: Maximum characters per chunk (typically tokenizer/model limit).
+
+    Returns:
+        Non-empty string segments whose concatenation recovers ``text`` (aside from
+        regex edge cases on pathological input).
+    """
     pattern = (
         r"(.{1," + str(max_length - 1) + r"})(\s|$)|(.{1," + str(max_length) + r"})"
     )
@@ -359,6 +480,66 @@ def split_text_into_batches(text: str, max_length) -> list[str]:
     matches = re.findall(pattern, text)
     batched = ["".join(parts) for parts in matches]
     return batched
+
+
+def split_text_into_token_budget(text: str, tokenizer, max_tokens: int) -> list[str]:
+    """Split *text* so each segment encodes to at most *max_tokens* subword tokens.
+
+    Uses a longest-prefix binary search per segment (by character offset), then
+    prefers breaking at the last space still within the token budget. Avoids relying
+    on a fixed character cap, which can exceed the model's tokenizer limit.
+
+    Args:
+        text: Full document string for one logical chunking pass.
+        tokenizer: Hugging Face tokenizer (``encode(..., add_special_tokens=False)``).
+        max_tokens: Maximum subword count per segment (typically ``MAX_LENGTH``).
+
+    Returns:
+        Segments whose concatenation equals *text* exactly (no dropped characters).
+
+    Raises:
+        ValueError: If ``max_tokens < 1``, or a minimal slice still exceeds the budget.
+    """
+    if max_tokens < 1:
+        raise ValueError("max_tokens must be at least 1")
+    if not text:
+        return []
+
+    def n_tokens(segment: str) -> int:
+        return len(tokenizer.encode(segment, add_special_tokens=False))
+
+    chunks: list[str] = []
+    start = 0
+    n = len(text)
+    while start < n:
+        if n_tokens(text[start:n]) <= max_tokens:
+            chunks.append(text[start:n])
+            break
+
+        lo, hi = start + 1, n + 1
+        best = start
+        while lo < hi:
+            mid = (lo + hi) // 2
+            if n_tokens(text[start:mid]) <= max_tokens:
+                best = mid
+                lo = mid + 1
+            else:
+                hi = mid
+        if best <= start:
+            raise ValueError(
+                "a minimal text slice exceeds max_tokens; increase max_length or inspect the tokenizer"
+            )
+
+        end = best
+        sp = text.rfind(" ", start + 1, end)
+        if sp > start and n_tokens(text[start:sp]) <= max_tokens:
+            end = sp
+
+        chunk = text[start:end]
+        chunks.append(chunk)
+        start = end
+
+    return chunks
 
 
 def get_word_boundaries(text) -> list[tuple[int, int]]:
@@ -383,17 +564,25 @@ def get_word_boundaries(text) -> list[tuple[int, int]]:
 
 
 def render_elementary_tensor_table(
-    chunk_mapper: ChunkMapper, text_word_spans: list[list[tuple[int, int]]], layers
+    chunk_mapper: ChunkMapper,
+    text_word_spans: list[list[tuple[int, int]]],
+    layers: list[int],
 ) -> None:
-    """
+    """Map spaCy word spans to tokenizer tokens and fill ``chunk_mapper.tt_expressions``.
+
+    Updates ``chunk_mapper`` in place: converts character-level word spans to token
+    index ranges, builds the global mapping table, then computes per-span embedding
+    rows via :func:`tt_normalize` and stores them in ``chunk_mapper.tt_expressions``
+    (one tensor per chunk, rows aligned with surviving word spans).
 
     Args:
-        chunk_mapper:
-        text_word_spans:
-        layers:
+        chunk_mapper: Mapper with encoder hidden states already in ``tensor``.
+        text_word_spans: For each chunk, a list of ``(char_start, char_end)`` spans
+            (inclusive/exclusive conventions must match tokenizer offset mapping).
+        layers: Layer indices forwarded to :func:`tt_normalize`.
 
     Returns:
-
+        None; mutates ``chunk_mapper``.
     """
 
     chunk_mapper.set_token_word_spans(text_word_spans)
@@ -406,8 +595,26 @@ def render_elementary_tensor_table(
 
 
 def build_expression_container(
-    cm: ChunkMapper, expression_lists_per_chunk, word_grouping: WordGrouping
+    cm: ChunkMapper,
+    expression_lists_per_chunk: list[list[Expression]],
+    word_grouping: WordGrouping,
 ) -> ExpressionHolderBatch:
+    """Merge per-chunk expressions and embedding rows into one holder per document.
+
+    For each document index, concatenates embedding tensors for all its chunks (in
+    chunk order) and concatenates expression lists the same way, so downstream code
+    can match lemmas and spans at document level.
+
+    Args:
+        cm: Chunk mapper with ``tt_expressions`` and ``text_chunk_map`` populated.
+        expression_lists_per_chunk: Parallel to ``cm.chunks``: expressions for each
+            chunk (already filtered to align with ``tt_expressions`` rows where needed).
+        word_grouping: Which :class:`~pelinker.onto.WordGrouping` this batch describes.
+
+    Returns:
+        An :class:`~pelinker.onto.ExpressionHolderBatch` with one
+        :class:`~pelinker.onto.ExpressionHolder` per input document.
+    """
     texts = []
     for itext, ichunks in cm.text_chunk_map.items():
         expressions = reduce(
@@ -423,21 +630,77 @@ def texts_to_vrep(
     texts: list[str],
     tokenizer,
     model,
-    layers_spec,
+    layers_spec: str | list[int],
     word_modes: list[WordGrouping],
-    max_length=MAX_LENGTH,
-    nlp=None,
+    nlp: Language,
+    max_length: int = MAX_LENGTH,
+    *,
+    chunk_by_token_budget: bool = True,
+    keep_hidden_states_on_device: bool = False,
 ) -> ReportBatch:
-    batched_texts: list[list[str]] = [
-        split_text_into_batches(s, max_length=max_length) for s in texts
-    ]
+    """Turn raw texts into encoder-based vector representations for sliding word windows.
+
+    Pipeline (high level):
+
+    1. Split each document into chunks (token-budget by default, see ``chunk_by_token_budget``).
+    2. Encode all chunks in one transformer forward pass (:func:`process_text`).
+    3. For each chunk, tokenize with spaCy once (:func:`text_to_tokens`) and build sliding
+       windows of ``w`` tokens per :class:`~pelinker.onto.WordGrouping`
+       (:func:`token_list_with_window`).
+    4. Map word character spans to tokenizer token ranges and pool layer activations
+       (:func:`render_elementary_tensor_table` → :func:`tt_normalize`).
+    5. Drop expressions whose start character was lost when mapping words to tokens,
+       then merge chunks per document (:func:`build_expression_container`).
+
+    The same encoder activations are reused for every ``word_modes`` entry; only the
+    spaCy windows and pooling targets differ. Each pass over ``word_modes`` calls
+    :func:`render_elementary_tensor_table`, so fields on ``chunk_mapper`` such as
+    ``tt_expressions`` and ``text_word_spans_list`` reflect **only the last** grouping;
+    use the :class:`~pelinker.onto.ReportBatch` slots for per-mode tensors.
+
+    Args:
+        texts: One string per document (logical item in the returned batch).
+        tokenizer: Hugging Face tokenizer for ``model``.
+        model: Transformer model with hidden states (not sentence-transformers ``encode``).
+        layers_spec: Layer selection; string digits (``\"12\"``) or negative indices; see
+            :func:`normalize_layers_spec`.
+        word_modes: For each mode, build ``W1``/``W2``/… token windows and a separate
+            :class:`~pelinker.onto.ExpressionHolderBatch` in the result.
+        nlp: Loaded spaCy pipeline (:func:`text_to_tokens`).
+        max_length: When ``chunk_by_token_budget`` is True, max **subword tokens** per
+            chunk; when False, max **characters** (legacy :func:`split_text_into_batches`).
+        chunk_by_token_budget: If True (default), split with :func:`split_text_into_token_budget`.
+        keep_hidden_states_on_device: If True, keep stacked hidden states on the model
+            device (saves host RAM; requires GPU memory for large batches).
+
+    Returns:
+        :class:`~pelinker.onto.ReportBatch` containing the shared
+        :class:`~pelinker.onto.ChunkMapper` and, for each ``word_grouping``, document-level
+        expression holders with pooled embeddings.
+    """
+    if chunk_by_token_budget:
+        batched_texts = [
+            split_text_into_token_budget(s, tokenizer, max_tokens=max_length)
+            for s in texts
+        ]
+    else:
+        batched_texts = [
+            split_text_into_batches(s, max_length=max_length) for s in texts
+        ]
 
     chunk_mapper: ChunkMapper = process_text(
         batched_texts,
         tokenizer,
         model,
+        keep_hidden_states_on_device=keep_hidden_states_on_device,
     )
 
+    layers = normalize_layers_spec(
+        layers_spec,
+        n_hidden_states=chunk_mapper.tensor.shape[0],
+    )
+
+    # spaCy once per encoder chunk (reused for every word_modes pass)
     stoken_per_chunk: list[list[SimplifiedToken]] = [
         text_to_tokens(nlp=nlp, text=chunk) for chunk in chunk_mapper.chunks
     ]
@@ -463,17 +726,24 @@ def texts_to_vrep(
             [(e.a, e.b) for e in batch] for batch in expression_lists_per_chunk
         ]
 
-        render_elementary_tensor_table(chunk_mapper, word_spans, layers_spec)
+        render_elementary_tensor_table(chunk_mapper, word_spans, layers)
 
-        # adjust expressions
+        # adjust expressions (drops windows with no tokenizer alignment)
         filtered_expression_lists_per_chunk: list[list[Expression]] = []
         for exprs, word_spans in zip(
             expression_lists_per_chunk, chunk_mapper.text_word_spans_list
         ):
             ix_start = {a for a, _ in word_spans}
-            filtered_expression_lists_per_chunk.append(
-                [e for e in exprs if e.a in ix_start]
-            )
+            kept = [e for e in exprs if e.a in ix_start]
+            n_drop = len(exprs) - len(kept)
+            if n_drop:
+                logger.debug(
+                    "texts_to_vrep: dropped %d expressions without token alignment "
+                    "(word_grouping=%s)",
+                    n_drop,
+                    word_grouping.name,
+                )
+            filtered_expression_lists_per_chunk.append(kept)
 
         data += [
             build_expression_container(
@@ -495,6 +765,20 @@ def merge_wbs(word_boundaries, window) -> list[tuple[int, int]]:
 def token_list_with_window(
     tokens: list[SimplifiedToken], window: WordGrouping, itext=None, ichunk=None
 ) -> list[Expression]:
+    """Build every contiguous ``window``-token slice as an :class:`~pelinker.onto.Expression`.
+
+    Each expression stores the participating :class:`~pelinker.onto.SimplifiedToken`
+    objects and, after ``__post_init__``, character bounds ``a``/``b`` for the span.
+
+    Args:
+        tokens: spaCy-derived tokens for one chunk.
+        window: Window size via :class:`~pelinker.onto.WordGrouping` (``W1`` → 1 token, etc.).
+        itext: Document index in the outer batch (optional metadata on expressions).
+        ichunk: Chunk index within the document (optional metadata).
+
+    Returns:
+        Length ``len(tokens) - w + 1`` list of expressions (empty if ``len(tokens) < w``).
+    """
     agg = []
     w = int(window.value)
     for k in range(len(tokens) - w + 1):
@@ -535,8 +819,8 @@ def embed_texts(
     phrases: list[str],
     tokenizer,
     model,
-    layers,
-    nlp: object | None = None,
+    layers: str | list[int],
+    nlp: Language,
 ) -> list[torch.Tensor]:
     """
     Embed a list of text phrases using texts_to_vrep.
@@ -546,7 +830,7 @@ def embed_texts(
         tokenizer: Tokenizer for the model
         model: Model for embedding
         layers: Layer specification
-        nlp: Optional spaCy NLP object
+        nlp: spaCy ``Language`` pipeline (required for tokenization in ``texts_to_vrep``)
 
     Returns:
         List of embedding tensors, one per phrase
@@ -561,13 +845,11 @@ def embed_texts(
     # Use texts_to_vrep for embedding
     report = texts_to_vrep(
         phrases_list,
-        tokenizer=tokenizer,
-        model=model,
-        layers_spec=layers,
-        word_modes=[
-            WordGrouping.W1
-        ],  # Minimal word grouping for sentence-level embeddings
-        nlp=nlp,
+        tokenizer,
+        model,
+        layers,
+        [WordGrouping.W1],
+        nlp,
     )
 
     # Extract text-level embeddings using the new method
@@ -610,11 +892,11 @@ def extract_and_embed_mentions(
     for ibatch, text_batch in enumerate(data_batched):
         report_batch = texts_to_vrep(
             text_batch,
-            tokenizer=tokenizer,
-            model=model,
-            layers_spec=layers,
-            word_modes=list(word_modes),
-            nlp=nlp,
+            tokenizer,
+            model,
+            layers,
+            list(word_modes),
+            nlp,
         )
 
         batch_pmids = data_pmids_batched[ibatch]

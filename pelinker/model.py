@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import sys
 import tempfile
 from collections import Counter
@@ -37,11 +39,19 @@ from pelinker.embedding_fusion import (
     fused_property_vectors_from_paths,
     property_fused_dataframe_for_linker_order,
 )
-from pelinker.onto import WordGrouping
+from pelinker.onto import MAX_LENGTH, WordGrouping
 from pelinker.transform import EmbeddingTransformer
 from pelinker.util import load_models, texts_to_vrep
 
 logger = logging.getLogger(__name__)
+
+
+def _linker_artifact_gz_path(file_spec: str | pathlib.Path) -> pathlib.Path:
+    """Path to the on-disk ``.gz`` artifact (accepts base path or path already ending in ``.gz``)."""
+    p = pathlib.Path(file_spec).expanduser()
+    if p.suffix == ".gz":
+        return p
+    return p.with_name(p.name + ".gz")
 
 
 def _clustering_quality_model_layer_from_metadata(
@@ -208,18 +218,23 @@ class Linker:
         self._hf_tokenizer = None
         self._hf_model = None
         self._hf_models_by_type: dict[str, tuple[object, object]] = {}
+        self.nlp_model_name: str = kwargs.pop("nlp_model_name", "en_core_web_trf")
+        self._nlp: object | None = None
 
     @classmethod
     def filter_report(cls, report, thr_score):
         report["entities"] = [r for r in report["entities"] if r["score"] >= thr_score]
         return report
 
-    def dump(self, file_spec):
-        joblib.dump(self, f"{file_spec}.gz", compress=3)
+    def dump(self, file_spec: str | pathlib.Path) -> None:
+        path = _linker_artifact_gz_path(file_spec)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        joblib.dump(self, path, compress=3)
 
     @classmethod
-    def load(cls, file_spec):
-        pe_model = joblib.load(f"{file_spec}.gz")
+    def load(cls, file_spec: str | pathlib.Path) -> Linker:
+        path = _linker_artifact_gz_path(file_spec)
+        pe_model = joblib.load(path)
         if "embedding_metadata" not in pe_model.__dict__:
             pe_model.embedding_metadata = None
         if "kb_config" not in pe_model.__dict__:
@@ -228,6 +243,10 @@ class Linker:
             pe_model._hf_models_by_type = {}
         if "training_cluster_frame" not in pe_model.__dict__:
             pe_model.training_cluster_frame = None
+        if "nlp_model_name" not in pe_model.__dict__:
+            pe_model.nlp_model_name = "en_core_web_trf"
+        if "_nlp" not in pe_model.__dict__:
+            pe_model._nlp = None
         return pe_model
 
     @staticmethod
@@ -306,6 +325,7 @@ class Linker:
                         "embedding_training is required when embeddings is None. "
                         "Provide embeddings path or EmbeddingTrainingConfig(...)."
                     )
+                self.nlp_model_name = embedding_training.nlp_model
                 if self.embedding_metadata is None:
                     raise ValueError(
                         "embedding_metadata is required when embeddings is None "
@@ -576,6 +596,15 @@ class Linker:
         elif use_gpu:
             logger.warning("CUDA is not available; predict runs on CPU")
 
+    def _ensure_nlp(self) -> object:
+        """Lazy-load the spaCy pipeline used for word tokenization (same role as training ``nlp_model``)."""
+        if self._nlp is None:
+            import spacy
+
+            logger.info("Loading spaCy model %r for predict()", self.nlp_model_name)
+            self._nlp = spacy.load(self.nlp_model_name)
+        return self._nlp
+
     @staticmethod
     def _extract_ordered_mention_tensors(report_batch) -> list[torch.Tensor]:
         word_groupings = [WordGrouping.W1, WordGrouping.W2, WordGrouping.W3]
@@ -604,9 +633,8 @@ class Linker:
 
     def predict(
         self,
-        texts,
-        nlp,
-        max_length,
+        texts: Sequence[str],
+        max_length: int | None = None,
         threshold: float = 0.0,
         *,
         use_gpu: bool = False,
@@ -618,25 +646,31 @@ class Linker:
         (cached by ``model_type``), concatenates mention tensors along the feature axis in
         source order, then applies the fitted transformer and clusterer. Mention counts
         must match across sources (typically the same ``model_type`` for all sources).
+
+        Tokenization uses the spaCy pipeline named by ``nlp_model_name`` (set from
+        ``EmbeddingTrainingConfig.nlp_model`` during corpus embedding, else default
+        ``en_core_web_trf``).
         """
         if self.embedding_metadata is None:
             raise ValueError(
                 "embedding_metadata is required for predict(); set it during fit() or on the Linker."
             )
         self._ensure_hf_models_for_sources(use_gpu=use_gpu)
+        nlp = self._ensure_nlp()
+        resolved_max_length = max_length if max_length is not None else MAX_LENGTH
 
         word_groupings = [WordGrouping.W1, WordGrouping.W2, WordGrouping.W3]
         report_batches: list = []
         for src in self.embedding_metadata.sources:
             tok, model = self._hf_models_by_type[src.model_type]
             rb = texts_to_vrep(
-                texts,
+                list(texts),
                 tok,
                 model,
-                layers_spec=src.layers_spec,
-                word_modes=word_groupings,
-                nlp=nlp,
-                max_length=max_length,
+                src.layers_spec,
+                word_groupings,
+                nlp,
+                max_length=resolved_max_length,
             )
             report_batches.append(rb)
 

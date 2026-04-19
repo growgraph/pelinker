@@ -22,6 +22,15 @@ class BaseDataclass(JSONWizard, JSONWizard.Meta):
 
 @dataclasses.dataclass
 class ChunkMapper(BaseDataclass):
+    """Maps encoder chunks back to documents and optional pooled span rows.
+
+    When :func:`pelinker.util.texts_to_vrep` runs multiple ``word_modes``, it calls
+    :func:`pelinker.util.render_elementary_tensor_table` repeatedly on the **same**
+    instance. Fields ``text_word_spans_list``, ``token_word_spans_list``,
+    ``tt_expressions``, and ``mapping_table`` therefore reflect **only the last**
+    grouping pass; read per-mode results from :class:`ReportBatch` instead.
+    """
+
     tensor: torch.Tensor  # n_layers x n_batch x n_len x n_emb - tensor where n_batch dim goes over all chunks
     chunks: list[str]  # flat list of chunks
     token_spans_list: list[
@@ -127,6 +136,13 @@ class ExpressionHolderBatch(BaseDataclass):
 
 @dataclasses.dataclass
 class ReportBatch(BaseDataclass):
+    """Batch of texts with shared encoder state and one holder list per ``WordGrouping``.
+
+    ``chunk_mapper`` is shared across groupings; its span/pooling fields may match
+    only the **last** mode processed—use ``_data`` / ``__getitem__`` for mode-specific
+    embeddings and expressions.
+    """
+
     _data: list[ExpressionHolderBatch]
     texts: list[str]
     chunk_mapper: ChunkMapper
@@ -151,21 +167,26 @@ class ReportBatch(BaseDataclass):
     def available_groupings(self):
         return [item.word_grouping for item in self._data]
 
-    def get_text_embeddings(self, layers_spec):
+    def get_text_embeddings(self, layers_spec: str | list[int]):
         """
         Extract sentence-level embeddings for each text in the batch.
 
         Args:
-            layers_spec: Layer specification (list of layer indices or "sent")
+            layers_spec: Layer specification (string digits or negative indices); see
+                :func:`pelinker.util.normalize_layers_spec`. Not ``\"sent\"``.
 
         Returns:
             list[torch.Tensor]: List of embeddings, one per text in self.texts
         """
-        from pelinker.util import tt_aggregate_normalize
+        from pelinker.util import normalize_layers_spec, tt_aggregate_normalize
 
+        layers = normalize_layers_spec(
+            layers_spec,
+            n_hidden_states=self.chunk_mapper.tensor.shape[0],
+        )
         # Extract chunk-level embeddings from chunk_mapper.tensor
         # chunk_mapper.tensor has shape: n_layers x n_chunks x n_tokens x n_emb
-        chunk_embeddings = tt_aggregate_normalize(self.chunk_mapper.tensor, layers_spec)
+        chunk_embeddings = tt_aggregate_normalize(self.chunk_mapper.tensor, layers)
 
         # Map chunks back to texts
         # Group chunks by text index

@@ -86,11 +86,11 @@ def run(model_type, input_path, layers_spec, pattern, plot_path):
     for ibatch, text_batch in enumerate((pbar := tqdm.tqdm(data_batched))):
         report_batch = texts_to_vrep(
             text_batch,
-            tokenizer=tokenizer,
-            model=model,
-            layers_spec=layers,
-            word_modes=[WordGrouping.W1],
-            nlp=nlp,
+            tokenizer,
+            model,
+            layers,
+            [WordGrouping.W1],
+            nlp,
         )
 
         indexes_of_interest_batch = {

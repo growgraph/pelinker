@@ -5,6 +5,7 @@ requires = ["hatchling"]
 [project]
 authors = [{email = "abelikov@gmail.com", name = "Alexander Belikov"}]
 dependencies = [
+  "click>=8.1,<9",
   "cupy-cuda12x>=13.6.0",
   "dataclass-wizard>=0.35.1",
   "fastapi>=0.115.0,<1",
@@ -38,12 +39,24 @@ dev = [
   "pytest>=9.0.2",
   "seaborn>=0.13.2,<0.14"
 ]
+docs = [
+  "griffe<2.0.0",
+  "mkdocs-gen-files>=0.5.0",
+  "mkdocs-glightbox>=0.4.0",
+  "mkdocs-jupyter>=0.25.1",
+  "mkdocs-literate-nav>=0.6.2",
+  "mkdocs-material>=9.6.14",
+  "mkdocs>=1.6.1",
+  "mkdocstrings-python>=2.0.3",
+  "mkdocstrings[python]>=0.29.1"
+]
 gpu = [
   "cupy-cuda12x>=13.6.0"
 ]
 
 [project.scripts]
 pelinker-fit = "pelinker.cli.fit:run"
+pelinker-link-files = "pelinker.cli.link_files:main"
 pelinker-serves = "pelinker.cli.server:run"
 
 [tool.hatch.build.targets.sdist]

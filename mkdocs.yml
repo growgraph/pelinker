@@ -1,9 +1,9 @@
-site_name: OntoCast
-site_description: A tool for converting documents into RDF graphs
-site_url: https://growgraph.github.io/ontocast
-repo_url: https://github.com/growgraph/ontocast
-repo_name: growgraph/ontocast
-copyright: Copyright &copy; 2025 GrowGraph
+site_name: Pelinker
+site_description: Bio / science property–entity linker (encoder-based linking utilities and API)
+site_url: https://growgraph.github.io/pelinker
+repo_url: https://github.com/growgraph/pelinker
+repo_name: growgraph/pelinker
+copyright: Copyright &copy; 2026 GrowGraph
 
 theme:
     name: material
@@ -51,19 +51,13 @@ plugins:
                         -   "import sys"
                         -   "sys.path.append('.')"
 
+docs_dir: docs
+
 nav:
 -   Home: index.md
--   Getting Started:
-    -   Installation: getting_started/installation.md
-    -   Quick Start: getting_started/quickstart.md
 -   User Guide:
-    -   Core Concepts: user_guide/concepts.md
-    -   Configuration System: user_guide/configuration.md
-    -   Triple Store Configuration: user_guide/triple_stores.md
-    -   Workflow: user_guide/workflow.md
-    -   User Instructions: user_guide/user_instructions.md
+    -   Vector representations: user_guide/vector_representation.md
 -   API Reference: reference/
--   Contributing: contributing.md
 
 markdown_extensions:
 -   pymdownx.highlight:
