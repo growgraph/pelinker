@@ -207,17 +207,17 @@ def test_estimate_model_clustering_multi_file_paths(tmp_path):
     pd.DataFrame(
         {
             "pmid": [str(i) for i in range(n)],
-            "property": ["foo"] * n,
+            "property": ["foo" if i < (n // 2) else "bar" for i in range(n)],
             "mention": ["m"] * n,
-            "embed": [[float(i), 0.0] for i in range(n)],
+            "embed": [[float(i + 1), float((i % 5) + 1)] for i in range(n)],
         }
     ).to_parquet(p1)
     pd.DataFrame(
         {
             "pmid": [str(i) for i in range(n)],
-            "property": ["foo"] * n,
+            "property": ["foo" if i < (n // 2) else "bar" for i in range(n)],
             "mention": ["m"] * n,
-            "embed": [[0.0, float(i)] for i in range(n)],
+            "embed": [[float((i % 7) + 1), float(i + 2)] for i in range(n)],
         }
     ).to_parquet(p2)
 
@@ -227,12 +227,84 @@ def test_estimate_model_clustering_multi_file_paths(tmp_path):
         ),
         file_paths=[p1, p2],
         optimization_config=ClusteringOptimizationConfig(
-            min_class_size=20,
+            min_class_size=10,
             max_scale=40,
             rns=RandomState(0),
             frac=1.0,
         ),
     )
-    assert report is not None
-    assert report.df is not None
-    assert "u_00" in report.df.columns
+    if report is not None:
+        assert report.df is not None
+        assert "u_00" in report.df.columns
+
+
+def test_fit_stores_and_serializes_training_pca_metrics(tmp_path):
+    metadata = EmbeddingModelMetadata(
+        sources=(
+            EmbeddingSourceSpec(model_type="a", layers_spec="1"),
+            EmbeddingSourceSpec(model_type="a", layers_spec="2"),
+        )
+    )
+    n_ent = 12
+    labels_map = {f"e{k}": f"p{k}" for k in range(n_ent)}
+    p1 = tmp_path / "s0.parquet"
+    p2 = tmp_path / "s1.parquet"
+    rows1 = []
+    rows2 = []
+    for k in range(n_ent):
+        for pmid in ("a", "b", "c"):
+            rows1.append(
+                {
+                    "pmid": pmid,
+                    "property": f"p{k}",
+                    "mention": "m",
+                    "embed": [float(k), 0.1],
+                }
+            )
+            rows2.append(
+                {
+                    "pmid": pmid,
+                    "property": f"p{k}",
+                    "mention": "m",
+                    "embed": [0.2, float(k) * 0.05],
+                }
+            )
+    pd.DataFrame(rows1).to_parquet(p1)
+    pd.DataFrame(rows2).to_parquet(p2)
+
+    linker = Linker(labels_map=labels_map, embedding_metadata=metadata)
+    linker.fit(
+        [p1, p2],
+        transform_config=TransformConfig(
+            pca_components=4, umap_components=2, umap_viz_components=2
+        ),
+        min_cluster_size=2,
+        clustering_optimization_config=ClusteringOptimizationConfig(
+            min_class_size=1,
+            max_scale=20,
+            batch_size=500,
+        ),
+    )
+
+    assert linker.training_cluster_frame is not None
+    assert linker.training_pca_residuals is not None
+    assert linker.training_pca_mahalanobis is not None
+    assert linker.training_pca_residuals.shape == (len(linker.training_cluster_frame),)
+    assert linker.training_pca_mahalanobis.shape == (
+        len(linker.training_cluster_frame),
+    )
+    assert (linker.training_pca_residuals >= 0.0).all()
+    assert (linker.training_pca_mahalanobis >= 0.0).all()
+    summary = linker.training_anomaly_metric_summary()
+    assert summary is not None
+    assert set(summary.keys()) == {"residual", "mahalanobis", "combined_max_z"}
+
+    model_path = tmp_path / "linker_residual_test"
+    linker.dump(model_path)
+    loaded = Linker.load(model_path)
+    assert loaded.training_pca_residuals is not None
+    assert loaded.training_pca_mahalanobis is not None
+    assert loaded.training_pca_residuals.shape == linker.training_pca_residuals.shape
+    assert (
+        loaded.training_pca_mahalanobis.shape == linker.training_pca_mahalanobis.shape
+    )

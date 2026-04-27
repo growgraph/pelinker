@@ -54,6 +54,11 @@ class FitCliConfig:
     # None → max(1, min_class_size // 2) in ClusteringOptimizationConfig.resolved_min_scale
     min_scale: int | None = None
     clustering_grid_step: int = 5
+    # Stage-B HDBSCAN hyperparameter chosen upstream (e.g. run/analysis/clustering_quality.py).
+    # When set, fit uses this exact value unless optimize_clustering=True.
+    min_cluster_size: int | None = None
+    # If true, rerun grid search during fit and ignore ``min_cluster_size``.
+    optimize_clustering: bool = False
     # Filesystem path for the saved model; None → bundled store filename under ``pelinker.store``.
     output_path: str | None = None
     # If set, clustering reports are written exactly here. If unset, defaults to
@@ -485,12 +490,25 @@ def fit(cfg: FitCliConfig) -> None:
     logger.info("Clustering reports directory: %s", resolved_clustering_reports)
 
     logger.info("Stage (B): Linker.fit from %s", embed_paths)
+    if cfg.min_cluster_size is not None and cfg.min_cluster_size < 2:
+        raise ValueError("min_cluster_size must be >= 2 when provided")
+
+    if cfg.optimize_clustering and cfg.min_cluster_size is not None:
+        logger.warning(
+            "optimize_clustering=True: ignoring fixed min_cluster_size=%s",
+            cfg.min_cluster_size,
+        )
+
+    effective_min_cluster_size = (
+        None if cfg.optimize_clustering else cfg.min_cluster_size
+    )
+
     linker.fit(
         embeddings=embed_paths if len(embed_paths) > 1 else embed_paths[0],
         transform_config=transform_config,
-        min_cluster_size=cfg.min_class_size,
+        min_cluster_size=effective_min_cluster_size,
         kb_labels=kb_labels,
-        optimize_clustering=True,
+        optimize_clustering=cfg.optimize_clustering,
         clustering_optimization_config=clustering_config,
         embedding_training=None,
         kb_config=kb_config,

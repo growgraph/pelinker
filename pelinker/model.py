@@ -344,6 +344,8 @@ class Linker:
         self.vocabulary: list[str] = []
         self.labels_map: dict[str, str] = kwargs.pop("labels_map", dict())
         self.training_cluster_frame: pd.DataFrame | None = None
+        self.training_pca_residuals: np.ndarray | None = None
+        self.training_pca_mahalanobis: np.ndarray | None = None
         self.cluster_composition: ClusterCompositionSnapshot | None = None
         self.cluster_consensus_names: dict[int, str] = {}
         self._hf_tokenizer = None
@@ -374,6 +376,10 @@ class Linker:
             pe_model._hf_models_by_type = {}
         if "training_cluster_frame" not in pe_model.__dict__:
             pe_model.training_cluster_frame = None
+        if "training_pca_residuals" not in pe_model.__dict__:
+            pe_model.training_pca_residuals = None
+        if "training_pca_mahalanobis" not in pe_model.__dict__:
+            pe_model.training_pca_mahalanobis = None
         if "cluster_composition" not in pe_model.__dict__:
             pe_model.cluster_composition = None
         if "cluster_consensus_names" not in pe_model.__dict__:
@@ -635,7 +641,11 @@ class Linker:
         embeddings = np.stack(prepared["embed"].values).astype(np.float32, copy=False)
         self.transform_config = transform_config
         self.transformer = EmbeddingTransformer(transform_config)
-        umap_clustering, _ = self.transformer.fit_transform(embeddings)
+        umap_clustering, _, pca_residuals, pca_mahalanobis = (
+            self.transformer.fit_transform(embeddings)
+        )
+        self.training_pca_residuals = np.asarray(pca_residuals, dtype=np.float32)
+        self.training_pca_mahalanobis = np.asarray(pca_mahalanobis, dtype=np.float32)
 
         self.clusterer = hdbscan.HDBSCAN(
             min_cluster_size=best_mcs,
@@ -775,6 +785,43 @@ class Linker:
                     "Use the same model_type for all sources if spans must align."
                 )
 
+    @staticmethod
+    def _zscore(values: np.ndarray) -> np.ndarray:
+        v = np.asarray(values, dtype=np.float64)
+        if v.size == 0:
+            return np.array([], dtype=np.float64)
+        mean = float(v.mean())
+        std = float(v.std())
+        if std <= 1e-12:
+            return np.zeros_like(v, dtype=np.float64)
+        return (v - mean) / std
+
+    def training_anomaly_metric_summary(self) -> dict[str, dict[str, float]] | None:
+        """Quantile summary for calibrated anomaly analysis from fit-time metrics."""
+        if (
+            self.training_pca_residuals is None
+            or self.training_pca_mahalanobis is None
+            or len(self.training_pca_residuals) == 0
+            or len(self.training_pca_mahalanobis) == 0
+        ):
+            return None
+
+        residual = np.asarray(self.training_pca_residuals, dtype=np.float64)
+        mahal = np.asarray(self.training_pca_mahalanobis, dtype=np.float64)
+        combined = np.maximum(self._zscore(residual), self._zscore(mahal))
+        quantiles = [0.5, 0.9, 0.95, 0.99]
+
+        def _q(values: np.ndarray) -> dict[str, float]:
+            return {
+                f"q{int(q * 100):02d}": float(np.quantile(values, q)) for q in quantiles
+            }
+
+        return {
+            "residual": _q(residual),
+            "mahalanobis": _q(mahal),
+            "combined_max_z": _q(combined),
+        }
+
     def predict(
         self,
         texts: Sequence[str],
@@ -867,7 +914,9 @@ class Linker:
 
         if self.transformer is not None and self.clusterer is not None:
             kb_items = self._predict_with_clustering(
-                tt, vocabulary, threshold=threshold
+                tt,
+                vocabulary,
+                threshold=threshold,
             )
         else:
             raise TypeError(
@@ -884,7 +933,10 @@ class Linker:
         }
 
     def _predict_with_clustering(
-        self, embeddings: torch.Tensor, vocabulary: list, threshold: float = 0.0
+        self,
+        embeddings: torch.Tensor,
+        vocabulary: list,
+        threshold: float = 0.0,
     ):
         """
         Predict entities using clustering approach.
@@ -907,7 +959,12 @@ class Linker:
         embeddings_np = embeddings.detach().cpu().numpy()
 
         # Transform embeddings
-        umap_clustering, _ = self.transformer.transform(embeddings_np)
+        umap_clustering, _, pca_residuals, pca_mahalanobis = self.transformer.transform(
+            embeddings_np
+        )
+        pca_anomaly_combined = np.maximum(
+            self._zscore(pca_residuals), self._zscore(pca_mahalanobis)
+        )
 
         # Predict clusters for input embeddings using approximate_predict
         cluster_labels, cluster_probs = approximate_predict(
@@ -915,8 +972,20 @@ class Linker:
         )
 
         kb_items = []
-        for item_dict, cluster_id, cluster_prob in zip(
-            vocabulary, cluster_labels, cluster_probs
+        for (
+            item_dict,
+            cluster_id,
+            cluster_prob,
+            pca_residual,
+            mahalanobis,
+            combined_score,
+        ) in zip(
+            vocabulary,
+            cluster_labels,
+            cluster_probs,
+            pca_residuals,
+            pca_mahalanobis,
+            pca_anomaly_combined,
         ):
             # Skip HDBSCAN outliers and low-confidence assignments.
             if int(cluster_id) == -1 or float(cluster_prob) < threshold:
@@ -942,6 +1011,9 @@ class Linker:
                 **{
                     "entity_id_predicted": predicted_entity,
                     "score": score,
+                    "pca_residual": float(pca_residual),
+                    "pca_mahalanobis": float(mahalanobis),
+                    "anomaly_score_max_z": float(combined_score),
                 },
             }
             kb_items += [kb_item]

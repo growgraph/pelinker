@@ -156,6 +156,11 @@ def _flatten_inputs(
     help="Move transformer heads to CUDA when available.",
 )
 @click.option(
+    "--include-anomaly-metrics",
+    is_flag=True,
+    help="Include PCA residual / Mahalanobis anomaly metrics in entity outputs.",
+)
+@click.option(
     "--max-length",
     type=int,
     default=MAX_LENGTH,
@@ -173,6 +178,7 @@ def main(
     files: tuple[Path, ...],
     thr_score: float,
     use_gpu: bool,
+    include_anomaly_metrics: bool,
     max_length: int,
 ) -> None:
     """Load a dumped Linker and predict entities for each input.
@@ -214,6 +220,11 @@ def main(
             use_gpu=use_gpu,
         )
         out = Linker.filter_report(raw, thr_score=thr_score)
+        if not include_anomaly_metrics:
+            for entity in out.get("entities", []):
+                entity.pop("pca_residual", None)
+                entity.pop("pca_mahalanobis", None)
+                entity.pop("anomaly_score_max_z", None)
     except Exception:
         logger.exception("predict failed")
         raise SystemExit(1)
