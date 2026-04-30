@@ -75,7 +75,31 @@ Embeds a knowledge base corpus using the same pipeline as **stage (A)** of `peli
   - `--input-text-table-path`: TSV/CSV (optional gzip) with `pmid` and `text` columns; headers are auto-detected (same as fit).
   - `--kb-csv-path`: Property KB CSV with **`label`** and **`entity_id`** (property labels are the patterns; same role as **`kb_path`** in `pelinker-fit`).
   - `--output-parquet-path`: Destination Parquet (columns include **`property`**, **`embed`**, **`pmid`**, **`mention`**, etc.)—same artifact as **`embeddings_parquet`** in fit.
-- **Other useful flags**: `--model-type`, `--layers-spec`, `--use-gpu`, `--input-buffer-rows`, `--encoder-batch-size`, `--nlp-model`, `--max-input-buffers` (mirror `pelinker.cli.fit` defaults where applicable; default **`--model-type`** is `pubmedbert` to match fit). **`--encoder-batch-size`** is the transformer forward batch (GPU memory); **`--input-buffer-rows`** is only how many table rows pandas reads per pass.
+
+#### Parameter reference (`embed_kb_corpus.py`)
+
+| Flag | Default | Meaning | Practical note |
+|---|---|---|---|
+| `--model-type` | `pubmedbert` | Transformer backbone used to produce token embeddings. | Keep consistent with downstream fit/eval for comparable artifacts. |
+| `--layers-spec` | `1,2` | Which hidden layers to aggregate (parsed by `str2layers`; `1` means last layer, `1,2` means last two). | More layers can improve signal but increase compute cost. |
+| `--input-text-table-path` | `data/test/mag_sample.tsv.gz` | Input corpus table (TSV/CSV, optional gzip) that contains `pmid` and `text`. | Header/column detection is automatic. |
+| `--kb-csv-path` | `data/derived/properties.synthesis.2.csv` | KB dictionary with `label` and `entity_id` used for mention matching. | Labels drive matching; IDs are stored for linker vocabulary alignment. |
+| `--output-parquet-path` | *(required)* | Output mention-level parquet path. | One row per extracted mention, including embedding vectors. |
+| `--use-gpu` | `false` | Move encoder inference to CUDA (if available). | Use this for speed on large corpora. |
+| `--input-buffer-rows` | `1000` | Rows per pandas chunk when reading the text table. | I/O chunking only; does not control model forward memory. |
+| `--encoder-batch-size` | `200` | Number of table rows encoded per transformer forward pass. | Primary OOM control knob; lower when GPU runs out of memory. |
+| `--nlp-model` | `en_core_web_trf` | spaCy pipeline used for tokenization/lemma processing around mention extraction. | Ensure the model is installed in the `uv` env. |
+| `--max-input-buffers` | *(unset)* | Stop after this many read chunks (`input_buffer_rows` each, except final partial chunk). | Useful for smoke tests without scanning the full corpus. |
+| `--negatives-per-positive` | `0.0` | Number of synthetic negative mentions sampled per positive mention. | `0` disables negatives; `1.0` means roughly one negative per positive. |
+| `--negative-label` | `__NEGATIVE__` | Label assigned to sampled negative rows. | Keep this distinct from all real KB labels. |
+| `--negative-seed` | *(unset)* | RNG seed for negative sampling. | Set for reproducible test runs and stable comparisons. |
+
+#### Negative sampling behavior
+
+- `--negatives-per-positive` controls **how many** negatives are added, relative to positives.
+- `--negative-label` controls **what label** those synthetic negatives carry in output rows.
+- `--negative-seed` controls **determinism** of which negatives are sampled.
+- Negatives are intended for training/evaluation robustness; for pure extraction runs, keep `--negatives-per-positive=0`.
 
 ### `loop.embed.kb.corpus.sh` / `loop.fit.sh`
 
