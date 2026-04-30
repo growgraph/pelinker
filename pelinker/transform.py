@@ -10,9 +10,55 @@ Pipeline: LLM embeddings -> PCA -> UMAP -> HDBSCAN
 import numpy as np
 import pandas as pd
 import umap
+from dataclasses import dataclass
 from sklearn.decomposition import PCA
 
 from pelinker.config import TransformConfig
+
+
+@dataclass(frozen=True)
+class TransformArtifacts:
+    """Typed outputs from PCA+UMAP transformation."""
+
+    index: pd.Index
+    pca_reduced: np.ndarray
+    umap_clustering: np.ndarray
+    umap_visualization: np.ndarray
+    pca_residuals: np.ndarray
+    pca_mahalanobis: np.ndarray
+
+    def umap_clustering_df(self) -> pd.DataFrame:
+        n_umap = int(self.umap_clustering.shape[1])
+        return pd.DataFrame(
+            self.umap_clustering,
+            index=self.index,
+            columns=[f"u_{j:02d}" for j in range(n_umap)],
+        )
+
+    def umap_visualization_df(self) -> pd.DataFrame:
+        n_umap_viz = int(self.umap_visualization.shape[1])
+        return pd.DataFrame(
+            self.umap_visualization,
+            index=self.index,
+            columns=[f"uviz_{j:02d}" for j in range(n_umap_viz)],
+        )
+
+    def pca_df(self) -> pd.DataFrame:
+        n_pca = int(self.pca_reduced.shape[1])
+        return pd.DataFrame(
+            self.pca_reduced,
+            index=self.index,
+            columns=[f"p_{j:02d}" for j in range(n_pca)],
+        )
+
+    def anomaly_df(self) -> pd.DataFrame:
+        return pd.DataFrame(
+            {
+                "pca_residual": self.pca_residuals,
+                "pca_mahalanobis": self.pca_mahalanobis,
+            },
+            index=self.index,
+        )
 
 
 class EmbeddingTransformer:
@@ -153,19 +199,13 @@ class EmbeddingTransformer:
         return self.fit(embeddings).transform(embeddings)
 
 
-def transform_embeddings(
+def compute_transform_artifacts(
     df: pd.DataFrame,
     config: TransformConfig | None = None,
     embed_column: str = "embed",
-) -> pd.DataFrame:
+) -> TransformArtifacts:
     """
     Transform embeddings in a DataFrame using PCA -> UMAP pipeline.
-
-    This function adds columns to the DataFrame:
-    - PCA columns: p_00, p_01, ... (one per fitted component; may be fewer than
-      ``pca_components`` when the sample count is small)
-    - UMAP clustering columns: u_00, u_01, ..., u_{umap_components-1:02d}
-    - UMAP visualization columns: uviz_00, uviz_01, ..., uviz_{umap_viz_components-1:02d}
 
     Args:
         df: DataFrame with embeddings in the specified column
@@ -173,7 +213,7 @@ def transform_embeddings(
         embed_column: Name of column containing embeddings (default: "embed")
 
     Returns:
-        DataFrame with added transformation columns
+        Typed transformation artifacts
     """
     if embed_column not in df.columns:
         raise ValueError(f"Column '{embed_column}' not found in DataFrame")
@@ -198,50 +238,11 @@ def transform_embeddings(
     umap_clustering = transformer.umap.transform(pca_reduced)
     umap_visualization = transformer.umap_viz.transform(pca_reduced)
 
-    # Create DataFrames for each transformation (widths follow fitted dims when PCA is capped).
-    n_pca = int(pca_reduced.shape[1])
-    df_pca = pd.DataFrame(
-        pca_reduced,
-        index=df.index,
-        columns=[f"p_{j:02d}" for j in range(n_pca)],
+    return TransformArtifacts(
+        index=df.index.copy(),
+        pca_reduced=pca_reduced,
+        umap_clustering=umap_clustering,
+        umap_visualization=umap_visualization,
+        pca_residuals=pca_residuals,
+        pca_mahalanobis=pca_mahalanobis,
     )
-
-    df_umap = pd.DataFrame(
-        umap_clustering,
-        index=df.index,
-        columns=[f"u_{j:02d}" for j in range(config.umap_components)],
-    )
-
-    df_umap_viz = pd.DataFrame(
-        umap_visualization,
-        index=df.index,
-        columns=[f"uviz_{j:02d}" for j in range(config.umap_viz_components)],
-    )
-    df_pca_residual = pd.DataFrame(
-        {"pca_residual": pca_residuals},
-        index=df.index,
-    )
-    df_pca_mahalanobis = pd.DataFrame(
-        {"pca_mahalanobis": pca_mahalanobis},
-        index=df.index,
-    )
-
-    # Concatenate all transformations
-    df_result = pd.concat(
-        [df, df_pca, df_umap, df_umap_viz, df_pca_residual, df_pca_mahalanobis], axis=1
-    )
-
-    return df_result
-
-
-def get_umap_columns(config: TransformConfig) -> list[str]:
-    """
-    Get the list of UMAP column names for clustering from a TransformConfig.
-
-    Args:
-        config: TransformConfig instance
-
-    Returns:
-        List of column names like ["u_00", "u_01", ..., "u_{n-1:02d}"]
-    """
-    return [f"u_{j:02d}" for j in range(config.umap_components)]

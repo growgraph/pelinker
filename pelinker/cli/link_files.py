@@ -4,15 +4,57 @@ from __future__ import annotations
 
 import json
 import logging
+from enum import Enum
 from pathlib import Path
 from typing import Any
 
 import click
+import pandas as pd
 
 from pelinker.model import Linker
 from pelinker.onto import MAX_LENGTH
 
 logger = logging.getLogger(__name__)
+
+
+_MENTION_ANOMALY_FORMATS = {".parquet", ".csv", ".jsonl"}
+
+
+def _sanitize_for_json(obj: Any) -> Any:
+    """Recursively replace Enum keys (e.g. WordGrouping) and Enum values for ``json.dumps``."""
+    if isinstance(obj, dict):
+        out: dict[Any, Any] = {}
+        for k, v in obj.items():
+            key = k.name if isinstance(k, Enum) else k
+            out[key] = _sanitize_for_json(v)
+        return out
+    if isinstance(obj, list):
+        return [_sanitize_for_json(x) for x in obj]
+    if isinstance(obj, Enum):
+        return obj.name
+    return obj
+
+
+def _write_mention_anomaly(path: Path, rows: list[dict[str, Any]]) -> None:
+    """Write per-mention anomaly rows. Format inferred from ``path`` extension."""
+    suffix = path.suffix.lower()
+    if suffix not in _MENTION_ANOMALY_FORMATS:
+        raise ValueError(
+            f"Unsupported --dump-mention-anomaly extension {suffix!r}; "
+            f"expected one of {sorted(_MENTION_ANOMALY_FORMATS)}"
+        )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if suffix == ".jsonl":
+        with path.open("w", encoding="utf-8") as fh:
+            for row in rows:
+                fh.write(json.dumps(row, default=str))
+                fh.write("\n")
+        return
+    df = pd.DataFrame(rows)
+    if suffix == ".parquet":
+        df.to_parquet(path, index=False)
+    else:
+        df.to_csv(path, index=False)
 
 
 def _normalize_ground_truth_hits(
@@ -161,6 +203,17 @@ def _flatten_inputs(
     help="Include PCA residual / Mahalanobis anomaly metrics in entity outputs.",
 )
 @click.option(
+    "--dump-mention-anomaly",
+    "dump_mention_anomaly",
+    type=click.Path(path_type=Path),
+    default=None,
+    help=(
+        "If set, write one row per extracted mention with is_kb_match and PCA anomaly "
+        "metrics (residual / Mahalanobis / max-z). Format inferred from extension: "
+        ".parquet, .csv, .jsonl."
+    ),
+)
+@click.option(
     "--max-length",
     type=int,
     default=MAX_LENGTH,
@@ -179,6 +232,7 @@ def main(
     thr_score: float,
     use_gpu: bool,
     include_anomaly_metrics: bool,
+    dump_mention_anomaly: Path | None,
     max_length: int,
 ) -> None:
     """Load a dumped Linker and predict entities for each input.
@@ -229,10 +283,27 @@ def main(
         logger.exception("predict failed")
         raise SystemExit(1)
 
+    if dump_mention_anomaly is not None:
+        try:
+            mention_rows = linker.compute_mention_anomaly(
+                texts,
+                max_length=max_length,
+                use_gpu=use_gpu,
+            )
+            _write_mention_anomaly(dump_mention_anomaly, mention_rows)
+            logger.info(
+                "Wrote %s mention anomaly rows to %s",
+                len(mention_rows),
+                dump_mention_anomaly,
+            )
+        except Exception:
+            logger.exception("compute_mention_anomaly / dump failed")
+            raise SystemExit(1)
+
     if any(g is not None for g in ground_truth_by_doc):
         out["ground_truth"] = ground_truth_by_doc
 
-    click.echo(json.dumps(out, default=str, indent=2))
+    click.echo(json.dumps(_sanitize_for_json(out), default=str, indent=2))
 
 
 if __name__ == "__main__":

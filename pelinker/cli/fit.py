@@ -65,6 +65,8 @@ class FitCliConfig:
     # ``{base}/reports/{YYYY-MM-DD}_{model-abbrev}/`` with ``base`` = parent of
     # ``output_path`` when that is set, else the process working directory.
     clustering_report_dir: str | None = None
+    # When True and reports dir is resolved, also gzip-pickle a JSON-serializable report dict.
+    dump_clustering_report: bool = True
     embeddings_parquet: Any = MISSING
     input_text_table_path: str | None = None
     use_gpu: bool = False
@@ -513,6 +515,7 @@ def fit(cfg: FitCliConfig) -> None:
         embedding_training=None,
         kb_config=kb_config,
         clustering_report_dir=resolved_clustering_reports,
+        dump_clustering_report=cfg.dump_clustering_report,
     )
 
     logger.info("Fitted Linker model with %s entities", len(linker.vocabulary))

@@ -196,6 +196,61 @@ def test_fit_writes_clustering_report_artifacts_when_report_dir_set(tmp_path):
     assert (report_dir / "results_grid_per_sample.csv").is_file()
     assert (report_dir / "fine_clustering_metadata.pkl.gz").is_file()
     assert (report_dir / "fusion2_a_1__a_2.png").is_file()
+    assert not (report_dir / "fusion2_a_1__a_2_clustering_report.pkl.gz").is_file()
+
+
+def test_fit_writes_clustering_report_pickle_when_dump_flag(tmp_path):
+    import gzip
+    import json
+    import pickle
+
+    metadata = EmbeddingModelMetadata(
+        sources=(EmbeddingSourceSpec(model_type="x", layers_spec="9"),)
+    )
+    n_ent = 8
+    labels_map = {f"e{k}": f"p{k}" for k in range(n_ent)}
+    p = tmp_path / "one.parquet"
+    rows = []
+    for k in range(n_ent):
+        for pmid in ("a", "b", "c"):
+            rows.append(
+                {
+                    "pmid": pmid,
+                    "property": f"p{k}",
+                    "mention": "m",
+                    "embed": [float(k), 0.1, 0.2],
+                }
+            )
+    pd.DataFrame(rows).to_parquet(p)
+    opt = ClusteringOptimizationConfig(
+        min_class_size=2,
+        min_scale=2,
+        max_scale=20,
+        frac=1.0,
+        rns=RandomState(1),
+        batch_size=500,
+    )
+    report_dir = tmp_path / "reports"
+    linker = Linker(labels_map=labels_map, embedding_metadata=metadata)
+    linker.fit(
+        p,
+        transform_config=TransformConfig(
+            pca_components=3, umap_components=2, umap_viz_components=2
+        ),
+        optimize_clustering=True,
+        clustering_optimization_config=opt,
+        clustering_report_dir=report_dir,
+        dump_clustering_report=True,
+    )
+    out = report_dir / "x_9_clustering_report.pkl.gz"
+    assert out.is_file()
+    with gzip.open(out, "rb") as zf:
+        loaded = pickle.load(zf)
+    assert isinstance(loaded, dict)
+    assert loaded["schema"] == "pelinker.clustering_report.v1"
+    json.dumps(loaded)
+    assert isinstance(loaded["metrics_df"], list)
+    assert isinstance(loaded["pca_residuals"], list)
 
 
 def test_estimate_model_clustering_multi_file_paths(tmp_path):
@@ -234,8 +289,9 @@ def test_estimate_model_clustering_multi_file_paths(tmp_path):
         ),
     )
     if report is not None:
-        assert report.df is not None
-        assert "u_00" in report.df.columns
+        assert report.assignments is not None
+        assert "cluster" in report.assignments.columns
+        assert report.umap_clustering.shape[1] == 2
 
 
 def test_fit_stores_and_serializes_training_pca_metrics(tmp_path):

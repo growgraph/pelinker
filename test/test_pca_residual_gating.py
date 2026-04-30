@@ -1,3 +1,5 @@
+import json
+
 import numpy as np
 import pandas as pd
 import torch
@@ -5,11 +7,19 @@ from click.testing import CliRunner
 
 from pelinker.cli import link_files
 from pelinker.model import Linker
+from pelinker.onto import WordGrouping
 from pelinker.transform import (
     EmbeddingTransformer,
     TransformConfig,
-    transform_embeddings,
+    compute_transform_artifacts,
 )
+
+
+def test_link_files_sanitize_for_json_word_grouping_keys() -> None:
+    payload = {"word_groupings": {WordGrouping.W1: {"k": "v"}}}
+    safe = link_files._sanitize_for_json(payload)
+    json.dumps(safe)
+    assert safe["word_groupings"]["W1"]["k"] == "v"
 
 
 def test_embedding_transformer_transform_returns_dual_pca_metrics() -> None:
@@ -32,7 +42,7 @@ def test_embedding_transformer_transform_returns_dual_pca_metrics() -> None:
     assert np.all(pca_mahalanobis >= 0.0)
 
 
-def test_transform_embeddings_adds_pca_metric_columns() -> None:
+def test_compute_transform_artifacts_exposes_pca_metric_arrays() -> None:
     rng = np.random.default_rng(1)
     df = pd.DataFrame(
         {
@@ -40,19 +50,17 @@ def test_transform_embeddings_adds_pca_metric_columns() -> None:
         }
     )
 
-    transformed = transform_embeddings(
+    artifacts = compute_transform_artifacts(
         df,
         config=TransformConfig(
             pca_components=3, umap_components=2, umap_viz_components=2
         ),
     )
 
-    assert "pca_residual" in transformed.columns
-    assert "pca_mahalanobis" in transformed.columns
-    assert len(transformed["pca_residual"]) == len(df)
-    assert len(transformed["pca_mahalanobis"]) == len(df)
-    assert (transformed["pca_residual"] >= 0.0).all()
-    assert (transformed["pca_mahalanobis"] >= 0.0).all()
+    assert artifacts.pca_residuals.shape == (len(df),)
+    assert artifacts.pca_mahalanobis.shape == (len(df),)
+    assert (artifacts.pca_residuals >= 0.0).all()
+    assert (artifacts.pca_mahalanobis >= 0.0).all()
 
 
 class _DummyTransformer:

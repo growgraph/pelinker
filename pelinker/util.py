@@ -250,6 +250,8 @@ def text_to_tokens(nlp, text) -> list[SimplifiedToken]:
                 "lemma": token.lemma_,
                 "text": token.text,
                 "tag": token.tag_,
+                "pos": token.pos_,
+                "is_stop": bool(token.is_stop),
                 "ix": token.idx,
                 "ix_end": token.idx + len(token),
             }
@@ -258,6 +260,42 @@ def text_to_tokens(nlp, text) -> list[SimplifiedToken]:
     ]
 
     return stokens
+
+
+def keep_expression_for_prediction(expr: Expression) -> bool:
+    """Whether to keep a sliding-window mention for :meth:`~pelinker.model.Linker.predict`.
+
+    Drops any window that contains punctuation (spaCy ``pos_ == "PUNCT"``). Drops
+    windows whose tokens are **all** stop words; keeps windows that mix content and
+    function words (e.g. ``type of``).
+    """
+    toks = expr.tokens
+    if not toks:
+        return False
+    if any(t.pos == "PUNCT" for t in toks if t.pos is not None):
+        return False
+    if all(t.is_stop is True for t in toks):
+        return False
+    return True
+
+
+def extract_ordered_mention_tensors(
+    report_batch: ReportBatch,
+    *,
+    keep: Callable[[Expression], bool] | None = None,
+) -> list[torch.Tensor]:
+    """Pool rows for each expression in W1→W2→W3 order, optionally filtering expressions."""
+    word_groupings = [WordGrouping.W1, WordGrouping.W2, WordGrouping.W3]
+    tt_list: list[torch.Tensor] = []
+    for wg in word_groupings:
+        if wg not in report_batch.available_groupings():
+            continue
+        expression_container = report_batch[wg]
+        for expr_holder in expression_container.expression_data:
+            for expr, tt in zip(expr_holder.expressions, expr_holder.tt):
+                if keep is None or keep(expr):
+                    tt_list.append(tt)
+    return tt_list
 
 
 def split_into_sentences(text):
@@ -932,7 +970,7 @@ def extract_and_embed_mentions(
                             "pmid": batch_pmids[itext],
                             "property": p,
                             "mention": mention,
-                            "embed": embed_list,  # Now a Python list, not numpy array
+                            "embed": embed_list,  # a Python list, not numpy array
                         }
                     )
 

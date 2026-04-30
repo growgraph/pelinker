@@ -3,6 +3,7 @@ import torch
 from pelinker.onto import Expression, WordGrouping
 from pelinker.util import (
     get_word_boundaries,
+    keep_expression_for_prediction,
     map_spans_to_spans_basic,
     text_to_tokens,
     map_words_to_tokens,
@@ -10,6 +11,59 @@ from pelinker.util import (
     token_list_with_window,
     SimplifiedToken,
 )
+
+
+def _st(
+    ix: int,
+    text: str,
+    *,
+    lemma: str | None = None,
+    tag: str = "NN",
+    pos: str | None = "NOUN",
+    is_stop: bool | None = False,
+) -> SimplifiedToken:
+    lem = lemma if lemma is not None else text.lower()
+    return SimplifiedToken(
+        ix=ix,
+        ix_end=ix + len(text),
+        text=text,
+        lemma=lem,
+        tag=tag,
+        pos=pos,
+        is_stop=is_stop,
+    )
+
+
+def test_keep_expression_for_prediction_drops_punctuation_or_all_stop():
+    keep = keep_expression_for_prediction
+
+    assert not keep(
+        Expression(tokens=[_st(0, "the", tag="DT", pos="DET", is_stop=True)])
+    )
+    assert not keep(
+        Expression(
+            tokens=[
+                _st(0, "of", tag="IN", pos="ADP", is_stop=True),
+                _st(3, "the", tag="DT", pos="DET", is_stop=True),
+            ]
+        )
+    )
+    assert keep(
+        Expression(
+            tokens=[
+                _st(0, "type", pos="NOUN", is_stop=False),
+                _st(5, "of", tag="IN", pos="ADP", is_stop=True),
+            ]
+        )
+    )
+    assert not keep(
+        Expression(
+            tokens=[
+                _st(0, "x", pos="NOUN", is_stop=False),
+                _st(2, ",", tag=",", pos="PUNCT", is_stop=False),
+            ]
+        )
+    )
 
 
 def test_text_info(nlp, phrase_vb_0):

@@ -90,6 +90,8 @@ class SimplifiedToken(BaseDataclass):
     text: str
     lemma: str
     tag: str
+    pos: str | None = None  # spaCy ``token.pos_``; ``None`` only for legacy payloads
+    is_stop: bool | None = None  # spaCy ``token.is_stop``
 
 
 @dataclasses.dataclass

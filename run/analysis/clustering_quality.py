@@ -168,15 +168,17 @@ def _fine_clustering_metadata_df(
     sample_idx: int,
 ) -> pd.DataFrame:
     """Per-sample clustering assignments for downstream analysis."""
-    cols = ["model", "layer", "sample_idx", "property", "class"]
+    cols = ["model", "layer", "sample_idx", "property", "cluster"]
     optional_cols = ["pmid", "mention"]
-    present_optional = [c for c in optional_cols if c in report.df.columns]
+    present_optional = [c for c in optional_cols if c in report.assignments.columns]
     keep = [
-        c for c in ["property", "class", *present_optional] if c in report.df.columns
+        c
+        for c in ["property", "cluster", *present_optional]
+        if c in report.assignments.columns
     ]
-    if "property" not in keep or "class" not in keep:
+    if "property" not in keep or "cluster" not in keep:
         return pd.DataFrame(columns=cols + present_optional)
-    out = report.df[keep].copy()
+    out = report.assignments[keep].copy()
     out.insert(0, "sample_idx", sample_idx)
     out.insert(0, "layer", layer)
     out.insert(0, "model", model)
@@ -248,7 +250,7 @@ def _fine_metadata_dedupe_subset(df: pd.DataFrame) -> list[str]:
         "pmid",
         "mention",
         "property",
-        "class",
+        "cluster",
     ]
     return [c for c in wanted if c in df.columns]
 
@@ -1232,7 +1234,24 @@ def main(
         console.print(
             "[green]✓[/green] Generating UMAP visualization for best model..."
         )
-        plot_umap_viz(best_report.df, output_path=str(umap_viz_path))
+        umap_viz_df = pd.DataFrame(
+            best_report.umap_visualization,
+            columns=[
+                f"uviz_{j:02d}"
+                for j in range(int(best_report.umap_visualization.shape[1]))
+            ],
+            index=best_report.assignments.index,
+        )
+        plot_df = pd.concat(
+            [
+                best_report.assignments[["cluster"]].rename(
+                    columns={"cluster": "class"}
+                ),
+                umap_viz_df,
+            ],
+            axis=1,
+        )
+        plot_umap_viz(plot_df, output_path=str(umap_viz_path))
         console.print(
             f"[green]✓[/green] UMAP visualization saved to: [cyan]{umap_viz_path}[/cyan]"
         )

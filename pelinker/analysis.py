@@ -24,7 +24,7 @@ from sklearn.metrics import adjusted_rand_score
 from numpy.random import RandomState
 
 from pelinker.config import ClusteringOptimizationConfig, TransformConfig
-from pelinker.transform import get_umap_columns, transform_embeddings
+from pelinker.transform import compute_transform_artifacts
 
 
 def get_word_frequencies_from_library(
@@ -266,8 +266,12 @@ def estimate_clustering_from_frame(
 
     number_properties = int(dfr["property"].nunique())
 
-    umap_columns = get_umap_columns(transform_config)
-    dfr2 = transform_embeddings(dfr, config=transform_config, embed_column="embed")
+    artifacts = compute_transform_artifacts(
+        dfr,
+        config=transform_config,
+        embed_column="embed",
+    )
+    umap_clustering_df = artifacts.umap_clustering_df()
 
     sizes = list(
         np.arange(
@@ -276,7 +280,11 @@ def estimate_clustering_from_frame(
             config.clustering_grid_step,
         )
     )
-    metrics_df = evaluate_cluster_size_grid(dfr2, umap_columns, sizes)
+    metrics_df = evaluate_cluster_size_grid(
+        umap_clustering_df,
+        list(umap_clustering_df.columns),
+        sizes,
+    )
     if len(metrics_df) == 0:
         return None
 
@@ -288,18 +296,19 @@ def estimate_clustering_from_frame(
     best_score = float(metrics_df.loc[best_idx, "dbcv"])
 
     clusterer = hdbscan.HDBSCAN(min_cluster_size=best_size, gen_min_span_tree=True)
-    labels = clusterer.fit_predict(dfr2[umap_columns])
+    labels = clusterer.fit_predict(artifacts.umap_clustering)
     label_set = set(labels.tolist())
     n_clusters_emergent = len(label_set) - (1 if -1 in label_set else 0)
-    dfr2_final = dfr2.copy()
-    dfr2_final["class"] = pd.DataFrame(
-        labels, columns=["class"], index=dfr2_final.index
-    )
+    assignments = dfr[["property"]].copy()
+    for optional_col in ["pmid", "mention"]:
+        if optional_col in dfr.columns:
+            assignments[optional_col] = dfr[optional_col]
+    assignments["cluster"] = labels.astype(int, copy=False)
 
     ari_score = None
-    if "property" in dfr2_final.columns and "class" in dfr2_final.columns:
-        property_labels = dfr2_final["property"].astype("category").cat.codes.values
-        cluster_labels = dfr2_final["class"].values
+    if "property" in assignments.columns and "cluster" in assignments.columns:
+        property_labels = assignments["property"].astype("category").cat.codes.values
+        cluster_labels = assignments["cluster"].values
         ari_score = compute_adjusted_rand_index(property_labels, cluster_labels)
 
     return ClusteringReport(
@@ -308,7 +317,12 @@ def estimate_clustering_from_frame(
         number_properties=number_properties,
         n_clusters_emergent=n_clusters_emergent,
         metrics_df=metrics_df,
-        df=dfr2_final,
+        assignments=assignments,
+        pca_residuals=artifacts.pca_residuals,
+        pca_mahalanobis=artifacts.pca_mahalanobis,
+        umap_clustering=artifacts.umap_clustering,
+        umap_visualization=artifacts.umap_visualization,
+        pca_reduced=artifacts.pca_reduced,
         ari=ari_score,
     )
 
@@ -449,7 +463,7 @@ def embeddings_dict_to_dataframe(
     embeddings_dict: dict[str, tuple[str, torch.Tensor | np.ndarray]],
 ) -> pd.DataFrame:
     """
-    Convert embeddings dictionary to DataFrame format expected by transform_embeddings.
+    Convert embeddings dictionary to DataFrame format expected by transform artifacts.
 
     Args:
         embeddings_dict: Dictionary mapping id -> (label, embedding)

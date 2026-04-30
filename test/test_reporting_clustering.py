@@ -1,5 +1,6 @@
 """Tests for typed clustering reports and multi-sample summaries."""
 
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -21,21 +22,25 @@ def _minimal_report(
     metrics_df = pd.DataFrame(
         {"min_cluster_size": [min_cluster_size], "dbcv": [best_score]}
     )
-    df = pd.DataFrame({"x": [1.0]})
+    assignments = pd.DataFrame({"property": ["p1"], "cluster": [0]})
     return ClusteringReport(
         hyperparameters=ClusteringHyperparameters(min_cluster_size=min_cluster_size),
         best_score=best_score,
         number_properties=5,
         n_clusters_emergent=n_clusters_emergent,
         metrics_df=metrics_df,
-        df=df,
+        assignments=assignments,
+        pca_residuals=np.array([0.1], dtype=np.float64),
+        pca_mahalanobis=np.array([0.2], dtype=np.float64),
+        umap_clustering=np.array([[0.0, 0.1]], dtype=np.float64),
+        umap_visualization=np.array([[0.0, 0.1]], dtype=np.float64),
+        pca_reduced=np.array([[0.0, 0.1]], dtype=np.float64),
         ari=ari,
     )
 
 
-def test_clustering_report_best_size_alias() -> None:
+def test_clustering_report_hyperparameter_access() -> None:
     r = _minimal_report(42, 0.88)
-    assert r.best_size == 42
     assert r.hyperparameters.min_cluster_size == 42
 
 
@@ -90,7 +95,12 @@ def test_summarize_with_pooled_min_cluster_size_uses_consensus_and_per_sample_db
                 "dbcv": [0.4, 0.55],
             }
         ),
-        df=pd.DataFrame({"x": [1.0]}),
+        assignments=pd.DataFrame({"property": ["p1"], "cluster": [0]}),
+        pca_residuals=np.array([0.1], dtype=np.float64),
+        pca_mahalanobis=np.array([0.2], dtype=np.float64),
+        umap_clustering=np.array([[0.0, 0.1]], dtype=np.float64),
+        umap_visualization=np.array([[0.0, 0.1]], dtype=np.float64),
+        pca_reduced=np.array([[0.0, 0.1]], dtype=np.float64),
         ari=0.8,
     )
     r2 = ClusteringReport(
@@ -104,7 +114,12 @@ def test_summarize_with_pooled_min_cluster_size_uses_consensus_and_per_sample_db
                 "dbcv": [0.45, 0.50],
             }
         ),
-        df=pd.DataFrame({"x": [1.0]}),
+        assignments=pd.DataFrame({"property": ["p2"], "cluster": [1]}),
+        pca_residuals=np.array([0.1], dtype=np.float64),
+        pca_mahalanobis=np.array([0.2], dtype=np.float64),
+        umap_clustering=np.array([[0.0, 0.1]], dtype=np.float64),
+        umap_visualization=np.array([[0.0, 0.1]], dtype=np.float64),
+        pca_reduced=np.array([[0.0, 0.1]], dtype=np.float64),
         ari=0.85,
     )
     row = summarize_clustering_reports_for_search(

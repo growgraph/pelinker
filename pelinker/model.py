@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import gzip
+import pickle
 import sys
 import tempfile
 from collections import Counter, defaultdict
@@ -33,6 +35,7 @@ from pelinker.analysis import (
 from pelinker.plotting import plot_metrics_with_error_bars
 from pelinker.reporting import (
     ClusteringReport,
+    clustering_report_to_jsonable_dict,
     summarize_clustering_reports_for_search,
 )
 from pelinker.embedder import embed_kb_corpus
@@ -40,9 +43,15 @@ from pelinker.embedding_fusion import (
     fused_property_vectors_from_paths,
     property_fused_dataframe_for_linker_order,
 )
-from pelinker.onto import MAX_LENGTH, WordGrouping
+from pelinker.onto import MAX_LENGTH, WordGrouping, _wg_for_property
 from pelinker.transform import EmbeddingTransformer
-from pelinker.util import load_models, texts_to_vrep
+from pelinker.util import (
+    extract_ordered_mention_tensors,
+    keep_expression_for_prediction,
+    load_models,
+    text_to_tokens,
+    texts_to_vrep,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -97,15 +106,17 @@ def _fine_clustering_metadata_df(
     layer: str,
     sample_idx: int,
 ) -> pd.DataFrame:
-    cols = ["model", "layer", "sample_idx", "property", "class"]
+    cols = ["model", "layer", "sample_idx", "property", "cluster"]
     optional_cols = ["pmid", "mention"]
-    present_optional = [c for c in optional_cols if c in report.df.columns]
+    present_optional = [c for c in optional_cols if c in report.assignments.columns]
     keep = [
-        c for c in ["property", "class", *present_optional] if c in report.df.columns
+        c
+        for c in ["property", "cluster", *present_optional]
+        if c in report.assignments.columns
     ]
-    if "property" not in keep or "class" not in keep:
+    if "property" not in keep or "cluster" not in keep:
         return pd.DataFrame(columns=cols + present_optional)
-    out = report.df[keep].copy()
+    out = report.assignments[keep].copy()
     out.insert(0, "sample_idx", sample_idx)
     out.insert(0, "layer", layer)
     out.insert(0, "model", model)
@@ -119,10 +130,16 @@ def _write_clustering_validation_artifacts(
     model: str,
     layer: str,
     sample_idx: int = 0,
+    dump_clustering_report: bool = False,
 ) -> None:
     """
     Persist grid metrics, summary row, metric plot, and fine metadata like
     ``run/analysis/clustering_quality.py`` (single sample).
+
+    When ``dump_clustering_report`` is True, also writes a gzip-pickled **JSON-serializable**
+    dict from :func:`~pelinker.reporting.clustering_report_to_jsonable_dict` (same fields as
+    :class:`~pelinker.reporting.ClusteringReport`, no DataFrames/ndarrays) as
+    ``{model}_{layer}_clustering_report.pkl.gz`` (layer characters sanitized like the plot stem).
     """
     report_dir = report_dir.expanduser()
     report_dir.mkdir(parents=True, exist_ok=True)
@@ -147,6 +164,18 @@ def _write_clustering_validation_artifacts(
     fine.to_pickle(tmp_fine, compression="gzip")
     tmp_fine.replace(fine_path)
 
+    if dump_clustering_report:
+        stem = _safe_plot_stem(model, layer)
+        report_path = report_dir / f"{stem}_clustering_report.pkl.gz"
+        tmp_report = report_path.with_name(report_path.name + ".tmp")
+        with gzip.open(tmp_report, "wb") as zf:
+            pickle.dump(
+                clustering_report_to_jsonable_dict(report),
+                zf,
+                protocol=pickle.HIGHEST_PROTOCOL,
+            )
+        tmp_report.replace(report_path)
+
     plot_path = report_dir / f"{_safe_plot_stem(model, layer)}.png"
     plot_metrics_with_error_bars(
         [report.metrics_df],
@@ -154,9 +183,14 @@ def _write_clustering_validation_artifacts(
         chosen_min_cluster_size=float(report.hyperparameters.min_cluster_size),
     )
     logger.info(
-        "Wrote clustering validation artifacts under %s (metrics plot: %s)",
+        "Wrote clustering validation artifacts under %s (metrics plot: %s%s)",
         report_dir,
         plot_path.name,
+        (
+            f", clustering report: {_safe_plot_stem(model, layer)}_clustering_report.pkl.gz"
+            if dump_clustering_report
+            else ""
+        ),
     )
 
 
@@ -410,6 +444,7 @@ class Linker:
         embedding_metadata: EmbeddingModelMetadata | None = None,
         kb_config: KBConfig | None = None,
         clustering_report_dir: pathlib.Path | None = None,
+        dump_clustering_report: bool = False,
     ):
         """
         Fit the Linker model with embeddings.
@@ -446,6 +481,10 @@ class Linker:
                 ``optimize_clustering`` is False, a diagnostic grid is run on the same
                 ``frac`` subsample as configured in ``clustering_optimization_config`` without
                 changing the chosen ``min_cluster_size``.
+            dump_clustering_report: If True (and ``clustering_report_dir`` is set), also
+                pickle a JSON-serializable dict (see
+                :func:`~pelinker.reporting.clustering_report_to_jsonable_dict`) under
+                ``{model}_{layer}_clustering_report.pkl.gz`` in that directory. Default False.
 
         Side effects:
             Sets ``cluster_composition`` (mention-weighted property mass and per-cluster
@@ -540,6 +579,7 @@ class Linker:
                 min_cluster_size_arg=min_cluster_size,
                 kb_config=kb_config,
                 clustering_report_dir=clustering_report_dir,
+                dump_clustering_report=dump_clustering_report,
             )
 
             return self
@@ -564,6 +604,7 @@ class Linker:
         min_cluster_size_arg: int | None,
         kb_config: KBConfig | None,
         clustering_report_dir: pathlib.Path | None,
+        dump_clustering_report: bool,
     ) -> None:
         """Grid search (optional) on subsample; final PCA/UMAP + HDBSCAN on full ``prepared`` frame."""
         need_grid_frame = optimize_clustering or clustering_report_dir is not None
@@ -632,6 +673,7 @@ class Linker:
                     model=m,
                     layer=lyr,
                     sample_idx=0,
+                    dump_clustering_report=dump_clustering_report,
                 )
             else:
                 logger.warning(
@@ -760,19 +802,6 @@ class Linker:
         return self._nlp
 
     @staticmethod
-    def _extract_ordered_mention_tensors(report_batch) -> list[torch.Tensor]:
-        word_groupings = [WordGrouping.W1, WordGrouping.W2, WordGrouping.W3]
-        tt_list: list[torch.Tensor] = []
-        for wg in word_groupings:
-            if wg not in report_batch.available_groupings():
-                continue
-            expression_container = report_batch[wg]
-            for expr_holder in expression_container.expression_data:
-                for _expr, tt in zip(expr_holder.expressions, expr_holder.tt):
-                    tt_list.append(tt)
-        return tt_list
-
-    @staticmethod
     def _mention_tensor_lists_aligned(
         lists: list[list[torch.Tensor]],
     ) -> None:
@@ -822,29 +851,27 @@ class Linker:
             "combined_max_z": _q(combined),
         }
 
-    def predict(
+    def _encode_mentions(
         self,
         texts: Sequence[str],
-        max_length: int | None = None,
-        threshold: float = 0.0,
+        max_length: int | None,
         *,
-        use_gpu: bool = False,
-    ):
-        """
-        Predict entities for input texts.
+        use_gpu: bool,
+    ) -> tuple[torch.Tensor | None, list[dict[str, object]], object]:
+        """Run encoders + spaCy and build the fused mention tensor and vocabulary rows.
 
-        With multiple ``embedding_metadata.sources``, runs ``texts_to_vrep`` per source
-        (cached by ``model_type``), concatenates mention tensors along the feature axis in
-        source order, then applies the fitted transformer and clusterer. Mention counts
-        must match across sources (typically the same ``model_type`` for all sources).
+        Returns ``(fused_tensor, vocabulary, primary_report_batch)``. ``fused_tensor`` is
+        ``None`` when no mentions were extracted. Each vocabulary row carries
+        ``mention``, ``a``, ``b``, ``itext``, ``ichunk``, ``word_grouping`` and
+        ``lemma`` (space-joined token lemmas, used for KB-match lookups).
 
-        Tokenization uses the spaCy pipeline named by ``nlp_model_name`` (set from
-        ``EmbeddingTrainingConfig.nlp_model`` during corpus embedding, else default
-        ``en_core_web_trf``).
+        Mentions are filtered with :func:`~pelinker.util.keep_expression_for_prediction`
+        (drop windows containing punctuation; drop windows whose tokens are all stop
+        words).
         """
         if self.embedding_metadata is None:
             raise ValueError(
-                "embedding_metadata is required for predict(); set it during fit() or on the Linker."
+                "embedding_metadata is required; set it during fit() or on the Linker."
             )
         self._ensure_hf_models_for_sources(use_gpu=use_gpu)
         nlp = self._ensure_nlp()
@@ -866,7 +893,10 @@ class Linker:
             report_batches.append(rb)
 
         primary = report_batches[0]
-        tt_lists = [self._extract_ordered_mention_tensors(rb) for rb in report_batches]
+        tt_lists = [
+            extract_ordered_mention_tensors(rb, keep=keep_expression_for_prediction)
+            for rb in report_batches
+        ]
         self._mention_tensor_lists_aligned(tt_lists)
 
         vocabulary: list[dict[str, object]] = []
@@ -876,6 +906,8 @@ class Linker:
             expression_container = primary[wg]
             for expr_holder in expression_container.expression_data:
                 for expr, _tt in zip(expr_holder.expressions, expr_holder.tt):
+                    if not keep_expression_for_prediction(expr):
+                        continue
                     mention_text = ""
                     if (
                         expr.itext is not None
@@ -891,6 +923,7 @@ class Linker:
                             mention_text = text[offset + expr.a : offset + expr.b]
                         else:
                             mention_text = text[expr.a : expr.b]
+                    lemma = " ".join(t.lemma for t in expr.tokens)
                     vocabulary.append(
                         {
                             "mention": mention_text,
@@ -899,11 +932,12 @@ class Linker:
                             "itext": expr.itext,
                             "ichunk": expr.ichunk,
                             "word_grouping": wg,
+                            "lemma": lemma,
                         }
                     )
 
         if not tt_lists[0]:
-            return {"entities": [], "word_groupings": {}}
+            return None, vocabulary, primary
 
         fused_rows: list[torch.Tensor] = []
         for i in range(len(tt_lists[0])):
@@ -911,6 +945,35 @@ class Linker:
                 torch.cat([tts[i] for tts in tt_lists], dim=-1),
             )
         tt = torch.stack(fused_rows, dim=0)
+        return tt, vocabulary, primary
+
+    def predict(
+        self,
+        texts: Sequence[str],
+        max_length: int | None = None,
+        threshold: float = 0.0,
+        *,
+        use_gpu: bool = False,
+    ):
+        """
+        Predict entities for input texts.
+
+        With multiple ``embedding_metadata.sources``, runs ``texts_to_vrep`` per source
+        (cached by ``model_type``), concatenates mention tensors along the feature axis in
+        source order, then applies the fitted transformer and clusterer. Mention counts
+        must match across sources (typically the same ``model_type`` for all sources).
+
+        Tokenization uses the spaCy pipeline named by ``nlp_model_name`` (set from
+        ``EmbeddingTrainingConfig.nlp_model`` during corpus embedding, else default
+        ``en_core_web_trf``).
+        """
+        word_groupings = [WordGrouping.W1, WordGrouping.W2, WordGrouping.W3]
+        tt, vocabulary, primary = self._encode_mentions(
+            texts, max_length, use_gpu=use_gpu
+        )
+
+        if tt is None:
+            return {"entities": [], "word_groupings": {}}
 
         if self.transformer is not None and self.clusterer is not None:
             kb_items = self._predict_with_clustering(
@@ -922,6 +985,9 @@ class Linker:
             raise TypeError(
                 "Neither transformer/clusterer nor index is set. Call fit() first."
             )
+
+        for item in kb_items:
+            item.pop("lemma", None)
 
         return {
             "entities": kb_items,
@@ -1019,3 +1085,86 @@ class Linker:
             kb_items += [kb_item]
 
         return kb_items
+
+    def _kb_lemma_index_by_wg(self, nlp: object) -> dict[WordGrouping, dict[str, str]]:
+        """Build ``{word_grouping: {lemma_string: kb_property_label}}`` from ``labels_map``.
+
+        Mirrors the per-property lemma matching used at training time in
+        :func:`pelinker.util.extract_and_embed_mentions` (``_wg_for_property`` to pick the
+        word-grouping bucket, ``filter_on_lemmas`` to compare lemma strings), inverted to
+        an O(1) lookup keyed by mention lemma.
+        """
+        index: dict[WordGrouping, dict[str, str]] = {}
+        for prop in set(self.labels_map.values()):
+            wg = _wg_for_property(prop)
+            if wg is None:
+                continue
+            tokens = text_to_tokens(nlp, prop)
+            lemma = " ".join(t.lemma for t in tokens)
+            index.setdefault(wg, {})[lemma] = prop
+        return index
+
+    def compute_mention_anomaly(
+        self,
+        texts: Sequence[str],
+        max_length: int | None = None,
+        *,
+        use_gpu: bool = False,
+    ) -> list[dict[str, object]]:
+        """Per-mention PCA residual / Mahalanobis with KB-match flag.
+
+        Runs the same encoder + spaCy + fused-mention pipeline as :meth:`predict`, then
+        applies the fitted ``EmbeddingTransformer`` to obtain ``pca_residuals`` /
+        ``pca_mahalanobis`` for **every** extracted mention (W1/W2/W3) — including spans
+        that :meth:`predict` would otherwise drop because their HDBSCAN cluster has no
+        mapped KB entity. Each row is annotated with ``is_kb_match`` (lemma equals some
+        KB property's lemma under the matching :class:`WordGrouping`) and
+        ``kb_property_match`` (the matched property label, or ``None``).
+        """
+        if self.transformer is None:
+            raise ValueError(
+                "Transformer must be fitted before compute_mention_anomaly()"
+            )
+
+        tt, vocabulary, _primary = self._encode_mentions(
+            texts, max_length, use_gpu=use_gpu
+        )
+        if tt is None:
+            return []
+
+        nlp = self._ensure_nlp()
+        kb_lemma_by_wg = self._kb_lemma_index_by_wg(nlp)
+
+        embeddings_np = tt.detach().cpu().numpy()
+        _umap_clustering, _viz, residuals, mahalanobis = self.transformer.transform(
+            embeddings_np
+        )
+        combined = np.maximum(self._zscore(residuals), self._zscore(mahalanobis))
+
+        rows: list[dict[str, object]] = []
+        for item, residual, mahal, combo in zip(
+            vocabulary, residuals, mahalanobis, combined
+        ):
+            wg = item.get("word_grouping")
+            lemma = item.get("lemma", "")
+            wg_index = (
+                kb_lemma_by_wg.get(wg, {}) if isinstance(wg, WordGrouping) else {}
+            )
+            kb_property = wg_index.get(str(lemma))
+            rows.append(
+                {
+                    "mention": item.get("mention", ""),
+                    "a": item.get("a"),
+                    "b": item.get("b"),
+                    "itext": item.get("itext"),
+                    "ichunk": item.get("ichunk"),
+                    "word_grouping": wg.name if isinstance(wg, WordGrouping) else None,
+                    "lemma": lemma,
+                    "is_kb_match": kb_property is not None,
+                    "kb_property_match": kb_property,
+                    "pca_residual": float(residual),
+                    "pca_mahalanobis": float(mahal),
+                    "anomaly_score_max_z": float(combo),
+                }
+            )
+        return rows
