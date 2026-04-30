@@ -71,6 +71,27 @@ logger = logging.getLogger(__name__)
     default=None,
     help="Stop after this many text-table read passes (each up to --input-buffer-rows rows).",
 )
+@click.option(
+    "--negatives-per-positive",
+    "negatives_per_positive",
+    type=click.FLOAT,
+    default=0.0,
+    help="Sample this many random negative mentions per positive mention.",
+)
+@click.option(
+    "--negative-label",
+    "negative_label",
+    type=click.STRING,
+    default="__NEGATIVE__",
+    help="Entity label used for sampled negatives.",
+)
+@click.option(
+    "--negative-seed",
+    "negative_seed",
+    type=click.INT,
+    default=None,
+    help="Random seed for deterministic negative sampling.",
+)
 def run(
     model_type,
     layers_spec,
@@ -82,6 +103,9 @@ def run(
     encoder_batch_size,
     nlp_model,
     max_input_buffers,
+    negatives_per_positive,
+    negative_label,
+    negative_seed,
 ):
     # Set up logging
     logging.basicConfig(
@@ -97,6 +121,9 @@ def run(
         encoder_batch_size=encoder_batch_size,
         nlp_model=nlp_model,
         max_input_buffers=max_input_buffers,
+        negatives_per_positive=negatives_per_positive,
+        negative_label=negative_label,
+        negative_seed=negative_seed,
     )
 
     embed_kb_corpus(

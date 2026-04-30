@@ -687,7 +687,8 @@ def plot_heatmap(
 
 
 def plot_umap_viz(df, output_path="umap.html"):
-    df["show_label"] = df["property"]
+    label_col = "entity" if "entity" in df.columns else "property"
+    df["show_label"] = df[label_col]
     show_rate = max(len(df) // 20, 1)
     df.loc[df.index % show_rate != 0, "show_label"] = ""
 
@@ -702,7 +703,7 @@ def plot_umap_viz(df, output_path="umap.html"):
         z="uviz_02",
         color="class",
         color_discrete_sequence=px.colors.qualitative.Vivid,
-        hover_name="property",
+        hover_name=label_col,
         labels={"uviz_00": "Dim 1", "uviz_01": "Dim 2", "uviz_02": "Dim 3"},
     )
 

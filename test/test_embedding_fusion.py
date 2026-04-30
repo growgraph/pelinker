@@ -13,7 +13,7 @@ def test_mention_level_concat_inner_join():
     df1 = pd.DataFrame(
         {
             "pmid": ["1", "1"],
-            "property": ["a", "b"],
+            "entity": ["a", "b"],
             "mention": ["x", "y"],
             "embed": [[1.0, 0.0], [0.0, 1.0]],
         }
@@ -21,7 +21,7 @@ def test_mention_level_concat_inner_join():
     df2 = pd.DataFrame(
         {
             "pmid": ["1", "1"],
-            "property": ["a", "b"],
+            "entity": ["a", "b"],
             "mention": ["x", "z"],
             "embed": [[2.0, 2.0], [3.0, 3.0]],
         }
@@ -29,7 +29,7 @@ def test_mention_level_concat_inner_join():
     out = mention_level_concat_frames([df1, df2])
     assert len(out) == 1
     row = out.iloc[0]
-    assert row["property"] == "a"
+    assert row["entity"] == "a"
     assert row["mention"] == "x"
     np.testing.assert_array_equal(
         row["embed"], np.array([1.0, 0.0, 2.0, 2.0], dtype=np.float32)
@@ -40,7 +40,7 @@ def test_mention_level_dupes_averaged_within_source():
     df1 = pd.DataFrame(
         {
             "pmid": ["1", "1"],
-            "property": ["a", "a"],
+            "entity": ["a", "a"],
             "mention": ["x", "x"],
             "embed": [[0.0, 2.0], [2.0, 0.0]],
         }
@@ -48,7 +48,7 @@ def test_mention_level_dupes_averaged_within_source():
     df2 = pd.DataFrame(
         {
             "pmid": ["1"],
-            "property": ["a"],
+            "entity": ["a"],
             "mention": ["x"],
             "embed": [[1.0, 1.0]],
         }
@@ -62,7 +62,7 @@ def test_mention_level_single_frame_rename():
     df = pd.DataFrame(
         {
             "pmid": ["1"],
-            "property": ["p"],
+            "entity": ["p"],
             "mention": ["m"],
             "embed": [[1.0, 2.0]],
         }
@@ -76,7 +76,7 @@ def test_dedupe_mean_embed():
     df = pd.DataFrame(
         {
             "pmid": ["1", "1"],
-            "property": ["a", "a"],
+            "entity": ["a", "a"],
             "mention": ["z", "z"],
             "embed": [[1.0, 0.0], [0.0, 3.0]],
         }
@@ -92,7 +92,7 @@ def test_property_fused_vectors_from_parquet_paths(tmp_path):
     pd.DataFrame(
         {
             "pmid": ["1"],
-            "property": ["foo"],
+            "entity": ["foo"],
             "mention": ["m"],
             "embed": [[1.0, 0.0]],
         }
@@ -100,7 +100,7 @@ def test_property_fused_vectors_from_parquet_paths(tmp_path):
     pd.DataFrame(
         {
             "pmid": ["1"],
-            "property": ["foo"],
+            "entity": ["foo"],
             "mention": ["m"],
             "embed": [[0.0, 2.0]],
         }
@@ -116,7 +116,7 @@ def test_property_fused_intersection(tmp_path):
     pd.DataFrame(
         {
             "pmid": ["1", "1"],
-            "property": ["only_a", "both"],
+            "entity": ["only_a", "both"],
             "mention": ["m", "m"],
             "embed": [[1.0], [3.0]],
         }
@@ -124,7 +124,7 @@ def test_property_fused_intersection(tmp_path):
     pd.DataFrame(
         {
             "pmid": ["1"],
-            "property": ["both"],
+            "entity": ["both"],
             "mention": ["m"],
             "embed": [[4.0]],
         }

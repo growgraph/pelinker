@@ -64,7 +64,7 @@ def _embed_corpus_single_source(
     df_props = pd.read_csv(training.kb_csv_path)
     entities = df_props["label"].tolist()
 
-    logger.info("Loaded %s properties", df_props.shape[0])
+    logger.info("Loaded %s entities", df_props.shape[0])
     logger.info("Layers are set to %s", layers)
 
     file_format = _detect_file_format(training.input_text_table_path)
@@ -216,6 +216,9 @@ def _embed_corpus_single_source(
                             WordGrouping.W2,
                             WordGrouping.W3,
                         ),
+                        negatives_per_positive=training.negatives_per_positive,
+                        negative_label=training.negative_label,
+                        random_seed=training.negative_seed,
                         on_encoder_batch=on_encoder_batch,
                     )
 

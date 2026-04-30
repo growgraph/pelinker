@@ -1,4 +1,4 @@
-"""Cluster property-composition metadata and consensus naming after ``Linker.fit``."""
+"""Cluster entity-composition metadata and consensus naming after ``Linker.fit``."""
 
 import pandas as pd
 
@@ -11,7 +11,7 @@ from pelinker.model import (
 
 def test_cluster_composition_mass_and_fractions():
     rows = [("a", 0)] * 10 + [("b", 0)] * 10 + [("a", 1)] * 90 + [("b", 1)] * 10
-    df = pd.DataFrame(rows, columns=["property", "cluster"])
+    df = pd.DataFrame(rows, columns=["entity", "cluster"])
     snap = cluster_composition_from_training_frame(df)
     assert snap.global_property_mass == {"a": 100, "b": 20}
     assert snap.cluster_within_fraction[0] == {"a": 0.5, "b": 0.5}

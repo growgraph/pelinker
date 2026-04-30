@@ -18,6 +18,9 @@ logger = logging.getLogger(__name__)
 
 
 _MENTION_ANOMALY_FORMATS = {".parquet", ".csv", ".jsonl"}
+_JSONL_SUFFIXES = {".jsonl", ".ndjson"}
+_DOCUMENT_CONTAINER_KEYS = ("documents", "docs", "items", "records", "data")
+_TEXT_FIELD_KEYS = ("text", "content", "body", "document")
 
 
 def _sanitize_for_json(obj: Any) -> Any:
@@ -69,64 +72,94 @@ def _normalize_ground_truth_hits(
     return out
 
 
+def _parse_ground_truth(
+    raw_gt: object, source: Path, context: str
+) -> list[dict[str, Any]] | None:
+    if raw_gt is None:
+        return None
+    if not isinstance(raw_gt, list):
+        raise ValueError(f"{source}: {context} 'ground_truth' must be a list or null")
+    gt: list[dict[str, Any]] = []
+    for j, hit in enumerate(raw_gt):
+        if not isinstance(hit, dict):
+            raise ValueError(f"{source}: {context} ground_truth[{j}] must be an object")
+        gt.append(dict(hit))
+    return gt
+
+
+def _parse_document_item(
+    item: object, source: Path, context: str
+) -> tuple[str, list[dict[str, Any]] | None]:
+    if isinstance(item, str):
+        return item, None
+    if not isinstance(item, dict):
+        raise ValueError(
+            f"{source}: {context} must be an object with a text field or a string document"
+        )
+
+    text_field_keys = [k for k in _TEXT_FIELD_KEYS if k in item]
+    if not text_field_keys:
+        raise ValueError(
+            f"{source}: {context} is missing a text field "
+            f"(supported: {', '.join(_TEXT_FIELD_KEYS)})"
+        )
+    if len(text_field_keys) > 1:
+        raise ValueError(
+            f"{source}: {context} has multiple text fields {text_field_keys}; use exactly one"
+        )
+
+    text = item[text_field_keys[0]]
+    if not isinstance(text, str):
+        raise ValueError(
+            f"{source}: {context} '{text_field_keys[0]}' field must be a string"
+        )
+    gt = _parse_ground_truth(item.get("ground_truth"), source, context)
+    return text, gt
+
+
 def _parse_json_documents(
     data: object, source: Path
 ) -> list[tuple[str, list[dict[str, Any]] | None]]:
-    if isinstance(data, dict) and "text" in data:
-        text = data["text"]
-        if not isinstance(text, str):
-            raise ValueError(f"{source}: JSON object 'text' must be a string")
-        raw_gt = data.get("ground_truth")
-        gt: list[dict[str, Any]] | None
-        if raw_gt is None:
-            gt = None
-        elif isinstance(raw_gt, list):
-            gt = []
-            for i, item in enumerate(raw_gt):
-                if not isinstance(item, dict):
-                    raise ValueError(
-                        f"{source}: ground_truth[{i}] must be an object with "
-                        "char spans (e.g. a, b) and class/entity fields"
-                    )
-                gt.append(dict(item))
-        else:
-            raise ValueError(f"{source}: 'ground_truth' must be a list or null")
-        return [(text, gt)]
-
     if isinstance(data, list):
         if not data:
             raise ValueError(f"{source}: JSON array must contain at least one document")
         docs: list[tuple[str, list[dict[str, Any]] | None]] = []
         for i, item in enumerate(data):
-            if not isinstance(item, dict):
-                raise ValueError(
-                    f"{source}: item {i} must be an object with a 'text' field"
-                )
-            if "text" not in item:
-                raise ValueError(f"{source}: item {i} is missing required field 'text'")
-            text = item["text"]
-            if not isinstance(text, str):
-                raise ValueError(f"{source}: item {i} 'text' must be a string")
-            raw_gt = item.get("ground_truth")
-            gt = None
-            if raw_gt is not None:
-                if not isinstance(raw_gt, list):
-                    raise ValueError(
-                        f"{source}: item {i} 'ground_truth' must be a list or null"
-                    )
-                gt = []
-                for j, hit in enumerate(raw_gt):
-                    if not isinstance(hit, dict):
-                        raise ValueError(
-                            f"{source}: item {i} ground_truth[{j}] must be an object"
-                        )
-                    gt.append(dict(hit))
-            docs.append((text, gt))
+            docs.append(_parse_document_item(item, source, f"item {i}"))
         return docs
 
+    if isinstance(data, dict):
+        # Single-document objects can use one of the accepted text fields.
+        if any(k in data for k in _TEXT_FIELD_KEYS):
+            return [_parse_document_item(data, source, "JSON object")]
+
+        for container_key in _DOCUMENT_CONTAINER_KEYS:
+            if container_key in data:
+                return _parse_json_documents(data[container_key], source)
+
+        if "texts" in data:
+            return _parse_json_documents(data["texts"], source)
+
     raise ValueError(
-        f"{source}: JSON must be an object with 'text' or a list of such objects"
+        f"{source}: JSON must be a document object, a list of documents/strings, "
+        f"or a wrapper containing one of {', '.join(_DOCUMENT_CONTAINER_KEYS)} / texts"
     )
+
+
+def _parse_jsonl_documents(
+    raw: str, source: Path
+) -> list[tuple[str, list[dict[str, Any]] | None]]:
+    items: list[object] = []
+    for idx, line in enumerate(raw.splitlines(), start=1):
+        stripped = line.strip()
+        if not stripped:
+            continue
+        try:
+            item = json.loads(stripped)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"{source}: invalid JSONL at line {idx}: {exc}") from exc
+        items.append(item)
+    return _parse_json_documents(items, source)
 
 
 def _load_documents_from_file(
@@ -140,13 +173,16 @@ def _load_documents_from_file(
     """
     raw = path.read_text(encoding="utf-8")
     stripped = raw.strip()
-    if not stripped or stripped[0] not in "[{":
+    if not stripped:
         return [(raw, None)]
+
     try:
+        if path.suffix.lower() in _JSONL_SUFFIXES:
+            return _parse_jsonl_documents(raw, path)
         data = json.loads(raw)
-    except json.JSONDecodeError:
+        return _parse_json_documents(data, path)
+    except (json.JSONDecodeError, ValueError):
         return [(raw, None)]
-    return _parse_json_documents(data, path)
 
 
 def _flatten_inputs(

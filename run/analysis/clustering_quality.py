@@ -168,17 +168,22 @@ def _fine_clustering_metadata_df(
     sample_idx: int,
 ) -> pd.DataFrame:
     """Per-sample clustering assignments for downstream analysis."""
-    cols = ["model", "layer", "sample_idx", "property", "cluster"]
+    cols = ["model", "layer", "sample_idx", "entity", "cluster"]
     optional_cols = ["pmid", "mention"]
     present_optional = [c for c in optional_cols if c in report.assignments.columns]
     keep = [
         c
-        for c in ["property", "cluster", *present_optional]
+        for c in ["entity", "cluster", *present_optional]
         if c in report.assignments.columns
     ]
-    if "property" not in keep or "cluster" not in keep:
+    if "entity" not in keep and "property" in report.assignments.columns:
+        keep = ["entity" if c == "property" else c for c in keep]
+        out0 = report.assignments.rename(columns={"property": "entity"})
+    else:
+        out0 = report.assignments
+    if "entity" not in keep or "cluster" not in keep:
         return pd.DataFrame(columns=cols + present_optional)
-    out = report.assignments[keep].copy()
+    out = out0[keep].copy()
     out.insert(0, "sample_idx", sample_idx)
     out.insert(0, "layer", layer)
     out.insert(0, "model", model)
@@ -249,7 +254,7 @@ def _fine_metadata_dedupe_subset(df: pd.DataFrame) -> list[str]:
         "sample_idx",
         "pmid",
         "mention",
-        "property",
+        "entity",
         "cluster",
     ]
     return [c for c in wanted if c in df.columns]

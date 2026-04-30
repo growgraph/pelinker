@@ -1,6 +1,7 @@
 # pylint: disable=E1120
 
 import os
+import random
 import re
 from pathlib import Path
 
@@ -906,6 +907,9 @@ def extract_and_embed_mentions(
     layers,
     batch_size,
     word_modes=(WordGrouping.W1, WordGrouping.W2, WordGrouping.W3),
+    negatives_per_positive: float = 0.0,
+    negative_label: str = "__NEGATIVE__",
+    random_seed: int | None = None,
     on_encoder_batch: Callable[[int, int, int], None] | None = None,
 ) -> List[dict]:
     """
@@ -915,6 +919,12 @@ def extract_and_embed_mentions(
     If ``on_encoder_batch`` is set, it is invoked after each encoder mini-batch with
     ``(batch_index_0based, n_batches, n_mention_rows_accumulated)``.
     """
+    if negatives_per_positive < 0:
+        raise ValueError("negatives_per_positive must be >= 0")
+    if not negative_label:
+        raise ValueError("negative_label must be a non-empty string")
+
+    rng = random.Random(random_seed)
     data_pmids = pmids
 
     data_batched = [data[i : i + batch_size] for i in range(0, len(data), batch_size)]
@@ -922,8 +932,13 @@ def extract_and_embed_mentions(
         data_pmids[i : i + batch_size] for i in range(0, len(data), batch_size)
     ]
 
-    # Pre-tokenize properties for lemma matching
-    prop_tokens = {p: text_to_tokens(nlp=nlp, text=p) for p in entities}
+    # Pre-tokenize entities and resolve each entity's matching grouping once.
+    entity_specs: list[tuple[str, list[SimplifiedToken], WordGrouping]] = []
+    for entity in entities:
+        wg = _wg_for_property(entity)
+        if wg is None:
+            continue
+        entity_specs.append((entity, text_to_tokens(nlp=nlp, text=entity), wg))
 
     rows = []
     n_batches = len(data_batched)
@@ -938,41 +953,105 @@ def extract_and_embed_mentions(
         )
 
         batch_pmids = data_pmids_batched[ibatch]
+        available_groupings = set(report_batch.available_groupings())
 
-        # For each property, pick the matching word grouping and aggregate matches
-        for p in entities:
-            pe = prop_tokens[p]
-            wg = _wg_for_property(p)
-            if wg is None:
-                continue
-            if wg not in report_batch.available_groupings():
+        positive_rows_by_text: list[list[dict]] = [[] for _ in report_batch.texts]
+        positive_keys_by_text: list[set[tuple]] = [set() for _ in report_batch.texts]
+
+        # Phase A: discover all positive matches across all entities.
+        for entity, entity_tokens, wg in entity_specs:
+            if wg not in available_groupings:
                 continue
 
             expression_container = report_batch[wg]
             for itext, (text, expr_holder) in enumerate(
                 zip(report_batch.texts, expression_container.expression_data)
             ):
-                expr_lemma_match = expr_holder.filter_on_lemmas(pe)
-                if not expr_lemma_match:
-                    continue
-
-                offsets = [
-                    report_batch.chunk_mapper.map_chunk_to_text(e.itext, e.ichunk)
-                    for e, _ in expr_lemma_match
-                ]
-
-                for (e, tt), offset in zip(expr_lemma_match, offsets):
+                for e, tt in expr_holder.iter_on_lemmas(entity_tokens):
+                    offset = report_batch.chunk_mapper.map_chunk_to_text(
+                        e.itext, e.ichunk
+                    )
                     mention = text[offset + e.a : offset + e.b]
-                    # Convert numpy array to list for consistent Parquet schema
+                    mention_key = (
+                        wg.value,
+                        e.ichunk,
+                        e.a,
+                        e.b,
+                        mention.casefold(),
+                    )
+                    positive_keys_by_text[itext].add(mention_key)
                     embed_list = tt.numpy().tolist()
-                    rows.append(
+                    positive_rows_by_text[itext].append(
                         {
                             "pmid": batch_pmids[itext],
-                            "property": p,
+                            "entity": entity,
                             "mention": mention,
-                            "embed": embed_list,  # a Python list, not numpy array
+                            "a": e.a,
+                            "b": e.b,
+                            "a_abs": offset + e.a,
+                            "b_abs": offset + e.b,
+                            "itext": e.itext,
+                            "ichunk": e.ichunk,
+                            "embed": embed_list,
                         }
                     )
+
+        # Phase B: emit positives and optionally add globally-negative samples.
+        if negatives_per_positive == 0:
+            for text_rows in positive_rows_by_text:
+                rows.extend(text_rows)
+        else:
+            for itext, text in enumerate(report_batch.texts):
+                rows.extend(positive_rows_by_text[itext])
+                n_positives = len(positive_rows_by_text[itext])
+                n_negatives = int(round(n_positives * negatives_per_positive))
+                if n_negatives <= 0:
+                    continue
+
+                # Build all candidate mentions in this text across available groupings.
+                negative_candidates: dict[tuple, dict] = {}
+                for wg in available_groupings:
+                    expression_container = report_batch[wg]
+                    expr_holder = expression_container.expression_data[itext]
+                    for expression, embedding in zip(
+                        expr_holder.expressions, expr_holder.tt
+                    ):
+                        offset = report_batch.chunk_mapper.map_chunk_to_text(
+                            expression.itext, expression.ichunk
+                        )
+                        mention = text[offset + expression.a : offset + expression.b]
+                        mention_key = (
+                            wg.value,
+                            expression.ichunk,
+                            expression.a,
+                            expression.b,
+                            mention.casefold(),
+                        )
+                        if mention_key in positive_keys_by_text[itext]:
+                            continue
+                        if mention_key not in negative_candidates:
+                            negative_candidates[mention_key] = {
+                                "pmid": batch_pmids[itext],
+                                "entity": negative_label,
+                                "mention": mention,
+                                "a": expression.a,
+                                "b": expression.b,
+                                "a_abs": offset + expression.a,
+                                "b_abs": offset + expression.b,
+                                "itext": expression.itext,
+                                "ichunk": expression.ichunk,
+                                "embed": embedding.numpy().tolist(),
+                            }
+
+                if not negative_candidates:
+                    continue
+
+                candidate_values = list(negative_candidates.values())
+                if n_negatives <= len(candidate_values):
+                    sampled = rng.sample(candidate_values, n_negatives)
+                else:
+                    sampled = rng.choices(candidate_values, k=n_negatives)
+                rows.extend(sampled)
 
         if on_encoder_batch is not None:
             on_encoder_batch(ibatch, n_batches, len(rows))

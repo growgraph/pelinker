@@ -1,9 +1,9 @@
 """
 Join and concatenate embeddings from multiple parquet sources (same KB export schema).
 
-Mention-level fusion joins on (pmid, property, mention) and concatenates embed vectors
-in source order. Property-level fusion averages mentions within each file per property,
-takes the intersection of properties across sources, and concatenates those means.
+Mention-level fusion joins on (pmid, entity, mention) and concatenates embed vectors
+in source order. Entity-level fusion averages mentions within each file per entity,
+takes the intersection of entities across sources, and concatenates those means.
 
 ``Linker.predict`` fuses mention tensors across sources in metadata order; when
 ``model_type`` differs between sources, span alignment is not guaranteed—use the same
@@ -130,11 +130,19 @@ def _for_each_embedding_parquet_batch(
         _run(None)
 
 
-JOIN_KEYS: tuple[str, str, str] = ("pmid", "property", "mention")
+JOIN_KEYS: tuple[str, str, str] = ("pmid", "entity", "mention")
 
 REQUIRED_MENTION_COLUMNS: frozenset[str] = frozenset(
-    {"pmid", "property", "mention", "embed"}
+    {"pmid", "entity", "mention", "embed"}
 )
+
+
+def _normalize_entity_column(df: pd.DataFrame) -> pd.DataFrame:
+    if "entity" in df.columns:
+        return df
+    if "property" in df.columns:
+        return df.rename(columns={"property": "entity"})
+    return df
 
 
 def _to_embed_array(v: list | np.ndarray) -> np.ndarray:
@@ -175,6 +183,7 @@ def mention_level_concat_frames(dfs: Sequence[pd.DataFrame]) -> pd.DataFrame:
         raise ValueError("mention_level_concat_frames requires at least one frame")
     prepared: list[pd.DataFrame] = []
     for i, df in enumerate(dfs):
+        df = _normalize_entity_column(df)
         cols = set(df.columns)
         if not REQUIRED_MENTION_COLUMNS.issubset(cols):
             missing = REQUIRED_MENTION_COLUMNS - cols
@@ -300,24 +309,25 @@ def concat_mention_level_embedding_sources(
 
 
 def _accumulate_property_means_from_frame(
-    sums: dict[str, np.ndarray],
+    sums: dict[str, np.ndarray],  # legacy name; keys are entity labels
     counts: dict[str, int],
     df: pd.DataFrame,
     kb_labels: set[str] | None,
     *,
     embed_column: str = "embed",
-    property_column: str = "property",
+    entity_column: str = "entity",
 ) -> None:
-    if property_column not in df.columns or embed_column not in df.columns:
+    df = _normalize_entity_column(df)
+    if entity_column not in df.columns or embed_column not in df.columns:
         return
     if kb_labels is not None:
-        work = df.loc[df[property_column].isin(kb_labels)]
+        work = df.loc[df[entity_column].isin(kb_labels)]
     else:
         work = df
     if len(work) == 0:
         return
-    for prop_label, group in work.groupby(property_column, sort=False):
-        key = str(prop_label)
+    for entity_label, group in work.groupby(entity_column, sort=False):
+        key = str(entity_label)
         stacked = np.stack(
             [
                 np.asarray(x, dtype=np.float64).reshape(-1)
@@ -343,7 +353,7 @@ def property_mean_vectors_from_parquet_batches(
     read_status: Callable[[str], None] | None = None,
     show_read_progress: bool = False,
 ) -> dict[str, np.ndarray]:
-    """Mean embedding per property by streaming parquet batches (no full-file read)."""
+    """Mean embedding per entity by streaming parquet batches (no full-file read)."""
     sums: dict[str, np.ndarray] = {}
     counts: dict[str, int] = {}
 
@@ -366,13 +376,14 @@ def mean_embedding_per_property(
     kb_labels: set[str] | None,
     *,
     embed_column: str = "embed",
-    property_column: str = "property",
+    entity_column: str = "entity",
 ) -> dict[str, np.ndarray]:
     """
-    Average all mention embeddings per property label (same logic as Linker single-file load).
+    Average all mention embeddings per entity label (same logic as Linker single-file load).
     """
+    df = _normalize_entity_column(df)
     if kb_labels is not None:
-        work = df[df[property_column].isin(kb_labels)].copy()
+        work = df[df[entity_column].isin(kb_labels)].copy()
     else:
         work = df.copy()
     if len(work) == 0:
@@ -382,9 +393,9 @@ def mean_embedding_per_property(
         lambda x: np.asarray(x, dtype=np.float64)
     )
     out: dict[str, np.ndarray] = {}
-    for prop_label, group in work.groupby(property_column):
+    for entity_label, group in work.groupby(entity_column):
         stacked = np.stack(group["_emb_arr"].tolist())
-        out[str(prop_label)] = np.mean(stacked, axis=0)
+        out[str(entity_label)] = np.mean(stacked, axis=0)
     return out
 
 
@@ -413,7 +424,7 @@ def fused_property_vectors_from_paths(
     show_read_progress: bool = False,
 ) -> dict[str, np.ndarray]:
     """
-    Per-source per-property means, then concatenate vectors for properties in the intersection.
+    Per-source per-entity means, then concatenate vectors for entities in the intersection.
 
     Source order matches ``paths`` order (must align with ``EmbeddingModelMetadata.sources``).
     Parquet inputs are read in batches (same mechanism as clustering analysis on loaded frames).
@@ -446,9 +457,9 @@ def fused_property_vectors_from_paths(
         return {}
 
     fused: dict[str, np.ndarray] = {}
-    for prop in sorted(common):
-        parts = [per_source[i][prop] for i in range(len(paths))]
-        fused[prop] = np.concatenate(parts, axis=0)
+    for entity in sorted(common):
+        parts = [per_source[i][entity] for i in range(len(paths))]
+        fused[entity] = np.concatenate(parts, axis=0)
     return fused
 
 
@@ -457,29 +468,29 @@ def property_fused_dataframe_for_linker_order(
     labels_map: Mapping[str, str],
 ) -> pd.DataFrame:
     """
-    Rows sorted like Linker fused load: sorted property labels that resolve to an
-    ``entity_id`` in ``labels_map``. Columns: ``entity_id``, ``property``, ``embed``.
+    Rows sorted like Linker fused load: sorted entity labels that resolve to an
+    ``entity_id`` in ``labels_map``. Columns: ``entity_id``, ``entity``, ``embed``.
     """
     rows: list[dict[str, object]] = []
-    for prop_label in sorted(fused_vectors.keys()):
+    for entity_label in sorted(fused_vectors.keys()):
         entity_id = None
         for eid, label in labels_map.items():
-            if label == prop_label:
+            if label == entity_label:
                 entity_id = eid
                 break
         if entity_id is None:
             logger.warning(
-                "Property label '%s' not found in labels_map, skipping", prop_label
+                "Entity label '%s' not found in labels_map, skipping", entity_label
             )
             continue
-        vec = fused_vectors[prop_label]
+        vec = fused_vectors[entity_label]
         rows.append(
             {
                 "entity_id": entity_id,
-                "property": prop_label,
+                "entity": entity_label,
                 "embed": vec.astype(np.float32, copy=False),
             }
         )
     if not rows:
-        return pd.DataFrame(columns=["entity_id", "property", "embed"])
+        return pd.DataFrame(columns=["entity_id", "entity", "embed"])
     return pd.DataFrame(rows)

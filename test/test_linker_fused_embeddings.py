@@ -28,12 +28,12 @@ def test_fused_fit_two_parquets_stacks_embedding_dim(tmp_path):
     rows1 = []
     rows2 = []
     for k in range(n_ent):
-        # Two mentions per property so HDBSCAN min_cluster_size=2 can assign non-noise labels.
+        # Two mentions per entity so HDBSCAN min_cluster_size=2 can assign non-noise labels.
         for pmid in ("1", "2"):
             rows1.append(
                 {
                     "pmid": pmid,
-                    "property": f"p{k}",
+                    "entity": f"p{k}",
                     "mention": "m",
                     "embed": [float(k), 1.0],
                 }
@@ -41,7 +41,7 @@ def test_fused_fit_two_parquets_stacks_embedding_dim(tmp_path):
             rows2.append(
                 {
                     "pmid": pmid,
-                    "property": f"p{k}",
+                    "entity": f"p{k}",
                     "mention": "m",
                     "embed": [0.5, float(k) * 0.1],
                 }
@@ -73,7 +73,7 @@ def test_fused_fit_two_parquets_stacks_embedding_dim(tmp_path):
     assert len(linker.training_cluster_frame) == 2 * n_ent
     assert set(linker.training_cluster_frame.columns) >= {
         "pmid",
-        "property",
+        "entity",
         "mention",
         "cluster",
     }
@@ -101,7 +101,7 @@ def test_fused_fit_optimize_clustering_grid_then_full_fit(tmp_path):
             rows1.append(
                 {
                     "pmid": pmid,
-                    "property": f"p{k}",
+                    "entity": f"p{k}",
                     "mention": "m",
                     "embed": [float(k), 0.1],
                 }
@@ -109,7 +109,7 @@ def test_fused_fit_optimize_clustering_grid_then_full_fit(tmp_path):
             rows2.append(
                 {
                     "pmid": pmid,
-                    "property": f"p{k}",
+                    "entity": f"p{k}",
                     "mention": "m",
                     "embed": [0.2, float(k) * 0.05],
                 }
@@ -157,7 +157,7 @@ def test_fit_writes_clustering_report_artifacts_when_report_dir_set(tmp_path):
             rows1.append(
                 {
                     "pmid": pmid,
-                    "property": f"p{k}",
+                    "entity": f"p{k}",
                     "mention": "m",
                     "embed": [float(k), 0.1],
                 }
@@ -165,7 +165,7 @@ def test_fit_writes_clustering_report_artifacts_when_report_dir_set(tmp_path):
             rows2.append(
                 {
                     "pmid": pmid,
-                    "property": f"p{k}",
+                    "entity": f"p{k}",
                     "mention": "m",
                     "embed": [0.2, float(k) * 0.05],
                 }
@@ -216,7 +216,7 @@ def test_fit_writes_clustering_report_pickle_when_dump_flag(tmp_path):
             rows.append(
                 {
                     "pmid": pmid,
-                    "property": f"p{k}",
+                    "entity": f"p{k}",
                     "mention": "m",
                     "embed": [float(k), 0.1, 0.2],
                 }
@@ -262,7 +262,7 @@ def test_estimate_model_clustering_multi_file_paths(tmp_path):
     pd.DataFrame(
         {
             "pmid": [str(i) for i in range(n)],
-            "property": ["foo" if i < (n // 2) else "bar" for i in range(n)],
+            "entity": ["foo" if i < (n // 2) else "bar" for i in range(n)],
             "mention": ["m"] * n,
             "embed": [[float(i + 1), float((i % 5) + 1)] for i in range(n)],
         }
@@ -270,7 +270,7 @@ def test_estimate_model_clustering_multi_file_paths(tmp_path):
     pd.DataFrame(
         {
             "pmid": [str(i) for i in range(n)],
-            "property": ["foo" if i < (n // 2) else "bar" for i in range(n)],
+            "entity": ["foo" if i < (n // 2) else "bar" for i in range(n)],
             "mention": ["m"] * n,
             "embed": [[float((i % 7) + 1), float(i + 2)] for i in range(n)],
         }
@@ -312,7 +312,7 @@ def test_fit_stores_and_serializes_training_pca_metrics(tmp_path):
             rows1.append(
                 {
                     "pmid": pmid,
-                    "property": f"p{k}",
+                    "entity": f"p{k}",
                     "mention": "m",
                     "embed": [float(k), 0.1],
                 }
@@ -320,7 +320,7 @@ def test_fit_stores_and_serializes_training_pca_metrics(tmp_path):
             rows2.append(
                 {
                     "pmid": pmid,
-                    "property": f"p{k}",
+                    "entity": f"p{k}",
                     "mention": "m",
                     "embed": [0.2, float(k) * 0.05],
                 }

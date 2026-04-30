@@ -380,15 +380,15 @@ def cosine_similarity_std(
     return torch.std(cos_similarities)
 
 
-def _adjusted_rand_index_vs_property_codes(
-    property_codes: np.ndarray,
+def _adjusted_rand_index_vs_entity_codes(
+    entity_codes: np.ndarray,
     cluster_labels: np.ndarray,
 ) -> float:
-    """ARI between KB property codes and HDBSCAN labels; noise (-1) excluded (matches analysis)."""
+    """ARI between KB entity codes and HDBSCAN labels; noise (-1) excluded (matches analysis)."""
     valid_mask = cluster_labels != -1
     if not valid_mask.any():
         return 0.0
-    y_true = property_codes[valid_mask]
+    y_true = entity_codes[valid_mask]
     y_pred = cluster_labels[valid_mask]
     if len(y_pred) == 0:
         return 0.0
@@ -404,17 +404,19 @@ def evaluate_cluster_size_grid(
     """
     Evaluate clustering metrics on a grid of min_cluster_size values.
 
-    Uses DBCV (Density-Based Clustering Validation) and, when ``property`` is present,
-    adjusted Rand index vs. property codes (noise label -1 excluded).
+    Uses DBCV (Density-Based Clustering Validation) and, when ``entity`` is present,
+    adjusted Rand index vs. entity codes (noise label -1 excluded).
 
     Returns:
         DataFrame with columns: min_cluster_size, icm, n_clusters, dbcv, ari
     """
     umap_values = dfr2[umap_columns].to_numpy(dtype=np.float32, copy=False)
-    property_codes: np.ndarray | None = None
-    if "property" in dfr2.columns:
-        property_codes = (
-            dfr2["property"]
+    entity_codes: np.ndarray | None = None
+    if "entity" not in dfr2.columns and "property" in dfr2.columns:
+        dfr2 = dfr2.rename(columns={"property": "entity"})
+    if "entity" in dfr2.columns:
+        entity_codes = (
+            dfr2["entity"]
             .astype("category")
             .cat.codes.to_numpy(dtype=np.int64, copy=False)
         )
@@ -448,8 +450,8 @@ def evaluate_cluster_size_grid(
         else:
             dbcv = np.nan
 
-        if property_codes is not None:
-            ari = _adjusted_rand_index_vs_property_codes(property_codes, labels)
+        if entity_codes is not None:
+            ari = _adjusted_rand_index_vs_entity_codes(entity_codes, labels)
         else:
             ari = float("nan")
 

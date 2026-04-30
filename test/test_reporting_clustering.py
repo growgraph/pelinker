@@ -22,7 +22,7 @@ def _minimal_report(
     metrics_df = pd.DataFrame(
         {"min_cluster_size": [min_cluster_size], "dbcv": [best_score]}
     )
-    assignments = pd.DataFrame({"property": ["p1"], "cluster": [0]})
+    assignments = pd.DataFrame({"entity": ["p1"], "cluster": [0]})
     return ClusteringReport(
         hyperparameters=ClusteringHyperparameters(min_cluster_size=min_cluster_size),
         best_score=best_score,
@@ -95,7 +95,7 @@ def test_summarize_with_pooled_min_cluster_size_uses_consensus_and_per_sample_db
                 "dbcv": [0.4, 0.55],
             }
         ),
-        assignments=pd.DataFrame({"property": ["p1"], "cluster": [0]}),
+        assignments=pd.DataFrame({"entity": ["p1"], "cluster": [0]}),
         pca_residuals=np.array([0.1], dtype=np.float64),
         pca_mahalanobis=np.array([0.2], dtype=np.float64),
         umap_clustering=np.array([[0.0, 0.1]], dtype=np.float64),
@@ -114,7 +114,7 @@ def test_summarize_with_pooled_min_cluster_size_uses_consensus_and_per_sample_db
                 "dbcv": [0.45, 0.50],
             }
         ),
-        assignments=pd.DataFrame({"property": ["p2"], "cluster": [1]}),
+        assignments=pd.DataFrame({"entity": ["p2"], "cluster": [1]}),
         pca_residuals=np.array([0.1], dtype=np.float64),
         pca_mahalanobis=np.array([0.2], dtype=np.float64),
         umap_clustering=np.array([[0.0, 0.1]], dtype=np.float64),

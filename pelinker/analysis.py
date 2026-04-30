@@ -230,7 +230,7 @@ def estimate_clustering_from_frame(
     *,
     selected_labels: set[str] | None = None,
     all_metrics_dfs: list[pd.DataFrame] | None = None,
-    aggregation_level: Literal["mention", "property"] = "mention",
+    aggregation_level: Literal["mention", "entity"] = "mention",
 ) -> ClusteringReport | None:
     """
     Run clustering grid search and optional **accumulation** of per-sample grid tables.
@@ -241,30 +241,32 @@ def estimate_clustering_from_frame(
     :func:`pooled_min_cluster_size_from_metrics_dfs` after all samples to obtain one consensus
     choice across bootstraps (for summaries, plots, and optional grid CSV markers).
 
-    ``aggregation_level="property"`` expects one row per distinct ``property`` (e.g. fused
-    KB vectors) and skips min-mention-per-property trimming used for mention-level corpora.
+    ``aggregation_level="entity"`` expects one row per distinct ``entity`` (e.g. fused
+    KB vectors) and skips min-mention-per-entity trimming used for mention-level corpora.
     """
 
     config = optimization_config or ClusteringOptimizationConfig()
 
-    if "embed" not in dfr.columns or "property" not in dfr.columns:
+    if "entity" not in dfr.columns and "property" in dfr.columns:
+        dfr = dfr.rename(columns={"property": "entity"})
+    if "embed" not in dfr.columns or "entity" not in dfr.columns:
         return None
 
     if selected_labels is not None:
-        dfr = dfr.loc[dfr["property"].isin(selected_labels)].copy()
+        dfr = dfr.loc[dfr["entity"].isin(selected_labels)].copy()
         if len(dfr) == 0:
             return None
 
     if aggregation_level == "mention":
-        mention_count = dfr["property"].value_counts()
-        low_count_properties = mention_count[
+        mention_count = dfr["entity"].value_counts()
+        low_count_entities = mention_count[
             ~(mention_count >= config.min_class_size)
         ].index.to_list()
-        dfr = dfr.loc[~dfr["property"].isin(low_count_properties)].copy()
+        dfr = dfr.loc[~dfr["entity"].isin(low_count_entities)].copy()
         if len(dfr) == 0:
             return None
 
-    number_properties = int(dfr["property"].nunique())
+    number_properties = int(dfr["entity"].nunique())
 
     artifacts = compute_transform_artifacts(
         dfr,
@@ -299,15 +301,15 @@ def estimate_clustering_from_frame(
     labels = clusterer.fit_predict(artifacts.umap_clustering)
     label_set = set(labels.tolist())
     n_clusters_emergent = len(label_set) - (1 if -1 in label_set else 0)
-    assignments = dfr[["property"]].copy()
+    assignments = dfr[["entity"]].copy()
     for optional_col in ["pmid", "mention"]:
         if optional_col in dfr.columns:
             assignments[optional_col] = dfr[optional_col]
     assignments["cluster"] = labels.astype(int, copy=False)
 
     ari_score = None
-    if "property" in assignments.columns and "cluster" in assignments.columns:
-        property_labels = assignments["property"].astype("category").cat.codes.values
+    if "entity" in assignments.columns and "cluster" in assignments.columns:
+        property_labels = assignments["entity"].astype("category").cat.codes.values
         cluster_labels = assignments["cluster"].values
         ari_score = compute_adjusted_rand_index(property_labels, cluster_labels)
 
@@ -343,7 +345,7 @@ def estimate_model_clustering(
     Estimate optimal cluster size from parquet file(s) or a preloaded DataFrame.
 
     Provide exactly one of ``file_path``, ``file_paths``, or ``dfr``. For multiple parquets,
-    rows are inner-joined on (pmid, property, mention) and ``embed`` vectors are concatenated
+    rows are inner-joined on (pmid, entity, mention) and ``embed`` vectors are concatenated
     in path order (must match ``EmbeddingModelMetadata.sources``). Sampling ``frac`` /
     ``n_embedding_batches`` are applied while loading each file (batches), then ``frac`` is applied
     once on the merged
@@ -355,7 +357,7 @@ def estimate_model_clustering(
             to ClusteringOptimizationConfig().
         file_path: Single parquet path (backward-compatible entry point).
         file_paths: Multiple parquets to fuse at mention level before clustering.
-        dfr: Optional pre-built frame (e.g. fused) with ``property`` and ``embed`` columns.
+        dfr: Optional pre-built frame (e.g. fused) with ``entity`` and ``embed`` columns.
         selected_labels: Optional set of labels from selected labels KB to filter by
         all_metrics_dfs: Optional mutable list that receives each sample's grid ``DataFrame``
             (for a pooled choice after the batch via :func:`pooled_min_cluster_size_from_metrics_dfs`).
@@ -436,27 +438,31 @@ def filter_mention_frame_by_kb_labels(
     frame: pd.DataFrame,
     kb_labels: set[str] | None,
 ) -> pd.DataFrame:
-    """Restrict rows to ``property`` values present in ``kb_labels`` (skip if ``kb_labels`` is None)."""
+    """Restrict rows to ``entity`` values present in ``kb_labels`` (skip if ``kb_labels`` is None)."""
     if kb_labels is None:
         return frame.copy()
-    return frame.loc[frame["property"].isin(kb_labels)].copy()
+    if "entity" not in frame.columns and "property" in frame.columns:
+        frame = frame.rename(columns={"property": "entity"})
+    return frame.loc[frame["entity"].isin(kb_labels)].copy()
 
 
-def drop_properties_with_few_mentions(
+def drop_entities_with_few_mentions(
     frame: pd.DataFrame,
-    min_mentions_per_property: int,
+    min_mentions_per_entity: int,
 ) -> pd.DataFrame:
     """
-    Drop properties with fewer than ``min_mentions_per_property`` rows (same rule as
+    Drop entities with fewer than ``min_mentions_per_entity`` rows (same rule as
     ``estimate_clustering_from_frame`` with ``aggregation_level='mention'``).
     """
-    if "property" not in frame.columns:
-        raise ValueError("frame must contain a 'property' column")
-    mention_count = frame["property"].value_counts()
+    if "entity" not in frame.columns and "property" in frame.columns:
+        frame = frame.rename(columns={"property": "entity"})
+    if "entity" not in frame.columns:
+        raise ValueError("frame must contain an 'entity' column")
+    mention_count = frame["entity"].value_counts()
     low_count = mention_count[
-        ~(mention_count >= min_mentions_per_property)
+        ~(mention_count >= min_mentions_per_entity)
     ].index.to_list()
-    return frame.loc[~frame["property"].isin(low_count)].copy()
+    return frame.loc[~frame["entity"].isin(low_count)].copy()
 
 
 def embeddings_dict_to_dataframe(

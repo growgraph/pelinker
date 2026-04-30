@@ -4,6 +4,7 @@ from enum import Enum
 from dataclass_wizard import JSONWizard
 import torch
 from collections import defaultdict
+from collections.abc import Iterator
 
 MAX_LENGTH = 512
 
@@ -100,12 +101,27 @@ class Expression(BaseDataclass):
     itext: int | None = None  # index of document
     ichunk: int | None = None  # index of document chunk
     a: int | None = None  # index of the first character
-    b: int | None = None  # index of the last character
+    b: int | None = None  # exclusive end index (Python slice semantics)
 
     def __post_init__(self):
         self.tokens = sorted(self.tokens, key=lambda x: x.ix)
         self.a = self.tokens[0].ix
         self.b = self.tokens[-1].ix_end
+
+
+@dataclasses.dataclass
+class MentionCandidate(BaseDataclass):
+    """Typed mention payload used by :class:`pelinker.model.Linker` predictions."""
+
+    mention: str
+    a: int | None
+    b: int | None
+    a_abs: int | None = None
+    b_abs: int | None = None
+    itext: int | None = None
+    ichunk: int | None = None
+    word_grouping: WordGrouping | None = None
+    lemma: str = ""
 
 
 @dataclasses.dataclass
@@ -122,12 +138,18 @@ class ExpressionHolder(BaseDataclass):
     def filter_on_lemmas(
         self, tokens: list[SimplifiedToken]
     ) -> list[tuple[Expression, torch.Tensor]]:
-        tokens_lemmatized = " ".join([e.lemma for e in tokens])
-        return [
-            (e, t)
-            for e, t in zip(self.expressions, self.tt)
-            if " ".join([t.lemma for t in e.tokens]) == tokens_lemmatized
-        ]
+        return list(self.iter_on_lemmas(tokens))
+
+    def iter_on_lemmas(
+        self, tokens: list[SimplifiedToken]
+    ) -> Iterator[tuple[Expression, torch.Tensor]]:
+        tokens_lemmatized = " ".join(e.lemma for e in tokens)
+        for expression, embedding in zip(self.expressions, self.tt):
+            if (
+                " ".join(token.lemma for token in expression.tokens)
+                == tokens_lemmatized
+            ):
+                yield expression, embedding
 
 
 @dataclasses.dataclass

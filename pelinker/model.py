@@ -6,6 +6,7 @@ import sys
 import tempfile
 from collections import Counter, defaultdict
 from collections.abc import Sequence
+import dataclasses
 from dataclasses import replace
 
 import pandas as pd
@@ -26,7 +27,7 @@ from pelinker.config import (
     TransformConfig,
 )
 from pelinker.analysis import (
-    drop_properties_with_few_mentions,
+    drop_entities_with_few_mentions,
     estimate_clustering_from_frame,
     filter_mention_frame_by_kb_labels,
     mention_frame_from_embedding_paths,
@@ -43,7 +44,12 @@ from pelinker.embedding_fusion import (
     fused_property_vectors_from_paths,
     property_fused_dataframe_for_linker_order,
 )
-from pelinker.onto import MAX_LENGTH, WordGrouping, _wg_for_property
+from pelinker.onto import (
+    MAX_LENGTH,
+    MentionCandidate,
+    WordGrouping,
+    _wg_for_property,
+)
 from pelinker.transform import EmbeddingTransformer
 from pelinker.util import (
     extract_ordered_mention_tensors,
@@ -106,15 +112,15 @@ def _fine_clustering_metadata_df(
     layer: str,
     sample_idx: int,
 ) -> pd.DataFrame:
-    cols = ["model", "layer", "sample_idx", "property", "cluster"]
+    cols = ["model", "layer", "sample_idx", "entity", "cluster"]
     optional_cols = ["pmid", "mention"]
     present_optional = [c for c in optional_cols if c in report.assignments.columns]
     keep = [
         c
-        for c in ["property", "cluster", *present_optional]
+        for c in ["entity", "cluster", *present_optional]
         if c in report.assignments.columns
     ]
-    if "property" not in keep or "cluster" not in keep:
+    if "entity" not in keep or "cluster" not in keep:
         return pd.DataFrame(columns=cols + present_optional)
     out = report.assignments[keep].copy()
     out.insert(0, "sample_idx", sample_idx)
@@ -209,24 +215,26 @@ def cluster_composition_from_training_frame(
     training: pd.DataFrame,
 ) -> ClusterCompositionSnapshot:
     """
-    Aggregate mention counts per ``property`` and per ``cluster`` from a fitted training frame.
+    Aggregate mention counts per ``entity`` and per ``cluster`` from a fitted training frame.
 
     Rows are weighted equally (each row is one mention). Proportions in
     :attr:`ClusterCompositionSnapshot.cluster_within_fraction` are relative to each cluster’s
     total mass; :attr:`ClusterCompositionSnapshot.cluster_fraction_of_property_mass` is
-    relative to each property’s global mass in this frame.
+    relative to each entity's global mass in this frame.
     """
-    if "property" not in training.columns or "cluster" not in training.columns:
-        raise ValueError("training frame must contain 'property' and 'cluster' columns")
-    work = training[["property", "cluster"]].copy()
-    work["property"] = work["property"].astype(str)
-    global_vc = work["property"].value_counts()
+    if "entity" not in training.columns and "property" in training.columns:
+        training = training.rename(columns={"property": "entity"})
+    if "entity" not in training.columns or "cluster" not in training.columns:
+        raise ValueError("training frame must contain 'entity' and 'cluster' columns")
+    work = training[["entity", "cluster"]].copy()
+    work["entity"] = work["entity"].astype(str)
+    global_vc = work["entity"].value_counts()
     global_property_mass = {str(k): int(v) for k, v in global_vc.items()}
     cluster_within: dict[int, dict[str, float]] = {}
     cluster_capture: dict[int, dict[str, float]] = {}
     for cid, grp in work.groupby("cluster", sort=True):
         c = int(cid)
-        counts = grp["property"].value_counts()
+        counts = grp["entity"].value_counts()
         total = int(counts.sum())
         if total == 0:
             continue
@@ -260,7 +268,7 @@ def _singular_dominant_property(
     min_share: float,
     min_gap: float,
 ) -> str | None:
-    """Return the dominant property label if one clearly leads, else ``None``."""
+    """Return the dominant entity label if one clearly leads, else ``None``."""
     if len(mass_frac) == 1:
         return next(iter(mass_frac))
     items = sorted(mass_frac.items(), key=lambda x: (-x[1], x[0]))
@@ -284,7 +292,7 @@ def consensus_cluster_names(
     noise_cluster_label: str = "noise",
 ) -> dict[int, str]:
     """
-    Derive a short human-readable name per cluster from within-cluster property mixtures.
+    Derive a short human-readable name per cluster from within-cluster entity mixtures.
 
     * Single-property clusters use that property name.
     * Flat / near-uniform admixture uses hyphenated sorted property names.
@@ -340,15 +348,17 @@ def _provisional_cluster_assignments_from_training_frame(
     """
     Map each ``entity_id`` to a single cluster id for ``predict`` compatibility.
 
-    Heuristic: modal training cluster among rows whose ``property`` equals
+    Heuristic: modal training cluster among rows whose ``entity`` equals
     ``labels_map[entity_id]``, ignoring -1. Interpretation of clusters is otherwise
     left to downstream analysis (see ``Linker.training_cluster_frame``).
     """
     out: dict[str, int] = {}
-    if "property" not in training.columns or "cluster" not in training.columns:
+    if "entity" not in training.columns and "property" in training.columns:
+        training = training.rename(columns={"property": "entity"})
+    if "entity" not in training.columns or "cluster" not in training.columns:
         return out
     for entity_id, label in labels_map.items():
-        rows = training.loc[training["property"] == label, "cluster"]
+        rows = training.loc[training["entity"] == label, "cluster"]
         if len(rows) == 0:
             continue
         mode = _modal_cluster_deterministic(rows.astype(int).tolist())
@@ -455,14 +465,14 @@ class Linker:
 
         Args:
             embeddings: Path or sequence of paths to parquet file(s) (mention-level rows:
-                        ``pmid``, ``property``, ``mention``, ``embed``). Multiple files are
+                        ``pmid``, ``entity``, ``mention``, ``embed``). Multiple files are
                         fused like ``estimate_model_clustering`` (inner join on keys, concat
                         embeddings). Order must match ``embedding_metadata.sources``.
                         If None, ``embed_kb_corpus`` is run (one output file per source).
             transform_config: TransformConfig instance
             min_cluster_size: Minimum cluster size for HDBSCAN when ``optimize_clustering`` is
                 False. If None, uses 20.
-            kb_labels: Restrict training rows to these ``property`` labels (optional).
+            kb_labels: Restrict training rows to these ``entity`` labels (optional).
             optimize_clustering: If True, run ``min_cluster_size`` grid search on a
                 ``clustering_optimization_config.frac`` subsample (analysis-aligned), then
                 fit the serialized model on **all** prepared rows (no subsampling).
@@ -556,12 +566,12 @@ class Linker:
             if raw is None or len(raw) == 0:
                 raise ValueError(
                     "No mention-level embedding rows loaded from parquet (check paths "
-                    "and columns pmid, property, mention, embed)."
+                    "and columns pmid, entity, mention, embed)."
                 )
             filtered = filter_mention_frame_by_kb_labels(raw, kb_labels)
             if len(filtered) == 0:
-                raise ValueError("No rows left after KB property-label filter")
-            prepared = drop_properties_with_few_mentions(
+                raise ValueError("No rows left after KB entity-label filter")
+            prepared = drop_entities_with_few_mentions(
                 filtered, read_cfg.min_class_size
             )
             if len(prepared) == 0:
@@ -697,7 +707,7 @@ class Linker:
         cluster_labels_arr = self.clusterer.fit_predict(umap_clustering)
         cluster_labels = cluster_labels_arr.astype(int, copy=False)
 
-        tc_cols = ["pmid", "property", "mention"]
+        tc_cols = ["pmid", "entity", "mention"]
         missing = [c for c in tc_cols if c not in prepared.columns]
         if missing:
             raise ValueError(
@@ -720,7 +730,7 @@ class Linker:
         if not self.vocabulary:
             raise ValueError(
                 "No entity_ids received provisional cluster assignments after fit "
-                "(check labels_map and training property labels)"
+                "(check labels_map and training entity labels)"
             )
 
         if kb_config is not None:
@@ -857,13 +867,14 @@ class Linker:
         max_length: int | None,
         *,
         use_gpu: bool,
-    ) -> tuple[torch.Tensor | None, list[dict[str, object]], object]:
+    ) -> tuple[torch.Tensor | None, list[MentionCandidate], object]:
         """Run encoders + spaCy and build the fused mention tensor and vocabulary rows.
 
         Returns ``(fused_tensor, vocabulary, primary_report_batch)``. ``fused_tensor`` is
         ``None`` when no mentions were extracted. Each vocabulary row carries
-        ``mention``, ``a``, ``b``, ``itext``, ``ichunk``, ``word_grouping`` and
-        ``lemma`` (space-joined token lemmas, used for KB-match lookups).
+        chunk-local bounds ``a``/``b``, absolute bounds ``a_abs``/``b_abs``, ``itext``,
+        ``ichunk``, ``word_grouping`` and ``lemma`` (space-joined token lemmas, used for
+        KB-match lookups).
 
         Mentions are filtered with :func:`~pelinker.util.keep_expression_for_prediction`
         (drop windows containing punctuation; drop windows whose tokens are all stop
@@ -899,7 +910,7 @@ class Linker:
         ]
         self._mention_tensor_lists_aligned(tt_lists)
 
-        vocabulary: list[dict[str, object]] = []
+        vocabulary: list[MentionCandidate] = []
         for wg in word_groupings:
             if wg not in primary.available_groupings():
                 continue
@@ -909,6 +920,7 @@ class Linker:
                     if not keep_expression_for_prediction(expr):
                         continue
                     mention_text = ""
+                    offset: int | None = None
                     if (
                         expr.itext is not None
                         and expr.itext < len(primary.texts)
@@ -925,15 +937,25 @@ class Linker:
                             mention_text = text[expr.a : expr.b]
                     lemma = " ".join(t.lemma for t in expr.tokens)
                     vocabulary.append(
-                        {
-                            "mention": mention_text,
-                            "a": expr.a,
-                            "b": expr.b,
-                            "itext": expr.itext,
-                            "ichunk": expr.ichunk,
-                            "word_grouping": wg,
-                            "lemma": lemma,
-                        }
+                        MentionCandidate(
+                            mention=mention_text,
+                            a=expr.a,
+                            b=expr.b,
+                            a_abs=(
+                                expr.a + offset
+                                if expr.a is not None and offset is not None
+                                else None
+                            ),
+                            b_abs=(
+                                expr.b + offset
+                                if expr.b is not None and offset is not None
+                                else None
+                            ),
+                            itext=expr.itext,
+                            ichunk=expr.ichunk,
+                            word_grouping=wg,
+                            lemma=lemma,
+                        )
                     )
 
         if not tt_lists[0]:
@@ -1001,9 +1023,9 @@ class Linker:
     def _predict_with_clustering(
         self,
         embeddings: torch.Tensor,
-        vocabulary: list,
+        vocabulary: list[MentionCandidate],
         threshold: float = 0.0,
-    ):
+    ) -> list[dict[str, object]]:
         """
         Predict entities using clustering approach.
 
@@ -1039,7 +1061,7 @@ class Linker:
 
         kb_items = []
         for (
-            item_dict,
+            item,
             cluster_id,
             cluster_prob,
             pca_residual,
@@ -1073,7 +1095,7 @@ class Linker:
             score = float(cluster_prob)
 
             kb_item = {
-                **item_dict,
+                **dataclasses.asdict(item),
                 **{
                     "entity_id_predicted": predicted_entity,
                     "score": score,
@@ -1145,19 +1167,21 @@ class Linker:
         for item, residual, mahal, combo in zip(
             vocabulary, residuals, mahalanobis, combined
         ):
-            wg = item.get("word_grouping")
-            lemma = item.get("lemma", "")
+            wg = item.word_grouping
+            lemma = item.lemma
             wg_index = (
                 kb_lemma_by_wg.get(wg, {}) if isinstance(wg, WordGrouping) else {}
             )
             kb_property = wg_index.get(str(lemma))
             rows.append(
                 {
-                    "mention": item.get("mention", ""),
-                    "a": item.get("a"),
-                    "b": item.get("b"),
-                    "itext": item.get("itext"),
-                    "ichunk": item.get("ichunk"),
+                    "mention": item.mention,
+                    "a": item.a,
+                    "b": item.b,
+                    "a_abs": item.a_abs,
+                    "b_abs": item.b_abs,
+                    "itext": item.itext,
+                    "ichunk": item.ichunk,
                     "word_grouping": wg.name if isinstance(wg, WordGrouping) else None,
                     "lemma": lemma,
                     "is_kb_match": kb_property is not None,

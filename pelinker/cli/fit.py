@@ -75,6 +75,9 @@ class FitCliConfig:
     input_buffer_rows: int = 1000
     encoder_batch_size: int = 200
     max_input_buffers: int | None = None
+    negatives_per_positive: float = 0.0
+    negative_label: str = "__NEGATIVE__"
+    negative_seed: int | None = None
     # Stage (B): parquet batching (``batch_size`` rows per read batch).
     # ``frac`` subsamples rows only for ``min_cluster_size`` grid search when ``optimize_clustering`` is on; final fit uses all prepared rows.
     frac: float = 1.0
@@ -329,7 +332,7 @@ def fit(cfg: FitCliConfig) -> None:
     - ``pipeline=both``: require a text table; write parquet(s) then fit and save.
 
     Multiple values for ``embeddings_parquet`` fuse mention-level files in list order (inner join on
-    pmid/property/mention, same as ``estimate_model_clustering``). Set ``model_types`` /
+    pmid/entity/mention, same as ``estimate_model_clustering``). Set ``model_types`` /
     ``layers_specs`` (or scalars ``model_type`` / ``layers_spec``) so ``embedding_metadata.sources``
     matches that order. If a list field is omitted, each path may supply ``model_type`` and/or
     ``layers_spec`` via a matching filename stem (``..._<model>_<layers>.parquet``, as in
@@ -364,7 +367,7 @@ def fit(cfg: FitCliConfig) -> None:
 
     kb_labels = set(df0["label"].dropna().unique())
 
-    logger.info("Extracted %s unique property labels from KB", len(kb_labels))
+    logger.info("Extracted %s unique entity labels from KB", len(kb_labels))
 
     transform_config = TransformConfig(
         pca_components=cfg.pca_components,
@@ -437,6 +440,9 @@ def fit(cfg: FitCliConfig) -> None:
             encoder_batch_size=cfg.encoder_batch_size,
             nlp_model=cfg.nlp_model,
             max_input_buffers=cfg.max_input_buffers,
+            negatives_per_positive=cfg.negatives_per_positive,
+            negative_label=cfg.negative_label,
+            negative_seed=cfg.negative_seed,
         )
         if len(embed_paths) == 1:
             embed_kb_corpus(

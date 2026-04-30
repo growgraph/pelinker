@@ -32,7 +32,7 @@ def test_fine_metadata_includes_core_and_optional_columns() -> None:
             {
                 "pmid": [1],
                 "mention": ["abc"],
-                "property": ["term_a"],
+                "entity": ["term_a"],
                 "cluster": [3],
             }
         )
@@ -47,7 +47,7 @@ def test_fine_metadata_includes_core_and_optional_columns() -> None:
         "model",
         "layer",
         "sample_idx",
-        "property",
+        "entity",
         "cluster",
         "pmid",
         "mention",
@@ -55,12 +55,12 @@ def test_fine_metadata_includes_core_and_optional_columns() -> None:
     assert got.iloc[0]["model"] == "m"
     assert got.iloc[0]["layer"] == "L1"
     assert got.iloc[0]["sample_idx"] == 0
-    assert got.iloc[0]["property"] == "term_a"
+    assert got.iloc[0]["entity"] == "term_a"
     assert got.iloc[0]["cluster"] == 3
 
 
 def test_fine_metadata_returns_empty_if_required_columns_missing() -> None:
-    report = _report_with_assignments(pd.DataFrame({"property": ["term_a"]}))
+    report = _report_with_assignments(pd.DataFrame({"entity": ["term_a"]}))
     got = _fine_clustering_metadata_df(
         report,
         model="m",

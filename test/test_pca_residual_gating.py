@@ -7,7 +7,7 @@ from click.testing import CliRunner
 
 from pelinker.cli import link_files
 from pelinker.model import Linker
-from pelinker.onto import WordGrouping
+from pelinker.onto import MentionCandidate, WordGrouping
 from pelinker.transform import (
     EmbeddingTransformer,
     TransformConfig,
@@ -20,6 +20,57 @@ def test_link_files_sanitize_for_json_word_grouping_keys() -> None:
     safe = link_files._sanitize_for_json(payload)
     json.dumps(safe)
     assert safe["word_groupings"]["W1"]["k"] == "v"
+
+
+def test_load_documents_from_file_supports_json_wrappers(tmp_path) -> None:
+    input_path = tmp_path / "input.json"
+    input_path.write_text(
+        json.dumps(
+            {
+                "documents": [
+                    {"content": "alpha"},
+                    {"text": "beta", "ground_truth": [{"a": 0, "b": 1}]},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    docs = link_files._load_documents_from_file(input_path)
+    assert docs == [("alpha", None), ("beta", [{"a": 0, "b": 1}])]
+
+
+def test_load_documents_from_file_supports_jsonl(tmp_path) -> None:
+    input_path = tmp_path / "input.jsonl"
+    input_path.write_text(
+        '{"text":"alpha"}\n{"body":"beta","ground_truth":[{"a":0,"b":4}]}\n',
+        encoding="utf-8",
+    )
+
+    docs = link_files._load_documents_from_file(input_path)
+    assert docs == [("alpha", None), ("beta", [{"a": 0, "b": 4}])]
+
+
+def test_load_documents_from_file_jsonl_falls_back_to_plain_text_on_invalid_line(
+    tmp_path,
+) -> None:
+    input_path = tmp_path / "broken.jsonl"
+    raw = '{"text":"alpha"}\nnot-json\n'
+    input_path.write_text(raw, encoding="utf-8")
+
+    docs = link_files._load_documents_from_file(input_path)
+    assert docs == [(raw, None)]
+
+
+def test_load_documents_from_file_falls_back_for_unsupported_json_shape(
+    tmp_path,
+) -> None:
+    input_path = tmp_path / "scalar.json"
+    raw = '"hello"'
+    input_path.write_text(raw, encoding="utf-8")
+
+    docs = link_files._load_documents_from_file(input_path)
+    assert docs == [(raw, None)]
 
 
 def test_embedding_transformer_transform_returns_dual_pca_metrics() -> None:
@@ -86,7 +137,10 @@ def test_predict_with_clustering_adds_anomaly_metrics(monkeypatch) -> None:
         return np.array([0, 0]), np.array([0.9, 0.9])
 
     monkeypatch.setattr("pelinker.model.approximate_predict", _mock_approximate_predict)
-    vocabulary = [{"mention": "m1"}, {"mention": "m2"}]
+    vocabulary = [
+        MentionCandidate(mention="m1", a=0, b=2),
+        MentionCandidate(mention="m2", a=0, b=2),
+    ]
     embeddings = torch.zeros((2, 4), dtype=torch.float32)
 
     out = linker._predict_with_clustering(
@@ -114,7 +168,10 @@ def test_predict_with_clustering_respects_cluster_probability_threshold(
         return np.array([0, 0]), np.array([0.9, 0.9])
 
     monkeypatch.setattr("pelinker.model.approximate_predict", _mock_approximate_predict)
-    vocabulary = [{"mention": "m1"}, {"mention": "m2"}]
+    vocabulary = [
+        MentionCandidate(mention="m1", a=0, b=2),
+        MentionCandidate(mention="m2", a=0, b=2),
+    ]
     embeddings = torch.zeros((2, 4), dtype=torch.float32)
 
     out = linker._predict_with_clustering(

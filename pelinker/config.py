@@ -130,6 +130,12 @@ class EmbeddingTrainingConfig:
     nlp_model: str = "en_core_web_trf"
     max_input_buffers: int | None = None
     """If set, stop after this many text-table read passes (each up to ``input_buffer_rows`` rows)."""
+    negatives_per_positive: float = 0.0
+    """Number of random negative mentions to sample per positive mention."""
+    negative_label: str = "__NEGATIVE__"
+    """Entity label to use for synthetic negative rows."""
+    negative_seed: int | None = None
+    """Optional random seed for deterministic negative sampling."""
 
     def __post_init__(self) -> None:
         if self.input_buffer_rows < 1:
@@ -138,6 +144,10 @@ class EmbeddingTrainingConfig:
             raise ValueError("encoder_batch_size must be >= 1")
         if self.max_input_buffers is not None and self.max_input_buffers < 1:
             raise ValueError("max_input_buffers must be >= 1 when provided")
+        if self.negatives_per_positive < 0:
+            raise ValueError("negatives_per_positive must be >= 0")
+        if not self.negative_label:
+            raise ValueError("negative_label must be a non-empty string")
         self.input_text_table_path = Path(
             os.path.expandvars(os.fspath(self.input_text_table_path))
         ).expanduser()
