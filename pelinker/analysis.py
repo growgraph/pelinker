@@ -19,11 +19,17 @@ from pelinker.plotting import (
     GRID_COL_SAMPLE_BEST_DBCV,
 )
 from pelinker.embedding_fusion import concat_mention_level_embedding_sources
-from pelinker.reporting import ClusteringHyperparameters, ClusteringReport
+from pelinker.reporting import (
+    ClusteringHyperparameters,
+    ClusteringReport,
+    NegativeScreenerCvSummary,
+    negative_screener_cv_summary_from_eval_dict,
+)
 from sklearn.metrics import adjusted_rand_score
 from numpy.random import RandomState
 
 from pelinker.config import ClusteringOptimizationConfig, TransformConfig
+from pelinker.negative_screener import evaluate_negative_screener_models
 from pelinker.transform import compute_transform_artifacts
 
 
@@ -247,8 +253,6 @@ def estimate_clustering_from_frame(
 
     config = optimization_config or ClusteringOptimizationConfig()
 
-    if "entity" not in dfr.columns and "property" in dfr.columns:
-        dfr = dfr.rename(columns={"property": "entity"})
     if "embed" not in dfr.columns or "entity" not in dfr.columns:
         return None
 
@@ -257,19 +261,42 @@ def estimate_clustering_from_frame(
         if len(dfr) == 0:
             return None
 
+    screener_cfg = config.negative_screener
+    neg_label = screener_cfg.negative_label
+
     if aggregation_level == "mention":
         mention_count = dfr["entity"].value_counts()
         low_count_entities = mention_count[
             ~(mention_count >= config.min_class_size)
         ].index.to_list()
+        low_count_entities = [e for e in low_count_entities if e != neg_label]
         dfr = dfr.loc[~dfr["entity"].isin(low_count_entities)].copy()
         if len(dfr) == 0:
             return None
 
-    number_properties = int(dfr["entity"].nunique())
+    negative_screener_cv: NegativeScreenerCvSummary | None = None
+    dfr_manifold = dfr
+    neg_mask = dfr["entity"].astype(str).values == neg_label
+    if neg_mask.any():
+        X_all = np.stack(dfr["embed"].values).astype(np.float32, copy=False)
+        y_bin = neg_mask.astype(np.int64)
+        raw_cv = evaluate_negative_screener_models(
+            X_all,
+            y_bin,
+            n_splits=screener_cfg.cv_n_splits,
+            test_size=screener_cfg.cv_test_size,
+            random_state=screener_cfg.cv_random_state,
+        )
+        if raw_cv is not None:
+            negative_screener_cv = negative_screener_cv_summary_from_eval_dict(raw_cv)
+        dfr_manifold = dfr.loc[~neg_mask].copy()
+        if len(dfr_manifold) == 0:
+            return None
+
+    number_properties = int(dfr_manifold["entity"].nunique())
 
     artifacts = compute_transform_artifacts(
-        dfr,
+        dfr_manifold,
         config=transform_config,
         embed_column="embed",
     )
@@ -301,10 +328,10 @@ def estimate_clustering_from_frame(
     labels = clusterer.fit_predict(artifacts.umap_clustering)
     label_set = set(labels.tolist())
     n_clusters_emergent = len(label_set) - (1 if -1 in label_set else 0)
-    assignments = dfr[["entity"]].copy()
+    assignments = dfr_manifold[["entity"]].copy()
     for optional_col in ["pmid", "mention"]:
-        if optional_col in dfr.columns:
-            assignments[optional_col] = dfr[optional_col]
+        if optional_col in dfr_manifold.columns:
+            assignments[optional_col] = dfr_manifold[optional_col]
     assignments["cluster"] = labels.astype(int, copy=False)
 
     ari_score = None
@@ -325,6 +352,7 @@ def estimate_clustering_from_frame(
         umap_clustering=artifacts.umap_clustering,
         umap_visualization=artifacts.umap_visualization,
         pca_reduced=artifacts.pca_reduced,
+        negative_screener_cv=negative_screener_cv,
         ari=ari_score,
     )
 
@@ -441,27 +469,30 @@ def filter_mention_frame_by_kb_labels(
     """Restrict rows to ``entity`` values present in ``kb_labels`` (skip if ``kb_labels`` is None)."""
     if kb_labels is None:
         return frame.copy()
-    if "entity" not in frame.columns and "property" in frame.columns:
-        frame = frame.rename(columns={"property": "entity"})
     return frame.loc[frame["entity"].isin(kb_labels)].copy()
 
 
 def drop_entities_with_few_mentions(
     frame: pd.DataFrame,
     min_mentions_per_entity: int,
+    *,
+    negative_label: str | None = None,
 ) -> pd.DataFrame:
     """
     Drop entities with fewer than ``min_mentions_per_entity`` rows (same rule as
     ``estimate_clustering_from_frame`` with ``aggregation_level='mention'``).
+
+    When ``negative_label`` is set, that label is never dropped for low mention count
+    (so thin negative tails remain for screener training).
     """
-    if "entity" not in frame.columns and "property" in frame.columns:
-        frame = frame.rename(columns={"property": "entity"})
     if "entity" not in frame.columns:
         raise ValueError("frame must contain an 'entity' column")
     mention_count = frame["entity"].value_counts()
     low_count = mention_count[
         ~(mention_count >= min_mentions_per_entity)
     ].index.to_list()
+    if negative_label is not None:
+        low_count = [e for e in low_count if e != negative_label]
     return frame.loc[~frame["entity"].isin(low_count)].copy()
 
 

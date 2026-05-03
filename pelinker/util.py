@@ -1,7 +1,6 @@
 # pylint: disable=E1120
 
 import os
-import random
 import re
 from pathlib import Path
 
@@ -10,6 +9,7 @@ from string import punctuation, whitespace
 from typing import List
 from transformers import AutoModel, AutoTokenizer
 from sentence_transformers import SentenceTransformer
+import numpy as np
 import torch
 import pandas as pd
 from sklearn.metrics import accuracy_score
@@ -18,6 +18,7 @@ import logging
 
 from pelinker.onto import (
     MAX_LENGTH,
+    NEGATIVE_LABEL,
     ChunkMapper,
     WordGrouping,
     SimplifiedToken,
@@ -897,6 +898,22 @@ def embed_texts(
     return text_embeddings
 
 
+def _available_word_groupings(
+    report_batch: ReportBatch,
+) -> tuple[frozenset[WordGrouping], tuple[WordGrouping, ...]]:
+    """Membership set plus deterministic iteration order for negative-candidate walks."""
+    members = frozenset(report_batch.available_groupings())
+    ordered = tuple(sorted(members, key=lambda wg: wg.value))
+    return members, ordered
+
+
+def _sample_row_indices(rng: np.random.RandomState, n_pool: int, k: int) -> np.ndarray:
+    """Sample ``k`` indices in ``[0, n_pool)``; with replacement only when ``k > n_pool``."""
+    if k <= n_pool:
+        return rng.choice(n_pool, size=k, replace=False)
+    return rng.choice(n_pool, size=k, replace=True)
+
+
 def extract_and_embed_mentions(
     entities: list[str],
     data: list[str],
@@ -908,13 +925,18 @@ def extract_and_embed_mentions(
     batch_size,
     word_modes=(WordGrouping.W1, WordGrouping.W2, WordGrouping.W3),
     negatives_per_positive: float = 0.0,
-    negative_label: str = "__NEGATIVE__",
+    negative_label: str = NEGATIVE_LABEL,
     random_seed: int | None = None,
+    negative_random_state: np.random.RandomState | None = None,
     on_encoder_batch: Callable[[int, int, int], None] | None = None,
 ) -> List[dict]:
     """
     Modified to return list of dicts instead of DataFrame for better memory management
     and consistent schema handling.
+
+    Negative rows are sampled with :class:`numpy.random.RandomState`. Pass
+    ``negative_random_state`` to reuse one RNG across several calls (e.g. successive
+    read buffers); otherwise ``random_seed`` builds a fresh ``RandomState`` per call.
 
     If ``on_encoder_batch`` is set, it is invoked after each encoder mini-batch with
     ``(batch_index_0based, n_batches, n_mention_rows_accumulated)``.
@@ -924,7 +946,14 @@ def extract_and_embed_mentions(
     if not negative_label:
         raise ValueError("negative_label must be a non-empty string")
 
-    rng = random.Random(random_seed)
+    negative_sampler: np.random.RandomState | None = None
+    if negatives_per_positive > 0:
+        negative_sampler = (
+            negative_random_state
+            if negative_random_state is not None
+            else np.random.RandomState(random_seed)
+        )
+
     data_pmids = pmids
 
     data_batched = [data[i : i + batch_size] for i in range(0, len(data), batch_size)]
@@ -953,17 +982,18 @@ def extract_and_embed_mentions(
         )
 
         batch_pmids = data_pmids_batched[ibatch]
-        available_groupings = set(report_batch.available_groupings())
+        wg_members, wg_iter_order = _available_word_groupings(report_batch)
+        containers_by_wg = {wg: report_batch[wg] for wg in wg_iter_order}
 
         positive_rows_by_text: list[list[dict]] = [[] for _ in report_batch.texts]
         positive_keys_by_text: list[set[tuple]] = [set() for _ in report_batch.texts]
 
         # Phase A: discover all positive matches across all entities.
         for entity, entity_tokens, wg in entity_specs:
-            if wg not in available_groupings:
+            if wg not in wg_members:
                 continue
 
-            expression_container = report_batch[wg]
+            expression_container = containers_by_wg[wg]
             for itext, (text, expr_holder) in enumerate(
                 zip(report_batch.texts, expression_container.expression_data)
             ):
@@ -1001,6 +1031,7 @@ def extract_and_embed_mentions(
             for text_rows in positive_rows_by_text:
                 rows.extend(text_rows)
         else:
+            assert negative_sampler is not None
             for itext, text in enumerate(report_batch.texts):
                 rows.extend(positive_rows_by_text[itext])
                 n_positives = len(positive_rows_by_text[itext])
@@ -1010,9 +1041,9 @@ def extract_and_embed_mentions(
 
                 # Build all candidate mentions in this text across available groupings.
                 negative_candidates: dict[tuple, dict] = {}
-                for wg in available_groupings:
-                    expression_container = report_batch[wg]
-                    expr_holder = expression_container.expression_data[itext]
+                pos_keys = positive_keys_by_text[itext]
+                for wg in wg_iter_order:
+                    expr_holder = containers_by_wg[wg].expression_data[itext]
                     for expression, embedding in zip(
                         expr_holder.expressions, expr_holder.tt
                     ):
@@ -1027,7 +1058,7 @@ def extract_and_embed_mentions(
                             expression.b,
                             mention.casefold(),
                         )
-                        if mention_key in positive_keys_by_text[itext]:
+                        if mention_key in pos_keys:
                             continue
                         if mention_key not in negative_candidates:
                             negative_candidates[mention_key] = {
@@ -1047,11 +1078,9 @@ def extract_and_embed_mentions(
                     continue
 
                 candidate_values = list(negative_candidates.values())
-                if n_negatives <= len(candidate_values):
-                    sampled = rng.sample(candidate_values, n_negatives)
-                else:
-                    sampled = rng.choices(candidate_values, k=n_negatives)
-                rows.extend(sampled)
+                n_pool = len(candidate_values)
+                idx = _sample_row_indices(negative_sampler, n_pool, n_negatives)
+                rows.extend(candidate_values[i] for i in idx)
 
         if on_encoder_batch is not None:
             on_encoder_batch(ibatch, n_batches, len(rows))

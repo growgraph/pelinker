@@ -5,6 +5,7 @@ from pelinker.onto import (
     Expression,
     ExpressionHolder,
     ExpressionHolderBatch,
+    NEGATIVE_LABEL,
     WordGrouping,
 )
 from pelinker.util import (
@@ -215,7 +216,7 @@ def test_extract_mentions_negative_sampling_is_deterministic(monkeypatch):
         random_seed=7,
     )
     assert rows_a == rows_b
-    assert any(r["entity"] == "__NEGATIVE__" for r in rows_a)
+    assert any(r["entity"] == NEGATIVE_LABEL for r in rows_a)
 
 
 def test_extract_mentions_negatives_are_global_not_per_entity(monkeypatch):
@@ -239,8 +240,8 @@ def test_extract_mentions_negatives_are_global_not_per_entity(monkeypatch):
         negatives_per_positive=1.0,
         random_seed=3,
     )
-    positive_mentions = {r["mention"] for r in rows if r["entity"] != "__NEGATIVE__"}
-    negative_mentions = {r["mention"] for r in rows if r["entity"] == "__NEGATIVE__"}
+    positive_mentions = {r["mention"] for r in rows if r["entity"] != NEGATIVE_LABEL}
+    negative_mentions = {r["mention"] for r in rows if r["entity"] == NEGATIVE_LABEL}
     assert "alpha" in positive_mentions and "beta" in positive_mentions
     assert not (positive_mentions & negative_mentions)
 

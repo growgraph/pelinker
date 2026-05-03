@@ -7,7 +7,8 @@ from click.testing import CliRunner
 
 from pelinker.cli import link_files
 from pelinker.model import Linker
-from pelinker.onto import MentionCandidate, WordGrouping
+from pelinker.negative_screener import NegativeClassScreener
+from pelinker.onto import MentionCandidate, NEGATIVE_LABEL, WordGrouping
 from pelinker.transform import (
     EmbeddingTransformer,
     TransformConfig,
@@ -115,6 +116,12 @@ def test_compute_transform_artifacts_exposes_pca_metric_arrays() -> None:
 
 
 class _DummyTransformer:
+    class _UmapStub:
+        n_components = 2
+
+    umap = _UmapStub()
+    umap_viz = _UmapStub()
+
     def transform(
         self, embeddings: np.ndarray
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
@@ -132,6 +139,9 @@ def test_predict_with_clustering_adds_anomaly_metrics(monkeypatch) -> None:
     linker.transformer = _DummyTransformer()
     linker.clusterer = object()
     linker.cluster_assignments = {"e1": 0}
+    linker.screener = NegativeClassScreener(
+        kind="lda", negative_label=NEGATIVE_LABEL, _estimator=None
+    )
 
     def _mock_approximate_predict(_clusterer, _umap_clustering):
         return np.array([0, 0]), np.array([0.9, 0.9])
@@ -163,6 +173,9 @@ def test_predict_with_clustering_respects_cluster_probability_threshold(
     linker.transformer = _DummyTransformer()
     linker.clusterer = object()
     linker.cluster_assignments = {"e1": 0}
+    linker.screener = NegativeClassScreener(
+        kind="lda", negative_label=NEGATIVE_LABEL, _estimator=None
+    )
 
     def _mock_approximate_predict(_clusterer, _umap_clustering):
         return np.array([0, 0]), np.array([0.9, 0.9])

@@ -9,6 +9,8 @@ from datetime import datetime, timezone
 from hashlib import sha256
 from typing import Any, Literal
 
+from pelinker.onto import NEGATIVE_LABEL
+
 CHECKPOINT_VERSION = 1
 DEFAULT_CHECKPOINT_NAME = "clustering_quality.state.json"
 
@@ -143,6 +145,8 @@ def fingerprint_config_from_cli(
     max_scale: int,
     min_scale: int | None = None,
     clustering_grid_step: int = 5,
+    negative_label: str = NEGATIVE_LABEL,
+    screener_kind: str = "lda",
 ) -> dict[str, Any]:
     """Parameters that must match between checkpoint and resume.
 
@@ -174,6 +178,8 @@ def fingerprint_config_from_cli(
         "seed": seed,
         "selected_labels_kb_path": kb,
         "umap_dim": umap_dim,
+        "negative_label": negative_label,
+        "screener_kind": screener_kind,
     }
 
 

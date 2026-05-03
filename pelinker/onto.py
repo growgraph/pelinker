@@ -21,6 +21,9 @@ class BaseDataclass(JSONWizard, JSONWizard.Meta):
     skip_defaults = True
 
 
+NEGATIVE_LABEL = "__NEGATIVE__"
+
+
 @dataclasses.dataclass
 class ChunkMapper(BaseDataclass):
     """Maps encoder chunks back to documents and optional pooled span rows.

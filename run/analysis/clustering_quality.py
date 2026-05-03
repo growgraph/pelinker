@@ -2,6 +2,7 @@ import click
 import gc
 import pathlib
 import sys
+from typing import Literal
 
 import pandas as pd
 from numpy.random import RandomState
@@ -40,7 +41,8 @@ from pelinker.clustering_quality_checkpoint import (
     score_by_model_layer_from_checkpoint,
     utc_now_iso,
 )
-from pelinker.config import ClusteringOptimizationConfig
+from pelinker.config import ClusteringOptimizationConfig, NegativeScreenerConfig
+from pelinker.onto import NEGATIVE_LABEL
 from pelinker.ops import parse_model_filename
 from pelinker.plotting import (
     GRID_COL_CHOSEN_MIN_CLUSTER_SIZE,
@@ -65,6 +67,35 @@ def _path_by_model_layer(
     valid_files: list[tuple[pathlib.Path, str, str]],
 ) -> dict[tuple[str, str], pathlib.Path]:
     return {(m, layer): fp for fp, m, layer in valid_files}
+
+
+def _clustering_optimization_config_for_run(
+    *,
+    min_class_size: int,
+    max_scale: int,
+    min_scale: int | None,
+    clustering_grid_step: int,
+    seed: int,
+    frac: float,
+    n_embedding_batches: int | None,
+    batch_size: int,
+    negative_label: str,
+    screener_kind: str,
+) -> ClusteringOptimizationConfig:
+    kind: Literal["lda", "svm"] = "svm" if screener_kind == "svm" else "lda"
+    ns = NegativeScreenerConfig(kind=kind, negative_label=negative_label)
+    return ClusteringOptimizationConfig(
+        min_class_size=min_class_size,
+        max_scale=max_scale,
+        min_scale=min_scale,
+        clustering_grid_step=clustering_grid_step,
+        rns=RandomState(seed=seed),
+        frac=frac,
+        n_embedding_batches=n_embedding_batches,
+        batch_size=batch_size,
+        optimization_method="mean",
+        negative_screener=ns,
+    )
 
 
 def _parse_fusion_members(layer_label: str) -> list[tuple[str, str]]:
@@ -176,11 +207,7 @@ def _fine_clustering_metadata_df(
         for c in ["entity", "cluster", *present_optional]
         if c in report.assignments.columns
     ]
-    if "entity" not in keep and "property" in report.assignments.columns:
-        keep = ["entity" if c == "property" else c for c in keep]
-        out0 = report.assignments.rename(columns={"property": "entity"})
-    else:
-        out0 = report.assignments
+    out0 = report.assignments
     if "entity" not in keep or "cluster" not in keep:
         return pd.DataFrame(columns=cols + present_optional)
     out = out0[keep].copy()
@@ -480,6 +507,20 @@ def _results_from_checkpoint(
     help=f"Checkpoint JSON path (default: <output-dir>/{DEFAULT_CHECKPOINT_NAME})",
 )
 @click.option(
+    "--negative-label",
+    type=str,
+    default=NEGATIVE_LABEL,
+    show_default=True,
+    help="Entity label for synthetic negatives (must match embedding parquet).",
+)
+@click.option(
+    "--screener-kind",
+    type=click.Choice(["lda", "svm"]),
+    default="lda",
+    show_default=True,
+    help="Estimator saved on Linker when fitting from this pipeline (analysis always logs both).",
+)
+@click.option(
     "--mode",
     type=click.Choice(["single", "fusion2", "fusion3", "all"]),
     default="all",
@@ -510,6 +551,8 @@ def main(
     resume: bool,
     checkpoint_path: pathlib.Path | None,
     mode: RunMode,
+    negative_label: str,
+    screener_kind: str,
 ):
     """
     Process multiple parquet files and compute optimal cluster sizes.
@@ -585,6 +628,8 @@ def main(
         max_scale=max_scale,
         min_scale=min_scale,
         clustering_grid_step=clustering_grid_step,
+        negative_label=negative_label,
+        screener_kind=screener_kind,
     )
     run_fingerprint = compute_run_fingerprint(fp_payload)
 
@@ -736,16 +781,17 @@ def main(
                 all_metrics_dfs: list[pd.DataFrame] = []
                 grid_batch: list[pd.DataFrame] = []
 
-                optimization_config = ClusteringOptimizationConfig(
+                optimization_config = _clustering_optimization_config_for_run(
                     min_class_size=min_class_size,
                     max_scale=max_scale,
                     min_scale=min_scale,
                     clustering_grid_step=clustering_grid_step,
-                    rns=RandomState(seed=seed),
+                    seed=seed,
                     frac=frac,
                     n_embedding_batches=n_embedding_batches,
                     batch_size=batch_size,
-                    optimization_method="mean",
+                    negative_label=negative_label,
+                    screener_kind=screener_kind,
                 )
 
                 for sample_idx in range(n_sample):
@@ -966,16 +1012,17 @@ def main(
                     fusion_all_metrics_dfs: list[pd.DataFrame] = []
                     fusion_grid_batch: list[pd.DataFrame] = []
 
-                    optimization_config = ClusteringOptimizationConfig(
+                    optimization_config = _clustering_optimization_config_for_run(
                         min_class_size=min_class_size,
                         max_scale=max_scale,
                         min_scale=min_scale,
                         clustering_grid_step=clustering_grid_step,
-                        rns=RandomState(seed=seed),
+                        seed=seed,
                         frac=frac,
                         n_embedding_batches=n_embedding_batches,
                         batch_size=batch_size,
-                        optimization_method="mean",
+                        negative_label=negative_label,
+                        screener_kind=screener_kind,
                     )
 
                     for sample_idx in range(n_sample):
@@ -1211,16 +1258,17 @@ def main(
     )
 
     if best_report is None:
-        viz_config = ClusteringOptimizationConfig(
+        viz_config = _clustering_optimization_config_for_run(
             min_class_size=min_class_size,
             max_scale=max_scale,
             min_scale=min_scale,
             clustering_grid_step=clustering_grid_step,
-            rns=RandomState(seed=seed),
+            seed=seed,
             frac=frac,
             n_embedding_batches=n_embedding_batches,
             batch_size=batch_size,
-            optimization_method="mean",
+            negative_label=negative_label,
+            screener_kind=screener_kind,
         )
         console.print(
             "[cyan]Materializing best clustering report for UMAP (not held in memory)...[/cyan]"
@@ -1247,9 +1295,14 @@ def main(
             ],
             index=best_report.assignments.index,
         )
+        assign_cols = (
+            ["entity", "cluster"]
+            if "entity" in best_report.assignments.columns
+            else ["cluster"]
+        )
         plot_df = pd.concat(
             [
-                best_report.assignments[["cluster"]].rename(
+                best_report.assignments[assign_cols].rename(
                     columns={"cluster": "class"}
                 ),
                 umap_viz_df,

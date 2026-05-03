@@ -138,10 +138,8 @@ REQUIRED_MENTION_COLUMNS: frozenset[str] = frozenset(
 
 
 def _normalize_entity_column(df: pd.DataFrame) -> pd.DataFrame:
-    if "entity" in df.columns:
-        return df
-    if "property" in df.columns:
-        return df.rename(columns={"property": "entity"})
+    if "entity" not in df.columns:
+        raise ValueError("DataFrame must contain an 'entity' column")
     return df
 
 

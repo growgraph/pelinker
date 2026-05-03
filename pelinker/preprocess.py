@@ -28,7 +28,7 @@ def pre_process_properties(df):
 
     # idesc -> description
     # id_description_dict = dict(
-    #     df_desc[["property", "description"]].values
+    #     df_desc[["entity_id", "description"]].values
     # )
 
     # (il) : property

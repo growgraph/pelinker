@@ -4,6 +4,7 @@ import logging
 
 from pelinker.config import EmbeddingModelMetadata, EmbeddingTrainingConfig
 from pelinker.embedder import embed_kb_corpus
+from pelinker.onto import NEGATIVE_LABEL
 
 logger = logging.getLogger(__name__)
 
@@ -82,7 +83,7 @@ logger = logging.getLogger(__name__)
     "--negative-label",
     "negative_label",
     type=click.STRING,
-    default="__NEGATIVE__",
+    default=NEGATIVE_LABEL,
     help="Entity label used for sampled negatives.",
 )
 @click.option(

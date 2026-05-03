@@ -4,6 +4,7 @@ from collections.abc import Sequence
 
 import logging
 
+import numpy as np
 import pandas as pd
 import spacy
 import torch
@@ -145,6 +146,10 @@ def _embed_corpus_single_source(
 
             bs = training.encoder_batch_size
 
+            negative_sampler: np.random.RandomState | None = None
+            if training.negatives_per_positive > 0:
+                negative_sampler = np.random.RandomState(training.negative_seed)
+
             for i, chunk in enumerate(reader):
                 if max_buf is not None and i >= max_buf:
                     logger.info(
@@ -219,6 +224,7 @@ def _embed_corpus_single_source(
                         negatives_per_positive=training.negatives_per_positive,
                         negative_label=training.negative_label,
                         random_seed=training.negative_seed,
+                        negative_random_state=negative_sampler,
                         on_encoder_batch=on_encoder_batch,
                     )
 

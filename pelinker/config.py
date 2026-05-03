@@ -8,12 +8,16 @@ from typing import Any, Literal
 
 from numpy.random import RandomState
 
+from pelinker.onto import NEGATIVE_LABEL
+
 GridObjectiveSpec = Literal[
     "dbcv",
     "ari",
     "dbcv_ari_mean_minmax",
     "dbcv_ari_mean_raw",
 ]
+
+ScreenerKind = Literal["lda", "svm"]
 
 _GRID_OBJECTIVES: frozenset[str] = frozenset(
     ("dbcv", "ari", "dbcv_ari_mean_minmax", "dbcv_ari_mean_raw")
@@ -132,9 +136,9 @@ class EmbeddingTrainingConfig:
     """If set, stop after this many text-table read passes (each up to ``input_buffer_rows`` rows)."""
     negatives_per_positive: float = 0.0
     """Number of random negative mentions to sample per positive mention."""
-    negative_label: str = "__NEGATIVE__"
+    negative_label: str = NEGATIVE_LABEL
     """Entity label to use for synthetic negative rows."""
-    negative_seed: int | None = None
+    negative_seed: int | None = 13
     """Optional random seed for deterministic negative sampling."""
 
     def __post_init__(self) -> None:
@@ -154,6 +158,26 @@ class EmbeddingTrainingConfig:
         self.kb_csv_path = Path(
             os.path.expandvars(os.fspath(self.kb_csv_path))
         ).expanduser()
+
+
+@dataclass(frozen=True)
+class NegativeScreenerConfig:
+    """Binary LDA/SVM screen for ``negative_label`` vs KB mentions before PCA→UMAP."""
+
+    kind: ScreenerKind = "lda"
+    """Estimator persisted on :class:`~pelinker.model.Linker` (``Linker.screener``)."""
+    negative_label: str = NEGATIVE_LABEL
+    cv_n_splits: int = 20
+    cv_test_size: float = 0.2
+    cv_random_state: int = 42
+
+    def __post_init__(self) -> None:
+        if not self.negative_label.strip():
+            raise ValueError("negative_label must be non-empty")
+        if self.cv_n_splits < 2:
+            raise ValueError("cv_n_splits must be >= 2")
+        if not 0.0 < self.cv_test_size < 1.0:
+            raise ValueError("cv_test_size must be in (0, 1)")
 
 
 @dataclass
@@ -188,6 +212,10 @@ class ClusteringOptimizationConfig:
     """Plateau threshold on the **smoothed** curve: ``y_min + this * (y_max - y_min)`` (finite values only)."""
     grid_derivative_rel_tol: float = 0.12
     """|df/dx| below this times max|df/dx| counts as “derivative near zero” on the smoothed curve."""
+    negative_screener: NegativeScreenerConfig = field(
+        default_factory=NegativeScreenerConfig
+    )
+    """Negative-class screening before PCA→UMAP (see :class:`NegativeScreenerConfig`)."""
 
     def resolved_min_scale(self) -> int:
         """Inclusive start of the ``min_cluster_size`` grid (HDBSCAN hyperparameter)."""

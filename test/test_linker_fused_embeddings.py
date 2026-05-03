@@ -247,7 +247,7 @@ def test_fit_writes_clustering_report_pickle_when_dump_flag(tmp_path):
     with gzip.open(out, "rb") as zf:
         loaded = pickle.load(zf)
     assert isinstance(loaded, dict)
-    assert loaded["schema"] == "pelinker.clustering_report.v1"
+    assert loaded["schema"] == "pelinker.clustering_report.v2"
     json.dumps(loaded)
     assert isinstance(loaded["metrics_df"], list)
     assert isinstance(loaded["pca_residuals"], list)

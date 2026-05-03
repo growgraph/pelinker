@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 import math
 from typing import Any
@@ -8,7 +8,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-_JSON_CLUSTERING_REPORT_SCHEMA = "pelinker.clustering_report.v1"
+_JSON_CLUSTERING_REPORT_SCHEMA = "pelinker.clustering_report.v2"
 
 
 @dataclass(frozen=True)
@@ -17,6 +17,102 @@ class MeanWithUncertainty:
 
     mean: float
     std: float
+
+
+@dataclass(frozen=True)
+class MetricMeanStd:
+    """Mean and spread (sample std over CV folds) for one scalar metric."""
+
+    mean: float
+    std: float
+
+
+@dataclass(frozen=True)
+class ScreenerModelCvBlock:
+    """Precision / recall / F1 for detecting the negative class (label 1) on held-out folds."""
+
+    precision: MetricMeanStd
+    recall: MetricMeanStd
+    f1: MetricMeanStd
+
+
+@dataclass(frozen=True)
+class NegativeScreenerCvSummary:
+    """Cross-validated LDA vs linear SVM on the same binary negative-detection task."""
+
+    lda: ScreenerModelCvBlock
+    svm: ScreenerModelCvBlock
+
+
+def negative_screener_cv_summary_from_eval_dict(
+    raw: dict[str, dict[str, dict[str, float]]],
+) -> NegativeScreenerCvSummary:
+    """Build a typed summary from :func:`pelinker.negative_screener.evaluate_negative_screener_models` output."""
+
+    def _block(name: str) -> ScreenerModelCvBlock:
+        b = raw[name]
+        return ScreenerModelCvBlock(
+            precision=MetricMeanStd(
+                mean=float(b["precision"]["mean"]),
+                std=float(b["precision"]["std"]),
+            ),
+            recall=MetricMeanStd(
+                mean=float(b["recall"]["mean"]),
+                std=float(b["recall"]["std"]),
+            ),
+            f1=MetricMeanStd(
+                mean=float(b["f1"]["mean"]),
+                std=float(b["f1"]["std"]),
+            ),
+        )
+
+    return NegativeScreenerCvSummary(lda=_block("lda"), svm=_block("svm"))
+
+
+def _screener_cv_block_to_jsonable(
+    block: ScreenerModelCvBlock,
+) -> dict[str, dict[str, float]]:
+    return {
+        "precision": {"mean": block.precision.mean, "std": block.precision.std},
+        "recall": {"mean": block.recall.mean, "std": block.recall.std},
+        "f1": {"mean": block.f1.mean, "std": block.f1.std},
+    }
+
+
+def _negative_screener_cv_summary_to_jsonable(
+    summary: NegativeScreenerCvSummary,
+) -> dict[str, dict[str, dict[str, float]]]:
+    return {
+        "lda": _screener_cv_block_to_jsonable(summary.lda),
+        "svm": _screener_cv_block_to_jsonable(summary.svm),
+    }
+
+
+def _pool_negative_screener_cv_summaries(
+    summaries: Sequence[NegativeScreenerCvSummary],
+) -> NegativeScreenerCvSummary:
+    """Mean/std across repeated clustering reports of the per-report CV ``mean`` fields."""
+
+    def _collect(
+        getter: Callable[[NegativeScreenerCvSummary], MetricMeanStd],
+    ) -> MetricMeanStd:
+        means = np.array([getter(s).mean for s in summaries], dtype=np.float64)
+        return MetricMeanStd(
+            mean=float(np.mean(means)),
+            std=float(np.std(means, ddof=1)) if len(means) > 1 else 0.0,
+        )
+
+    lda = ScreenerModelCvBlock(
+        precision=_collect(lambda s: s.lda.precision),
+        recall=_collect(lambda s: s.lda.recall),
+        f1=_collect(lambda s: s.lda.f1),
+    )
+    svm = ScreenerModelCvBlock(
+        precision=_collect(lambda s: s.svm.precision),
+        recall=_collect(lambda s: s.svm.recall),
+        f1=_collect(lambda s: s.svm.f1),
+    )
+    return NegativeScreenerCvSummary(lda=lda, svm=svm)
 
 
 @dataclass(frozen=True)
@@ -46,7 +142,7 @@ class ClusteringReport:
     """DBCV (``relative_validity_``) at the chosen ``min_cluster_size`` (mean when from aggregate)."""
 
     number_properties: int
-    """Count of distinct KB properties in the (filtered) frame used for clustering."""
+    """Count of distinct KB ``entity`` labels in the frame used for PCA→UMAP (excludes ``pelinker.onto.NEGATIVE_LABEL`` when screening)."""
 
     n_clusters_emergent: int
     """Number of HDBSCAN clusters at the chosen ``min_cluster_size`` (noise label -1 excluded)."""
@@ -58,6 +154,8 @@ class ClusteringReport:
     umap_clustering: np.ndarray
     umap_visualization: np.ndarray
     pca_reduced: np.ndarray
+    negative_screener_cv: NegativeScreenerCvSummary | None = None
+    """Stratified CV metrics for LDA and linear SVM (negative vs KB); ``None`` when screening is off or infeasible."""
     ari: float | None = None
 
 
@@ -120,6 +218,13 @@ def clustering_report_to_jsonable_dict(report: ClusteringReport) -> dict[str, An
         "umap_visualization": _ndarray_to_jsonable_nested(report.umap_visualization),
         "pca_reduced": _ndarray_to_jsonable_nested(report.pca_reduced),
         "ari": ari_out,
+        "negative_screener_cv": (
+            None
+            if report.negative_screener_cv is None
+            else _json_normalize(
+                _negative_screener_cv_summary_to_jsonable(report.negative_screener_cv)
+            )
+        ),
     }
 
 
@@ -138,6 +243,7 @@ class ClusteringSearchSummaryRow:
     n_clusters_emergent: MeanWithUncertainty
     dbcv: MeanWithUncertainty
     ari: MeanWithUncertainty | None
+    negative_screener_cv: NegativeScreenerCvSummary | None = None
 
     def to_flat_dict(self) -> dict[str, str | float | None]:
         """Keys aligned with historical ``results.csv`` and ``plot_heatmap`` expectations."""
@@ -164,7 +270,51 @@ class ClusteringSearchSummaryRow:
             ari = self.ari
             row["ari"] = ari.mean
             row["ari_std"] = ari.std
+        ns = self.negative_screener_cv
+        if ns is not None:
+
+            def _flat(prefix: str, block: ScreenerModelCvBlock) -> None:
+                row[f"{prefix}_precision_mean"] = block.precision.mean
+                row[f"{prefix}_precision_std"] = block.precision.std
+                row[f"{prefix}_recall_mean"] = block.recall.mean
+                row[f"{prefix}_recall_std"] = block.recall.std
+                row[f"{prefix}_f1_mean"] = block.f1.mean
+                row[f"{prefix}_f1_std"] = block.f1.std
+
+            _flat("screener_lda", ns.lda)
+            _flat("screener_svm", ns.svm)
         return row
+
+
+def _screener_cv_block_from_flat(
+    row: dict[str, str | float | None], prefix: str
+) -> ScreenerModelCvBlock:
+    mean_key = f"{prefix}_precision_mean"
+    return ScreenerModelCvBlock(
+        precision=MetricMeanStd(
+            mean=float(row[mean_key]),
+            std=float(row.get(f"{prefix}_precision_std") or 0.0),
+        ),
+        recall=MetricMeanStd(
+            mean=float(row[f"{prefix}_recall_mean"]),
+            std=float(row.get(f"{prefix}_recall_std") or 0.0),
+        ),
+        f1=MetricMeanStd(
+            mean=float(row[f"{prefix}_f1_mean"]),
+            std=float(row.get(f"{prefix}_f1_std") or 0.0),
+        ),
+    )
+
+
+def _negative_screener_cv_summary_from_flat_row(
+    row: dict[str, str | float | None],
+) -> NegativeScreenerCvSummary | None:
+    if "screener_lda_precision_mean" not in row:
+        return None
+    return NegativeScreenerCvSummary(
+        lda=_screener_cv_block_from_flat(row, "screener_lda"),
+        svm=_screener_cv_block_from_flat(row, "screener_svm"),
+    )
 
 
 def clustering_search_summary_row_from_flat_dict(
@@ -202,6 +352,7 @@ def clustering_search_summary_row_from_flat_dict(
             std=float(row["best_score_std"] or 0.0),
         ),
         ari=ari_block,
+        negative_screener_cv=_negative_screener_cv_summary_from_flat_row(row),
     )
 
 
@@ -272,6 +423,13 @@ def summarize_clustering_reports_for_search(
     else:
         ari_block = None
 
+    ns_reports = [
+        r.negative_screener_cv for r in reports if r.negative_screener_cv is not None
+    ]
+    ns_pooled: NegativeScreenerCvSummary | None = None
+    if ns_reports:
+        ns_pooled = _pool_negative_screener_cv_summaries(ns_reports)
+
     return ClusteringSearchSummaryRow(
         model=model,
         layer=layer,
@@ -294,4 +452,5 @@ def summarize_clustering_reports_for_search(
             std=dbcv_std,
         ),
         ari=ari_block,
+        negative_screener_cv=ns_pooled,
     )

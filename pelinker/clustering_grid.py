@@ -412,8 +412,6 @@ def evaluate_cluster_size_grid(
     """
     umap_values = dfr2[umap_columns].to_numpy(dtype=np.float32, copy=False)
     entity_codes: np.ndarray | None = None
-    if "entity" not in dfr2.columns and "property" in dfr2.columns:
-        dfr2 = dfr2.rename(columns={"property": "entity"})
     if "entity" in dfr2.columns:
         entity_codes = (
             dfr2["entity"]

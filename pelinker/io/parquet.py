@@ -44,7 +44,7 @@ class ParquetWriter:
 
         # Extract columns
         pmids = [row["pmid"] for row in data]
-        entities = [row.get("entity", row.get("property")) for row in data]
+        entities = [row["entity"] for row in data]
         mentions = [row["mention"] for row in data]
         a_vals = [row.get("a") for row in data]
         b_vals = [row.get("b") for row in data]

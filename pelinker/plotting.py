@@ -1,3 +1,4 @@
+import colorsys
 import pathlib
 
 import matplotlib
@@ -686,28 +687,89 @@ def plot_heatmap(
     plt.close()
 
 
-def plot_umap_viz(df, output_path="umap.html"):
-    label_col = "entity" if "entity" in df.columns else "property"
+def _sorted_class_labels_natural(class_series: pd.Series) -> list[str]:
+    """Order legend / color map: numeric cluster ids sort numerically, not lexically."""
+    labels = [str(x) for x in class_series.unique()]
+
+    def sort_key(label: str) -> tuple[int, float] | tuple[int, str]:
+        try:
+            return (0, float(label))
+        except ValueError:
+            return (1, label)
+
+    return sorted(labels, key=sort_key)
+
+
+def _distinct_category_hex_colors(n: int) -> list[str]:
+    """
+    One distinct color per category for large palettes (e.g. ~50 HDBSCAN clusters).
+
+    Uses golden-ratio hue steps with staggered saturation and value so neighbors
+    stay distinguishable when many traces overlap in 3D.
+    """
+    if n <= 0:
+        return []
+    golden = 0.618033988749895
+    colors_hex: list[str] = []
+    for i in range(n):
+        hue = (i * golden) % 1.0
+        sat = 0.58 + 0.32 * ((i % 5) / 4.0)
+        val = 0.68 + 0.26 * (((i // 5) % 4) / 3.0)
+        r_f, g_f, b_f = colorsys.hsv_to_rgb(hue, sat, val)
+        colors_hex.append(
+            f"#{int(r_f * 255 + 0.5):02x}{int(g_f * 255 + 0.5):02x}{int(b_f * 255 + 0.5):02x}"
+        )
+    return colors_hex
+
+
+def plot_umap_viz(
+    df: pd.DataFrame,
+    output_path: str | pathlib.Path = "umap.html",
+) -> None:
+    if "entity" not in df.columns:
+        raise ValueError("plot_umap_viz requires an 'entity' column")
+    if "class" not in df.columns:
+        raise ValueError("plot_umap_viz requires a 'class' column")
+    label_col = "entity"
+    df = df.copy()
     df["show_label"] = df[label_col]
     show_rate = max(len(df) // 20, 1)
     df.loc[df.index % show_rate != 0, "show_label"] = ""
 
-    # Ensure class is treated as categorical
     df["class"] = df["class"].astype(str)
+    class_order = _sorted_class_labels_natural(df["class"])
+    n_classes = len(class_order)
+    color_discrete_map = dict(
+        zip(class_order, _distinct_category_hex_colors(n_classes), strict=True)
+    )
 
-    # Base scatter plot
+    axis_title_font = dict(size=15)
+    axis_tick_font = dict(size=13)
+
     fig = px.scatter_3d(
         df,
         x="uviz_00",
         y="uviz_01",
         z="uviz_02",
         color="class",
-        color_discrete_sequence=px.colors.qualitative.Vivid,
+        color_discrete_map=color_discrete_map,
+        category_orders={"class": class_order},
         hover_name=label_col,
         labels={"uviz_00": "Dim 1", "uviz_01": "Dim 2", "uviz_02": "Dim 3"},
+        template="plotly_white",
+    )
+    # fullData.name is the cluster label for this colored trace (one trace per class).
+    fig.update_traces(
+        marker=dict(size=6, opacity=0.82, line=dict(width=0)),
+        hovertemplate=(
+            "<b>%{hovertext}</b><br>"
+            "Cluster: <b>%{fullData.name}</b><br>"
+            "Dim 1: %{x:.4f}<br>Dim 2: %{y:.4f}<br>Dim 3: %{z:.4f}"
+            "<extra></extra>"
+        ),
+        selector=dict(mode="markers"),
     )
 
-    # Add text labels as a separate trace
     df_labels = df[df["show_label"] != ""]
     text_trace = go.Scatter3d(
         x=df_labels["uviz_00"],
@@ -718,23 +780,50 @@ def plot_umap_viz(df, output_path="umap.html"):
         textposition="top center",
         showlegend=False,
         hoverinfo="skip",
-        textfont=dict(size=10, color="black"),
+        textfont=dict(size=14, color="black"),
     )
     fig.add_trace(text_trace)
 
-    # Update layout
+    legend_font = 13 if n_classes > 36 else 14
     fig.update_layout(
-        title="3D Scatter Plot of Embeddings",
-        scene=dict(
-            xaxis_title="uviz_00",
-            yaxis_title="uviz_01",
-            zaxis_title="uviz_02",
+        font=dict(size=14),
+        title=dict(
+            text=f"3D embedding visualization ({len(df):,} points, {n_classes} clusters)",
+            x=0.5,
+            xanchor="center",
+            font=dict(size=18),
         ),
-        height=700,
-        margin=dict(l=0, r=0, b=0, t=30),
+        hoverlabel=dict(font=dict(size=15)),
+        hovermode="closest",
+        scene=dict(
+            xaxis=dict(
+                title=dict(text="Dim 1", font=axis_title_font),
+                tickfont=axis_tick_font,
+            ),
+            yaxis=dict(
+                title=dict(text="Dim 2", font=axis_title_font),
+                tickfont=axis_tick_font,
+            ),
+            zaxis=dict(
+                title=dict(text="Dim 3", font=axis_title_font),
+                tickfont=axis_tick_font,
+            ),
+            bgcolor="rgb(250,250,252)",
+        ),
+        legend=dict(
+            title=dict(text="Cluster", font=dict(size=15)),
+            traceorder="normal",
+            itemsizing="constant",
+            font=dict(size=legend_font),
+            yanchor="top",
+            y=0.99,
+            x=1.02,
+            xanchor="left",
+        ),
+        margin=dict(l=0, r=120, b=0, t=56),
     )
 
-    fig.write_html(output_path)
+    fig.write_html(str(output_path))
 
 
 def plot_metrics(df: pd.DataFrame, fname):

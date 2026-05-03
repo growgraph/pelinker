@@ -26,6 +26,7 @@ from pelinker.config import (
     KBConfig,
     TransformConfig,
 )
+from pelinker.negative_screener import NegativeClassScreener
 from pelinker.analysis import (
     drop_entities_with_few_mentions,
     estimate_clustering_from_frame,
@@ -222,8 +223,6 @@ def cluster_composition_from_training_frame(
     total mass; :attr:`ClusterCompositionSnapshot.cluster_fraction_of_property_mass` is
     relative to each entity's global mass in this frame.
     """
-    if "entity" not in training.columns and "property" in training.columns:
-        training = training.rename(columns={"property": "entity"})
     if "entity" not in training.columns or "cluster" not in training.columns:
         raise ValueError("training frame must contain 'entity' and 'cluster' columns")
     work = training[["entity", "cluster"]].copy()
@@ -353,8 +352,6 @@ def _provisional_cluster_assignments_from_training_frame(
     left to downstream analysis (see ``Linker.training_cluster_frame``).
     """
     out: dict[str, int] = {}
-    if "entity" not in training.columns and "property" in training.columns:
-        training = training.rename(columns={"property": "entity"})
     if "entity" not in training.columns or "cluster" not in training.columns:
         return out
     for entity_id, label in labels_map.items():
@@ -392,6 +389,7 @@ class Linker:
         self.training_pca_mahalanobis: np.ndarray | None = None
         self.cluster_composition: ClusterCompositionSnapshot | None = None
         self.cluster_consensus_names: dict[int, str] = {}
+        self.screener: NegativeClassScreener | None = None
         self._hf_tokenizer = None
         self._hf_model = None
         self._hf_models_by_type: dict[str, tuple[object, object]] = {}
@@ -572,7 +570,9 @@ class Linker:
             if len(filtered) == 0:
                 raise ValueError("No rows left after KB entity-label filter")
             prepared = drop_entities_with_few_mentions(
-                filtered, read_cfg.min_class_size
+                filtered,
+                read_cfg.min_class_size,
+                negative_label=read_cfg.negative_screener.negative_label,
             )
             if len(prepared) == 0:
                 raise ValueError(
@@ -616,7 +616,7 @@ class Linker:
         clustering_report_dir: pathlib.Path | None,
         dump_clustering_report: bool,
     ) -> None:
-        """Grid search (optional) on subsample; final PCA/UMAP + HDBSCAN on full ``prepared`` frame."""
+        """Grid search (optional) on subsample; final PCA/UMAP + HDBSCAN on non-negative rows only."""
         need_grid_frame = optimize_clustering or clustering_report_dir is not None
         grid_sample: pd.DataFrame | None = None
         if need_grid_frame:
@@ -690,7 +690,21 @@ class Linker:
                     "Skipping clustering validation artifacts (grid/diagnostic report is None)"
                 )
 
-        embeddings = np.stack(prepared["embed"].values).astype(np.float32, copy=False)
+        ns_cfg = read_cfg.negative_screener
+        neg_mask = prepared["entity"].astype(str).values == ns_cfg.negative_label
+        self.screener = NegativeClassScreener.fit_from_frame(prepared, ns_cfg)
+        if neg_mask.any():
+            manifold_df = prepared.loc[~neg_mask].copy()
+            if len(manifold_df) == 0:
+                raise ValueError(
+                    "No rows left after excluding negative-label mentions for manifold fit"
+                )
+        else:
+            manifold_df = prepared
+
+        embeddings = np.stack(manifold_df["embed"].values).astype(
+            np.float32, copy=False
+        )
         self.transform_config = transform_config
         self.transformer = EmbeddingTransformer(transform_config)
         umap_clustering, _, pca_residuals, pca_mahalanobis = (
@@ -708,13 +722,13 @@ class Linker:
         cluster_labels = cluster_labels_arr.astype(int, copy=False)
 
         tc_cols = ["pmid", "entity", "mention"]
-        missing = [c for c in tc_cols if c not in prepared.columns]
+        missing = [c for c in tc_cols if c not in manifold_df.columns]
         if missing:
             raise ValueError(
                 "Prepared mention frame missing columns required for "
                 f"training_cluster_frame: {missing}"
             )
-        self.training_cluster_frame = prepared[tc_cols].copy()
+        self.training_cluster_frame = manifold_df[tc_cols].copy()
         self.training_cluster_frame["cluster"] = cluster_labels
 
         self.cluster_composition = cluster_composition_from_training_frame(
@@ -1029,6 +1043,9 @@ class Linker:
         """
         Predict entities using clustering approach.
 
+        Mentions classified as negative by the screener are dropped immediately: no
+        PCA/UMAP, no HDBSCAN ``approximate_predict``, and no anomaly metrics for them.
+
         Args:
             embeddings: Tensor of shape (n_mentions, embedding_dim)
             vocabulary: List of mention texts
@@ -1042,41 +1059,33 @@ class Linker:
             raise ValueError(
                 "Transformer and clusterer must be fitted before prediction"
             )
+        if self.screener is None:
+            raise ValueError(
+                "Linker.screener is required for clustering predict(); refit the model."
+            )
 
         # Convert to numpy
         embeddings_np = embeddings.detach().cpu().numpy()
 
-        # Transform embeddings
-        umap_clustering, _, pca_residuals, pca_mahalanobis = self.transformer.transform(
-            embeddings_np
-        )
-        pca_anomaly_combined = np.maximum(
-            self._zscore(pca_residuals), self._zscore(pca_mahalanobis)
-        )
+        idx_keep = np.flatnonzero(~self.screener.predict_is_negative(embeddings_np))
 
-        # Predict clusters for input embeddings using approximate_predict
-        cluster_labels, cluster_probs = approximate_predict(
-            self.clusterer, umap_clustering
-        )
+        kb_items: list[dict[str, object]] = []
+        if len(idx_keep) == 0:
+            return kb_items
 
-        kb_items = []
-        for (
-            item,
-            cluster_id,
-            cluster_prob,
-            pca_residual,
-            mahalanobis,
-            combined_score,
-        ) in zip(
-            vocabulary,
-            cluster_labels,
-            cluster_probs,
-            pca_residuals,
-            pca_mahalanobis,
-            pca_anomaly_combined,
-        ):
+        emb_k = embeddings_np[idx_keep]
+        _umap_k, _, res_k, mah_k = self.transformer.transform(emb_k)
+        cl_k, cp_k = approximate_predict(self.clusterer, _umap_k)
+        cl_arr = cl_k.astype(np.int64, copy=False)
+        cp_arr = np.asarray(cp_k, dtype=np.float64).ravel()
+        combined_k = np.maximum(self._zscore(res_k), self._zscore(mah_k))
+
+        for j, mention_i in enumerate(idx_keep):
+            item = vocabulary[int(mention_i)]
+            cluster_id = int(cl_arr[j])
+            cluster_prob = float(cp_arr[j])
             # Skip HDBSCAN outliers and low-confidence assignments.
-            if int(cluster_id) == -1 or float(cluster_prob) < threshold:
+            if cluster_id == -1 or cluster_prob < threshold:
                 continue
 
             # Find all entities in the same cluster
@@ -1092,19 +1101,19 @@ class Linker:
 
             # For now, return the first entity in the cluster
             predicted_entity = cluster_entities[0]
-            score = float(cluster_prob)
+            score = cluster_prob
 
             kb_item = {
                 **dataclasses.asdict(item),
                 **{
                     "entity_id_predicted": predicted_entity,
                     "score": score,
-                    "pca_residual": float(pca_residual),
-                    "pca_mahalanobis": float(mahalanobis),
-                    "anomaly_score_max_z": float(combined_score),
+                    "pca_residual": float(res_k[j]),
+                    "pca_mahalanobis": float(mah_k[j]),
+                    "anomaly_score_max_z": float(combined_k[j]),
                 },
             }
-            kb_items += [kb_item]
+            kb_items.append(kb_item)
 
         return kb_items
 
@@ -1133,19 +1142,21 @@ class Linker:
         *,
         use_gpu: bool = False,
     ) -> list[dict[str, object]]:
-        """Per-mention PCA residual / Mahalanobis with KB-match flag.
+        """Per-mention PCA residual / Mahalanobis with KB-match and screener fields.
 
-        Runs the same encoder + spaCy + fused-mention pipeline as :meth:`predict`, then
-        applies the fitted ``EmbeddingTransformer`` to obtain ``pca_residuals`` /
-        ``pca_mahalanobis`` for **every** extracted mention (W1/W2/W3) — including spans
-        that :meth:`predict` would otherwise drop because their HDBSCAN cluster has no
-        mapped KB entity. Each row is annotated with ``is_kb_match`` (lemma equals some
-        KB property's lemma under the matching :class:`WordGrouping`) and
-        ``kb_property_match`` (the matched property label, or ``None``).
+        Same encoder + spaCy + fused-mention pipeline as :meth:`predict`. The screener
+        runs on every mention; **PCA→UMAP** (``EmbeddingTransformer.transform``) runs only
+        on mentions classified as non-negative. Screened-negative rows use NaN for PCA
+        metrics. Each row includes ``screener_is_negative``, ``screener_decision``, plus
+        ``is_kb_match`` / ``kb_property_match`` (lemma vs KB under :class:`WordGrouping`).
         """
         if self.transformer is None:
             raise ValueError(
                 "Transformer must be fitted before compute_mention_anomaly()"
+            )
+        if self.screener is None:
+            raise ValueError(
+                "Linker.screener is required for compute_mention_anomaly(); refit the model."
             )
 
         tt, vocabulary, _primary = self._encode_mentions(
@@ -1158,14 +1169,27 @@ class Linker:
         kb_lemma_by_wg = self._kb_lemma_index_by_wg(nlp)
 
         embeddings_np = tt.detach().cpu().numpy()
-        _umap_clustering, _viz, residuals, mahalanobis = self.transformer.transform(
-            embeddings_np
-        )
-        combined = np.maximum(self._zscore(residuals), self._zscore(mahalanobis))
+        screener_neg = self.screener.predict_is_negative(embeddings_np)
+        screener_margin = self.screener.decision_function(embeddings_np)
+
+        n_mentions = int(embeddings_np.shape[0])
+        idx_keep = np.flatnonzero(~screener_neg)
+        residuals = np.full(n_mentions, np.nan, dtype=np.float64)
+        mahalanobis = np.full(n_mentions, np.nan, dtype=np.float64)
+        combined = np.full(n_mentions, np.nan, dtype=np.float64)
+        if len(idx_keep) > 0:
+            emb_k = embeddings_np[idx_keep]
+            _u, _v, res_k, mah_k = self.transformer.transform(emb_k)
+            residuals[idx_keep] = res_k
+            mahalanobis[idx_keep] = mah_k
+            combined[idx_keep] = np.maximum(
+                self._zscore(res_k),
+                self._zscore(mah_k),
+            )
 
         rows: list[dict[str, object]] = []
-        for item, residual, mahal, combo in zip(
-            vocabulary, residuals, mahalanobis, combined
+        for i, (item, residual, mahal, combo) in enumerate(
+            zip(vocabulary, residuals, mahalanobis, combined)
         ):
             wg = item.word_grouping
             lemma = item.lemma
@@ -1173,22 +1197,23 @@ class Linker:
                 kb_lemma_by_wg.get(wg, {}) if isinstance(wg, WordGrouping) else {}
             )
             kb_property = wg_index.get(str(lemma))
-            rows.append(
-                {
-                    "mention": item.mention,
-                    "a": item.a,
-                    "b": item.b,
-                    "a_abs": item.a_abs,
-                    "b_abs": item.b_abs,
-                    "itext": item.itext,
-                    "ichunk": item.ichunk,
-                    "word_grouping": wg.name if isinstance(wg, WordGrouping) else None,
-                    "lemma": lemma,
-                    "is_kb_match": kb_property is not None,
-                    "kb_property_match": kb_property,
-                    "pca_residual": float(residual),
-                    "pca_mahalanobis": float(mahal),
-                    "anomaly_score_max_z": float(combo),
-                }
-            )
+            row_out: dict[str, object] = {
+                "mention": item.mention,
+                "a": item.a,
+                "b": item.b,
+                "a_abs": item.a_abs,
+                "b_abs": item.b_abs,
+                "itext": item.itext,
+                "ichunk": item.ichunk,
+                "word_grouping": wg.name if isinstance(wg, WordGrouping) else None,
+                "lemma": lemma,
+                "is_kb_match": kb_property is not None,
+                "kb_property_match": kb_property,
+                "pca_residual": float(residual),
+                "pca_mahalanobis": float(mahal),
+                "anomaly_score_max_z": float(combo),
+                "screener_is_negative": bool(screener_neg[i]),
+                "screener_decision": float(screener_margin[i]),
+            }
+            rows.append(row_out)
         return rows

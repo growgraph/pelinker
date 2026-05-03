@@ -18,10 +18,12 @@ from pelinker.config import (
     EmbeddingSourceSpec,
     EmbeddingTrainingConfig,
     KBConfig,
+    NegativeScreenerConfig,
     TransformConfig,
 )
 from pelinker.embedder import embed_kb_corpus
 from pelinker.model import Linker
+from pelinker.onto import NEGATIVE_LABEL
 from pelinker.util import expand_config_path, layers2str, str2layers
 
 logger = logging.getLogger(__name__)
@@ -76,8 +78,10 @@ class FitCliConfig:
     encoder_batch_size: int = 200
     max_input_buffers: int | None = None
     negatives_per_positive: float = 0.0
-    negative_label: str = "__NEGATIVE__"
+    negative_label: str = NEGATIVE_LABEL
     negative_seed: int | None = None
+    screener_kind: str = "lda"
+    """``lda`` or ``svm``; persisted as :attr:`~pelinker.model.Linker.screener`."""
     # Stage (B): parquet batching (``batch_size`` rows per read batch).
     # ``frac`` subsamples rows only for ``min_cluster_size`` grid search when ``optimize_clustering`` is on; final fit uses all prepared rows.
     frac: float = 1.0
@@ -104,6 +108,10 @@ class FitCliConfig:
             raise ValueError(
                 "pipeline must be one of "
                 f"{sorted(_PIPELINE_VALUES)}, got {self.pipeline!r}"
+            )
+        if self.screener_kind not in ("lda", "svm"):
+            raise ValueError(
+                f"screener_kind must be 'lda' or 'svm', got {self.screener_kind!r}"
             )
 
 
@@ -470,6 +478,10 @@ def fit(cfg: FitCliConfig) -> None:
         frac=cfg.frac,
         n_embedding_batches=cfg.n_embedding_batches,
         batch_size=cfg.batch_size,
+        negative_screener=NegativeScreenerConfig(
+            kind=cfg.screener_kind,
+            negative_label=cfg.negative_label,
+        ),
     )
 
     kb_created = (
