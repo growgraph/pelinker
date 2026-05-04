@@ -6,7 +6,11 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from pelinker.analysis import estimate_clustering_from_frame
+from pelinker.analysis import (
+    estimate_clustering_from_frame,
+    fit_negative_screener_with_metrics,
+    split_by_negative_label,
+)
 from pelinker.config import ClusteringOptimizationConfig, NegativeScreenerConfig
 from pelinker.negative_screener import NegativeClassScreener
 from pelinker.onto import NEGATIVE_LABEL
@@ -74,6 +78,35 @@ def test_estimate_clustering_negative_screener_cv_and_manifold_only_positives() 
     assert len(report.assignments) == len(dfr[dfr["entity"] != NEGATIVE_LABEL])
     assert report.number_properties == 2
     assert NEGATIVE_LABEL not in set(report.assignments["entity"].astype(str))
+
+
+def test_split_by_negative_label_excludes_synthetic_rows() -> None:
+    dfr = _tiny_frame()
+    neg_mask, manifold = split_by_negative_label(dfr, NEGATIVE_LABEL)
+    assert neg_mask.sum() == sum(dfr["entity"] == NEGATIVE_LABEL)
+    assert len(manifold) == len(dfr) - neg_mask.sum()
+    assert NEGATIVE_LABEL not in set(manifold["entity"].astype(str).unique())
+
+
+def test_fit_negative_screener_with_metrics_none_when_single_class() -> None:
+    dfr = _tiny_frame(dim=4, n_pos=20, n_neg=0)
+    cfg = NegativeScreenerConfig(kind="lda", negative_label=NEGATIVE_LABEL)
+    scr, metrics = fit_negative_screener_with_metrics(dfr, cfg)
+    assert metrics is None
+    assert scr._estimator is None
+
+
+def test_fit_negative_screener_with_metrics_matches_direct_fit() -> None:
+    dfr = _tiny_frame(dim=4, n_pos=30, n_neg=20)
+    cfg = NegativeScreenerConfig(kind="lda", negative_label=NEGATIVE_LABEL)
+    scr_direct = NegativeClassScreener.fit_from_frame(dfr, cfg)
+    scr_wrapped, metrics = fit_negative_screener_with_metrics(dfr, cfg)
+    assert metrics is not None
+    X = np.stack(dfr["embed"].values).astype(np.float32, copy=False)
+    assert np.array_equal(
+        scr_direct.predict_is_negative(X),
+        scr_wrapped.predict_is_negative(X),
+    )
 
 
 def test_negative_class_screener_trivial_single_class_all_non_negative() -> None:

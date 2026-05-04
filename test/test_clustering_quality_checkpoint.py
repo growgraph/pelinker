@@ -46,6 +46,19 @@ def test_checkpoint_save_load_roundtrip(tmp_path: pathlib.Path) -> None:
     assert loaded.summaries_by_key["1:m/l"]["best_score"] == 0.9
 
 
+def test_checkpoint_save_load_roundtrip_gzip(tmp_path: pathlib.Path) -> None:
+    fp = compute_run_fingerprint({"a": 1, "b": 2})
+    ckpt = new_checkpoint(fp)
+    ckpt.completed_combinations.append("1:m/l")
+    ckpt.summaries_by_key["1:m/l"] = {"model": "m", "layer": "l", "best_score": 0.9}
+    path = tmp_path / "st.json.gz"
+    save_checkpoint_atomic(path, ckpt)
+    loaded = load_checkpoint(path)
+    assert loaded.run_fingerprint == fp
+    assert loaded.completed_combinations == ["1:m/l"]
+    assert loaded.summaries_by_key["1:m/l"]["best_score"] == 0.9
+
+
 def test_load_wrong_version_raises(tmp_path: pathlib.Path) -> None:
     path = tmp_path / "bad.json"
     path.write_text(

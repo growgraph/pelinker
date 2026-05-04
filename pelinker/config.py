@@ -181,6 +181,27 @@ class NegativeScreenerConfig:
 
 
 @dataclass
+class LinkerFitConfig:
+    """Parquet read + mention filters + screener settings for :meth:`~pelinker.model.Linker.fit`."""
+
+    min_class_size: int = 20
+    """Minimum mention rows per KB ``entity`` before training (negative label exempt)."""
+    batch_size: int = 1000
+    n_embedding_batches: int | None = None
+    negative_screener: NegativeScreenerConfig = field(
+        default_factory=NegativeScreenerConfig
+    )
+
+    def __post_init__(self) -> None:
+        if self.min_class_size < 1:
+            raise ValueError("min_class_size must be >= 1")
+        if self.batch_size < 1:
+            raise ValueError("batch_size must be >= 1")
+        if self.n_embedding_batches is not None and self.n_embedding_batches < 1:
+            raise ValueError("n_embedding_batches must be >= 1 when provided")
+
+
+@dataclass
 class ClusteringOptimizationConfig:
     """Configuration for clustering optimization grid search."""
 

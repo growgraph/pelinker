@@ -1,5 +1,8 @@
 """Tests for typed clustering reports and multi-sample summaries."""
 
+import json
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -9,6 +12,7 @@ from pelinker.reporting import (
     ClusteringReport,
     ClusteringSearchSummaryRow,
     summarize_clustering_reports_for_search,
+    write_clustering_report_json,
 )
 
 
@@ -132,3 +136,13 @@ def test_summarize_with_pooled_min_cluster_size_uses_consensus_and_per_sample_db
     assert row.hyperparameters.min_cluster_size.std == 0.0
     assert row.dbcv.mean == pytest.approx((0.55 + 0.50) / 2)
     assert row.dbcv.std > 0
+
+
+def test_write_clustering_report_json_includes_pca_arrays(tmp_path: Path) -> None:
+    r = _minimal_report(5, 0.4)
+    out = tmp_path / "nested" / "rep.json"
+    write_clustering_report_json(out, r)
+    raw = json.loads(out.read_text(encoding="utf-8"))
+    assert raw["schema"] == "pelinker.clustering_report.v2"
+    assert raw["pca_residuals"] == [0.1]
+    assert raw["pca_mahalanobis"] == [0.2]

@@ -148,8 +148,8 @@ def test_predict_with_clustering_adds_anomaly_metrics(monkeypatch) -> None:
 
     monkeypatch.setattr("pelinker.model.approximate_predict", _mock_approximate_predict)
     vocabulary = [
-        MentionCandidate(mention="m1", a=0, b=2),
-        MentionCandidate(mention="m2", a=0, b=2),
+        MentionCandidate(mention="m1", a=0, b=2, itext=0, a_abs=0, b_abs=2),
+        MentionCandidate(mention="m2", a=0, b=2, itext=0, a_abs=0, b_abs=2),
     ]
     embeddings = torch.zeros((2, 4), dtype=torch.float32)
 
@@ -159,7 +159,8 @@ def test_predict_with_clustering_adds_anomaly_metrics(monkeypatch) -> None:
         threshold=0.0,
     )
 
-    assert len(out) == 2
+    assert len(out) == 1
+    assert out[0]["mention"] == "m1"
     assert out[0]["entity_id_predicted"] == "e1"
     assert "pca_residual" in out[0]
     assert "pca_mahalanobis" in out[0]
@@ -182,8 +183,8 @@ def test_predict_with_clustering_respects_cluster_probability_threshold(
 
     monkeypatch.setattr("pelinker.model.approximate_predict", _mock_approximate_predict)
     vocabulary = [
-        MentionCandidate(mention="m1", a=0, b=2),
-        MentionCandidate(mention="m2", a=0, b=2),
+        MentionCandidate(mention="m1", a=0, b=2, itext=0, a_abs=0, b_abs=2),
+        MentionCandidate(mention="m2", a=0, b=2, itext=0, a_abs=0, b_abs=2),
     ]
     embeddings = torch.zeros((2, 4), dtype=torch.float32)
 
@@ -194,6 +195,67 @@ def test_predict_with_clustering_respects_cluster_probability_threshold(
     )
 
     assert len(out) == 0
+
+
+def test_predict_with_clustering_keeps_disjoint_spans(monkeypatch) -> None:
+    linker = Linker()
+    linker.transformer = _DummyTransformer()
+    linker.clusterer = object()
+    linker.cluster_assignments = {"e1": 0}
+    linker.screener = NegativeClassScreener(
+        kind="lda", negative_label=NEGATIVE_LABEL, _estimator=None
+    )
+
+    def _mock_approximate_predict(_clusterer, _umap_clustering):
+        return np.array([0, 0]), np.array([0.9, 0.85])
+
+    monkeypatch.setattr("pelinker.model.approximate_predict", _mock_approximate_predict)
+    vocabulary = [
+        MentionCandidate(mention="left", a=0, b=4, itext=0, a_abs=0, b_abs=4),
+        MentionCandidate(mention="right", a=0, b=5, itext=0, a_abs=10, b_abs=15),
+    ]
+    embeddings = torch.zeros((2, 4), dtype=torch.float32)
+
+    out = linker._predict_with_clustering(
+        embeddings,
+        vocabulary,
+        threshold=0.0,
+    )
+
+    assert len(out) == 2
+    mentions = {str(r["mention"]) for r in out}
+    assert mentions == {"left", "right"}
+
+
+def test_predict_with_clustering_overlap_prefers_shorter_span_on_score_tie(
+    monkeypatch,
+) -> None:
+    linker = Linker()
+    linker.transformer = _DummyTransformer()
+    linker.clusterer = object()
+    linker.cluster_assignments = {"e1": 0}
+    linker.screener = NegativeClassScreener(
+        kind="lda", negative_label=NEGATIVE_LABEL, _estimator=None
+    )
+
+    def _mock_approximate_predict(_clusterer, _umap_clustering):
+        return np.array([0, 0]), np.array([0.9, 0.9])
+
+    monkeypatch.setattr("pelinker.model.approximate_predict", _mock_approximate_predict)
+    vocabulary = [
+        MentionCandidate(mention="longwin", a=0, b=20, itext=0, a_abs=0, b_abs=20),
+        MentionCandidate(mention="short", a=0, b=8, itext=0, a_abs=6, b_abs=14),
+    ]
+    embeddings = torch.zeros((2, 4), dtype=torch.float32)
+
+    out = linker._predict_with_clustering(
+        embeddings,
+        vocabulary,
+        threshold=0.0,
+    )
+
+    assert len(out) == 1
+    assert out[0]["mention"] == "short"
 
 
 def test_link_files_cli_include_anomaly_metrics(monkeypatch, tmp_path) -> None:

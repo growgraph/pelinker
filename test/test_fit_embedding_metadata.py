@@ -1,13 +1,10 @@
 """Tests for fit CLI embedding metadata (filename inference and per-path sources)."""
 
-from datetime import date
 from pathlib import Path
 
 import pytest
-from omegaconf import MISSING
 
 from pelinker.cli.fit import (
-    _clustering_report_path_for_fit,
     _embedding_metadata,
     _parse_embedding_parquet_path,
     _parse_embedding_parquet_stem,
@@ -110,80 +107,3 @@ def test_embedding_metadata_mixed_infer_model_only(tmp_path: Path) -> None:
     )
     assert [s.model_type for s in meta.sources] == ["pubmedbert", "biobert"]
     assert [s.layers_spec for s in meta.sources] == ["1", "1"]
-
-
-def _touch_pubmedbert_parquet(tmp_path: Path) -> Path:
-    p = tmp_path / "res_pubmedbert_1.parquet"
-    p.touch()
-    return p
-
-
-def test_clustering_report_path_explicit_override(tmp_path: Path) -> None:
-    p = _touch_pubmedbert_parquet(tmp_path)
-    meta = _embedding_metadata([p], "pubmedbert", "1", None, None)
-    explicit = tmp_path / "custom_reports"
-    got = _clustering_report_path_for_fit(
-        explicit_dir=str(explicit),
-        output_path=tmp_path / "model" / "out.gz",
-        embedding_metadata=meta,
-        today=date(2026, 4, 8),
-    )
-    assert got == explicit
-
-
-def test_clustering_report_path_default_beside_output_path(tmp_path: Path) -> None:
-    p = _touch_pubmedbert_parquet(tmp_path)
-    meta = _embedding_metadata([p], "pubmedbert", "1", None, None)
-    model_out = tmp_path / "artifacts" / "linker.gz"
-    got = _clustering_report_path_for_fit(
-        explicit_dir=None,
-        output_path=model_out,
-        embedding_metadata=meta,
-        today=date(2026, 4, 8),
-    )
-    assert got == tmp_path / "artifacts" / "reports" / "2026-04-08_pubmedbert_1"
-
-
-def test_clustering_report_path_default_uses_cwd_without_output_path(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    p = _touch_pubmedbert_parquet(tmp_path)
-    meta = _embedding_metadata([p], "pubmedbert", "1", None, None)
-    monkeypatch.chdir(tmp_path)
-    got = _clustering_report_path_for_fit(
-        explicit_dir=None,
-        output_path=None,
-        embedding_metadata=meta,
-        today=date(2026, 4, 8),
-    )
-    assert got == tmp_path / "reports" / "2026-04-08_pubmedbert_1"
-
-
-def test_clustering_report_path_whitespace_explicit_falls_back_to_default(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    p = _touch_pubmedbert_parquet(tmp_path)
-    meta = _embedding_metadata([p], "pubmedbert", "1", None, None)
-    monkeypatch.chdir(tmp_path)
-    got = _clustering_report_path_for_fit(
-        explicit_dir="  \t  ",
-        output_path=None,
-        embedding_metadata=meta,
-        today=date(2026, 4, 8),
-    )
-    assert got == tmp_path / "reports" / "2026-04-08_pubmedbert_1"
-
-
-def test_clustering_report_path_missing_explicit_falls_back_to_default(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    p = _touch_pubmedbert_parquet(tmp_path)
-    meta = _embedding_metadata([p], "pubmedbert", "1", None, None)
-    monkeypatch.chdir(tmp_path)
-    got = _clustering_report_path_for_fit(
-        explicit_dir=MISSING,
-        output_path=None,
-        embedding_metadata=meta,
-        today=date(2026, 4, 8),
-    )
-    assert got == tmp_path / "reports" / "2026-04-08_pubmedbert_1"

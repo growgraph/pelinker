@@ -212,36 +212,37 @@ def text_to_tokens_embeddings(
 def map_spans_to_spans_basic(
     words_boundaries, token_boundaries
 ) -> dict[tuple[int, int], list[int]]:
+    """Map each word character span to tokenizer subword indices.
+
+    Both spans use half-open intervals ``[start, end)`` in character offsets. A
+    subword token belongs to a word span iff the two intervals have positive overlap.
+
+    Word spans may overlap (sliding W2/W3 windows). A single forward pointer over
+    tokens is incorrect in that case; each word span is matched independently.
+
+    Args:
+        words_boundaries: Sequence of ``(wa, wb)`` word/window spans.
+        token_boundaries: Sequence of ``(ta, tb)`` subword spans covering the chunk.
+
+    Returns:
+        Dict ``(wa, wb) -> [token_index, ...]`` in ascending token order.
     """
-        given two lists of word bounds and token bounds (in character indexes)
-        [ it is implied that the two lists are sorted ]
-        the list of token boundaries is meant to cover the text (to be complete),
-        on the other hand word boundaries might be not `continuous`
 
-        find the correspondence: (wa, wb) -> [index of token]
-
-        to each word boundary find the indexes of corresponding tokens
-
-    :param words_boundaries:
-    :param token_boundaries:
-    :return: dict with
-                key: (char_a, char_b) boundary of group of interest (words)
-                value: list of corresponding tokens
-    """
-
-    map_ix_jx = {}
-
-    pnt_tokens = 0
+    map_ix_jx: dict[tuple[int, int], list[int]] = {}
+    n_tok = len(token_boundaries)
 
     for ix_word in words_boundaries:
         wa, wb = ix_word
-        map_ix_jx[ix_word] = []
-        while (
-            pnt_tokens < len(token_boundaries) and token_boundaries[pnt_tokens][1] <= wb
-        ):
-            if token_boundaries[pnt_tokens][0] >= wa:
-                map_ix_jx[ix_word] += [pnt_tokens]
-            pnt_tokens += 1
+        hits: list[int] = []
+        for j in range(n_tok):
+            ta = int(token_boundaries[j][0])
+            tb = int(token_boundaries[j][1])
+            if tb <= ta:
+                continue
+            if ta < wb and tb > wa:
+                hits.append(j)
+        map_ix_jx[ix_word] = hits
+
     return map_ix_jx
 
 

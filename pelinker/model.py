@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import gzip
-import pickle
 import sys
 import tempfile
 from collections import Counter, defaultdict
@@ -24,21 +22,21 @@ from pelinker.config import (
     EmbeddingModelMetadata,
     EmbeddingTrainingConfig,
     KBConfig,
+    LinkerFitConfig,
     TransformConfig,
 )
 from pelinker.negative_screener import NegativeClassScreener
 from pelinker.analysis import (
-    drop_entities_with_few_mentions,
-    estimate_clustering_from_frame,
-    filter_mention_frame_by_kb_labels,
+    compute_clustering_fit_metrics,
+    fit_negative_screener_with_metrics,
     mention_frame_from_embedding_paths,
-    metrics_df_with_grid_sample_columns,
+    split_by_negative_label,
 )
-from pelinker.plotting import plot_metrics_with_error_bars
 from pelinker.reporting import (
+    ClusteringFitMetrics,
+    ClusteringHyperparameters,
     ClusteringReport,
-    clustering_report_to_jsonable_dict,
-    summarize_clustering_reports_for_search,
+    NegativeScreenerInSampleMetrics,
 )
 from pelinker.embedder import embed_kb_corpus
 from pelinker.embedding_fusion import (
@@ -71,133 +69,15 @@ def _linker_artifact_gz_path(file_spec: str | pathlib.Path) -> pathlib.Path:
     return p.with_name(p.name + ".gz")
 
 
-def _clustering_quality_model_layer_from_metadata(
-    meta: EmbeddingModelMetadata | None,
-) -> tuple[str, str]:
-    """Labels aligned with ``run/analysis/clustering_quality.py`` search rows."""
-    if meta is None or not meta.sources:
-        return "linker", "unknown"
-    if len(meta.sources) == 1:
-        s = meta.sources[0]
-        return s.model_type, s.layers_spec
-    layer = "+".join(f"{s.model_type}/{s.layers_spec}" for s in meta.sources)
-    return f"fusion{len(meta.sources)}", layer
-
-
-def _safe_plot_stem(model: str, layer: str) -> str:
-    safe_layer = layer.replace("/", "_").replace("+", "__")
-    return f"{model}_{safe_layer}"
-
-
-def _metrics_df_with_grid_sample_columns(
-    report: ClusteringReport,
-    *,
-    model: str,
-    layer: str,
-    sample_idx: int,
-    chosen_min_cluster_size: int | None = None,
-) -> pd.DataFrame:
-    return metrics_df_with_grid_sample_columns(
-        report,
-        model=model,
-        layer=layer,
-        sample_idx=sample_idx,
-        chosen_min_cluster_size=chosen_min_cluster_size,
-    )
-
-
-def _fine_clustering_metadata_df(
-    report: ClusteringReport,
-    *,
-    model: str,
-    layer: str,
-    sample_idx: int,
-) -> pd.DataFrame:
-    cols = ["model", "layer", "sample_idx", "entity", "cluster"]
-    optional_cols = ["pmid", "mention"]
-    present_optional = [c for c in optional_cols if c in report.assignments.columns]
-    keep = [
-        c
-        for c in ["entity", "cluster", *present_optional]
-        if c in report.assignments.columns
-    ]
-    if "entity" not in keep or "cluster" not in keep:
-        return pd.DataFrame(columns=cols + present_optional)
-    out = report.assignments[keep].copy()
-    out.insert(0, "sample_idx", sample_idx)
-    out.insert(0, "layer", layer)
-    out.insert(0, "model", model)
-    return out
-
-
-def _write_clustering_validation_artifacts(
-    report_dir: pathlib.Path,
-    report: ClusteringReport,
-    *,
-    model: str,
-    layer: str,
-    sample_idx: int = 0,
-    dump_clustering_report: bool = False,
-) -> None:
-    """
-    Persist grid metrics, summary row, metric plot, and fine metadata like
-    ``run/analysis/clustering_quality.py`` (single sample).
-
-    When ``dump_clustering_report`` is True, also writes a gzip-pickled **JSON-serializable**
-    dict from :func:`~pelinker.reporting.clustering_report_to_jsonable_dict` (same fields as
-    :class:`~pelinker.reporting.ClusteringReport`, no DataFrames/ndarrays) as
-    ``{model}_{layer}_clustering_report.pkl.gz`` (layer characters sanitized like the plot stem).
-    """
-    report_dir = report_dir.expanduser()
-    report_dir.mkdir(parents=True, exist_ok=True)
-
-    summary = summarize_clustering_reports_for_search(
-        [report], model=model, layer=layer
-    )
-    pd.DataFrame([summary.to_flat_dict()]).to_csv(
-        report_dir / "results.csv", index=False
-    )
-
-    grid_detail = _metrics_df_with_grid_sample_columns(
-        report, model=model, layer=layer, sample_idx=sample_idx
-    )
-    grid_detail.to_csv(report_dir / "results_grid_per_sample.csv", index=False)
-
-    fine = _fine_clustering_metadata_df(
-        report, model=model, layer=layer, sample_idx=sample_idx
-    )
-    fine_path = report_dir / "fine_clustering_metadata.pkl.gz"
-    tmp_fine = fine_path.with_name(fine_path.name + ".tmp")
-    fine.to_pickle(tmp_fine, compression="gzip")
-    tmp_fine.replace(fine_path)
-
-    if dump_clustering_report:
-        stem = _safe_plot_stem(model, layer)
-        report_path = report_dir / f"{stem}_clustering_report.pkl.gz"
-        tmp_report = report_path.with_name(report_path.name + ".tmp")
-        with gzip.open(tmp_report, "wb") as zf:
-            pickle.dump(
-                clustering_report_to_jsonable_dict(report),
-                zf,
-                protocol=pickle.HIGHEST_PROTOCOL,
-            )
-        tmp_report.replace(report_path)
-
-    plot_path = report_dir / f"{_safe_plot_stem(model, layer)}.png"
-    plot_metrics_with_error_bars(
-        [report.metrics_df],
-        plot_path,
-        chosen_min_cluster_size=float(report.hyperparameters.min_cluster_size),
-    )
-    logger.info(
-        "Wrote clustering validation artifacts under %s (metrics plot: %s%s)",
-        report_dir,
-        plot_path.name,
-        (
-            f", clustering report: {_safe_plot_stem(model, layer)}_clustering_report.pkl.gz"
-            if dump_clustering_report
-            else ""
-        ),
+def _parquet_read_config_from_fit(
+    fit_cfg: LinkerFitConfig,
+) -> ClusteringOptimizationConfig:
+    """Map :class:`LinkerFitConfig` to the parquet batch fields of :class:`ClusteringOptimizationConfig`."""
+    return ClusteringOptimizationConfig(
+        min_class_size=fit_cfg.min_class_size,
+        batch_size=fit_cfg.batch_size,
+        n_embedding_batches=fit_cfg.n_embedding_batches,
+        negative_screener=fit_cfg.negative_screener,
     )
 
 
@@ -387,14 +267,20 @@ class Linker:
         self.training_cluster_frame: pd.DataFrame | None = None
         self.training_pca_residuals: np.ndarray | None = None
         self.training_pca_mahalanobis: np.ndarray | None = None
+        self.training_umap_clustering: np.ndarray | None = None
+        self.training_umap_visualization: np.ndarray | None = None
+        self.training_pca_reduced: np.ndarray | None = None
         self.cluster_composition: ClusterCompositionSnapshot | None = None
         self.cluster_consensus_names: dict[int, str] = {}
         self.screener: NegativeClassScreener | None = None
+        self.screener_in_sample_metrics: NegativeScreenerInSampleMetrics | None = None
+        self.clustering_fit_metrics: ClusteringFitMetrics | None = None
         self._hf_tokenizer = None
         self._hf_model = None
         self._hf_models_by_type: dict[str, tuple[object, object]] = {}
         self.nlp_model_name: str = kwargs.pop("nlp_model_name", "en_core_web_trf")
         self._nlp: object | None = None
+        self._fit_clustering_report: ClusteringReport | None = None
 
     @classmethod
     def filter_report(cls, report, thr_score):
@@ -402,6 +288,7 @@ class Linker:
         return report
 
     def dump(self, file_spec: str | pathlib.Path) -> None:
+        self._fit_clustering_report = None
         path = _linker_artifact_gz_path(file_spec)
         path.parent.mkdir(parents=True, exist_ok=True)
         joblib.dump(self, path, compress=3)
@@ -422,6 +309,12 @@ class Linker:
             pe_model.training_pca_residuals = None
         if "training_pca_mahalanobis" not in pe_model.__dict__:
             pe_model.training_pca_mahalanobis = None
+        if "training_umap_clustering" not in pe_model.__dict__:
+            pe_model.training_umap_clustering = None
+        if "training_umap_visualization" not in pe_model.__dict__:
+            pe_model.training_umap_visualization = None
+        if "training_pca_reduced" not in pe_model.__dict__:
+            pe_model.training_pca_reduced = None
         if "cluster_composition" not in pe_model.__dict__:
             pe_model.cluster_composition = None
         if "cluster_consensus_names" not in pe_model.__dict__:
@@ -430,7 +323,109 @@ class Linker:
             pe_model.nlp_model_name = "en_core_web_trf"
         if "_nlp" not in pe_model.__dict__:
             pe_model._nlp = None
+        if "screener_in_sample_metrics" not in pe_model.__dict__:
+            pe_model.screener_in_sample_metrics = None
+        if "clustering_fit_metrics" not in pe_model.__dict__:
+            pe_model.clustering_fit_metrics = None
+        if "_fit_clustering_report" not in pe_model.__dict__:
+            pe_model._fit_clustering_report = None
         return pe_model
+
+    def take_fit_clustering_report(self) -> ClusteringReport | None:
+        """
+        Consume the :class:`~pelinker.reporting.ClusteringReport` produced by the last :meth:`fit`.
+
+        Call **before** :meth:`dump` if you need JSON or other persistence: the report is
+        not serialized on the linker artifact (only prediction state is pickled).
+
+        Returns ``None`` if :meth:`fit` has not been run, the report was already taken, or
+        clustering state was incomplete.
+        """
+        report = self._fit_clustering_report
+        self._fit_clustering_report = None
+        return report
+
+    def _strip_training_metrics_for_prediction(self) -> None:
+        """Drop mention-level training tables and manifold arrays; keep predict-time fields."""
+        self.training_cluster_frame = None
+        self.training_pca_residuals = None
+        self.training_pca_mahalanobis = None
+        self.training_umap_clustering = None
+        self.training_umap_visualization = None
+        self.training_pca_reduced = None
+
+    def build_clustering_report(self) -> ClusteringReport | None:
+        """
+        Build a :class:`~pelinker.reporting.ClusteringReport` when full training rows exist.
+
+        After a normal :meth:`fit`, heavy training payloads are removed for prediction; use
+        :meth:`take_fit_clustering_report` immediately after fitting instead.
+
+        This method remains useful for **legacy** pickled linkers that still embed training
+        arrays, or for tests that skip stripping.
+        """
+        tcf = self.training_cluster_frame
+        if (
+            tcf is None
+            or self.training_pca_residuals is None
+            or self.training_pca_mahalanobis is None
+            or self.training_umap_clustering is None
+            or self.training_umap_visualization is None
+            or self.training_pca_reduced is None
+            or self.clustering_fit_metrics is None
+        ):
+            return None
+        n = len(tcf)
+        if (
+            len(self.training_pca_residuals) != n
+            or len(self.training_pca_mahalanobis) != n
+            or self.training_umap_clustering.shape[0] != n
+            or self.training_umap_visualization.shape[0] != n
+            or self.training_pca_reduced.shape[0] != n
+        ):
+            return None
+
+        m = self.clustering_fit_metrics
+        dbcv_f = float(m.dbcv) if m.dbcv is not None else float("nan")
+        ari_val = float(m.ari) if m.ari is not None else float("nan")
+        metrics_df = pd.DataFrame(
+            [
+                {
+                    "min_cluster_size": m.min_cluster_size,
+                    "icm": float("nan"),
+                    "n_clusters": m.n_clusters_emergent,
+                    "dbcv": dbcv_f,
+                    "ari": ari_val,
+                }
+            ]
+        )
+
+        assignments = tcf[["entity", "cluster"]].copy()
+        for col in ("pmid", "mention"):
+            if col in tcf.columns:
+                assignments[col] = tcf[col]
+
+        number_properties = int(tcf["entity"].nunique())
+
+        return ClusteringReport(
+            hyperparameters=ClusteringHyperparameters(
+                min_cluster_size=m.min_cluster_size
+            ),
+            best_score=dbcv_f,
+            number_properties=number_properties,
+            n_clusters_emergent=m.n_clusters_emergent,
+            metrics_df=metrics_df,
+            assignments=assignments,
+            pca_residuals=np.asarray(self.training_pca_residuals, dtype=np.float64),
+            pca_mahalanobis=np.asarray(self.training_pca_mahalanobis, dtype=np.float64),
+            umap_clustering=np.asarray(self.training_umap_clustering, dtype=np.float64),
+            umap_visualization=np.asarray(
+                self.training_umap_visualization, dtype=np.float64
+            ),
+            pca_reduced=np.asarray(self.training_pca_reduced, dtype=np.float64),
+            negative_screener_cv=None,
+            ari=m.ari,
+        )
 
     @staticmethod
     def _normalize_embedding_paths(
@@ -444,22 +439,20 @@ class Linker:
         self,
         embeddings: pathlib.Path | Sequence[pathlib.Path] | None,
         transform_config: TransformConfig,
-        min_cluster_size: int | None = None,
+        min_cluster_size: int,
+        *,
+        fit_config: LinkerFitConfig | None = None,
         kb_labels: set[str] | None = None,
-        optimize_clustering: bool = False,
-        clustering_optimization_config: ClusteringOptimizationConfig | None = None,
         embedding_training: EmbeddingTrainingConfig | None = None,
         embedding_metadata: EmbeddingModelMetadata | None = None,
         kb_config: KBConfig | None = None,
-        clustering_report_dir: pathlib.Path | None = None,
-        dump_clustering_report: bool = False,
-    ):
+    ) -> Linker:
         """
         Fit the Linker model with embeddings.
 
         This method handles two main parts:
         a) Loading and processing embeddings (from file or direct array)
-        b) Clustering the embeddings
+        b) Fitting the negative screener, then PCA/UMAP + HDBSCAN on non-negative rows
 
         Args:
             embeddings: Path or sequence of paths to parquet file(s) (mention-level rows:
@@ -468,39 +461,32 @@ class Linker:
                         embeddings). Order must match ``embedding_metadata.sources``.
                         If None, ``embed_kb_corpus`` is run (one output file per source).
             transform_config: TransformConfig instance
-            min_cluster_size: Minimum cluster size for HDBSCAN when ``optimize_clustering`` is
-                False. If None, uses 20.
+            min_cluster_size: HDBSCAN ``min_cluster_size`` (choose upstream, e.g. via
+                ``run/analysis/clustering_quality.py`` / ``estimate_model_clustering``).
+            fit_config: Parquet read batching, mention-per-entity filter, and screener settings.
+                Defaults to :class:`LinkerFitConfig()`.
             kb_labels: Restrict training rows to these ``entity`` labels (optional).
-            optimize_clustering: If True, run ``min_cluster_size`` grid search on a
-                ``clustering_optimization_config.frac`` subsample (analysis-aligned), then
-                fit the serialized model on **all** prepared rows (no subsampling).
-            clustering_optimization_config: Parquet batching (``batch_size``,
-                ``n_embedding_batches``), grid bounds (``min_scale`` / resolved default,
-                ``max_scale``, ``clustering_grid_step``), mention filter ``min_class_size``,
-                grid subsample ``frac``, and RNG ``rns`` for phase 1 only.
             embedding_training: Corpus paths and embedding runtime. Required when embeddings=None.
             embedding_metadata: If provided, overrides or sets ``self.embedding_metadata`` for
                 this fit (required when embeddings=None unless already set on the linker).
             kb_config: Knowledge-base metadata stored on the linker; ``entity_count`` is set
                 from fitted vocabulary when omitted (None).
-            clustering_report_dir: If set, write clustering grid metrics, ``results.csv``,
-                ``results_grid_per_sample.csv``, ``fine_clustering_metadata.pkl.gz``, and a
-                DBCV/ICM plot (same layout as ``run/analysis/clustering_quality.py``). When
-                ``optimize_clustering`` is False, a diagnostic grid is run on the same
-                ``frac`` subsample as configured in ``clustering_optimization_config`` without
-                changing the chosen ``min_cluster_size``.
-            dump_clustering_report: If True (and ``clustering_report_dir`` is set), also
-                pickle a JSON-serializable dict (see
-                :func:`~pelinker.reporting.clustering_report_to_jsonable_dict`) under
-                ``{model}_{layer}_clustering_report.pkl.gz`` in that directory. Default False.
 
         Side effects:
             Sets ``cluster_composition`` (mention-weighted property mass and per-cluster
-            mixtures) and ``cluster_consensus_names`` (short labels from those mixtures).
+            mixtures), ``cluster_consensus_names`` (short labels from those mixtures),
+            ``screener_in_sample_metrics``, and ``clustering_fit_metrics``. Mention-level
+            training tables and manifold arrays used for :class:`~pelinker.reporting.ClusteringReport`
+            are stripped after each fit; persist JSON with :meth:`take_fit_clustering_report` and
+            :func:`~pelinker.reporting.write_clustering_report_json` at
+            :func:`~pelinker.reporting.linker_fit_clustering_report_path` (same layout as
+            ``pelinker-fit`` ``report_path``) before :meth:`dump`.
 
         Returns:
             self
         """
+        if min_cluster_size < 2:
+            raise ValueError("min_cluster_size must be >= 2")
 
         is_temporary = False
         embeddings_paths: list[pathlib.Path] = []
@@ -509,7 +495,8 @@ class Linker:
             if embedding_metadata is not None:
                 self.embedding_metadata = embedding_metadata
 
-            read_cfg = clustering_optimization_config or ClusteringOptimizationConfig()
+            fc = fit_config or LinkerFitConfig()
+            read_cfg = _parquet_read_config_from_fit(fc)
 
             if embeddings is None:
                 if embedding_training is None:
@@ -566,30 +553,19 @@ class Linker:
                     "No mention-level embedding rows loaded from parquet (check paths "
                     "and columns pmid, entity, mention, embed)."
                 )
-            filtered = filter_mention_frame_by_kb_labels(raw, kb_labels)
-            if len(filtered) == 0:
-                raise ValueError("No rows left after KB entity-label filter")
-            prepared = drop_entities_with_few_mentions(
-                filtered,
-                read_cfg.min_class_size,
-                negative_label=read_cfg.negative_screener.negative_label,
-            )
-            if len(prepared) == 0:
-                raise ValueError(
-                    "No rows left after dropping properties with fewer than "
-                    f"{read_cfg.min_class_size} mentions each"
-                )
-            prepared = prepared.reset_index(drop=True)
+
+            # prepared = drop_entities_with_few_mentions(
+            #     raw,
+            #     fc.min_class_size,
+            #     negative_label=fc.negative_screener.negative_label,
+            # )
 
             self._fit_clustering_on_prepared_mentions(
-                prepared=prepared,
+                prepared=raw,
                 transform_config=transform_config,
-                read_cfg=read_cfg,
-                optimize_clustering=optimize_clustering,
-                min_cluster_size_arg=min_cluster_size,
+                fit_cfg=fc,
+                min_cluster_size=min_cluster_size,
                 kb_config=kb_config,
-                clustering_report_dir=clustering_report_dir,
-                dump_clustering_report=dump_clustering_report,
             )
 
             return self
@@ -609,117 +585,55 @@ class Linker:
         *,
         prepared: pd.DataFrame,
         transform_config: TransformConfig,
-        read_cfg: ClusteringOptimizationConfig,
-        optimize_clustering: bool,
-        min_cluster_size_arg: int | None,
+        fit_cfg: LinkerFitConfig,
+        min_cluster_size: int,
         kb_config: KBConfig | None,
-        clustering_report_dir: pathlib.Path | None,
-        dump_clustering_report: bool,
     ) -> None:
-        """Grid search (optional) on subsample; final PCA/UMAP + HDBSCAN on non-negative rows only."""
-        need_grid_frame = optimize_clustering or clustering_report_dir is not None
-        grid_sample: pd.DataFrame | None = None
-        if need_grid_frame:
-            grid_sample = prepared.sample(
-                frac=read_cfg.frac,
-                random_state=read_cfg.rns,
-                replace=False,
+        """Fit screener on all prepared rows, then PCA/UMAP + HDBSCAN on non-negative rows only."""
+        ns_cfg = fit_cfg.negative_screener
+        self.screener, self.screener_in_sample_metrics = (
+            fit_negative_screener_with_metrics(
+                prepared,
+                ns_cfg,
             )
-            if len(grid_sample) == 0:
-                logger.warning(
-                    "Empty grid subsample (frac=%s); using full prepared frame for grid",
-                    read_cfg.frac,
-                )
-                grid_sample = prepared
-
-        report: ClusteringReport | None = None
-        if optimize_clustering:
-            assert grid_sample is not None
-            report = estimate_clustering_from_frame(
-                grid_sample,
-                transform_config,
-                optimization_config=read_cfg,
-                selected_labels=None,
-                all_metrics_dfs=None,
-                aggregation_level="mention",
+        )
+        _, manifold_df = split_by_negative_label(prepared, ns_cfg.negative_label)
+        if len(manifold_df) == 0:
+            raise ValueError(
+                "No rows left after excluding negative-label mentions for manifold fit"
             )
-            if report is None:
-                logger.warning(
-                    "Clustering grid failed; falling back to min_class_size=%s",
-                    read_cfg.min_class_size,
-                )
-                best_mcs = int(read_cfg.min_class_size)
-            else:
-                best_mcs = int(report.hyperparameters.min_cluster_size)
-                logger.info(
-                    "Grid search selected min_cluster_size=%s (dbcv=%.4f)",
-                    best_mcs,
-                    report.best_score,
-                )
-        else:
-            best_mcs = int(
-                min_cluster_size_arg if min_cluster_size_arg is not None else 20
-            )
-
-        if clustering_report_dir is not None:
-            diagnostic = report
-            if not optimize_clustering:
-                assert grid_sample is not None
-                diagnostic = estimate_clustering_from_frame(
-                    grid_sample,
-                    transform_config,
-                    optimization_config=read_cfg,
-                    selected_labels=None,
-                    all_metrics_dfs=None,
-                    aggregation_level="mention",
-                )
-            if diagnostic is not None:
-                m, lyr = _clustering_quality_model_layer_from_metadata(
-                    self.embedding_metadata
-                )
-                _write_clustering_validation_artifacts(
-                    clustering_report_dir,
-                    diagnostic,
-                    model=m,
-                    layer=lyr,
-                    sample_idx=0,
-                    dump_clustering_report=dump_clustering_report,
-                )
-            else:
-                logger.warning(
-                    "Skipping clustering validation artifacts (grid/diagnostic report is None)"
-                )
-
-        ns_cfg = read_cfg.negative_screener
-        neg_mask = prepared["entity"].astype(str).values == ns_cfg.negative_label
-        self.screener = NegativeClassScreener.fit_from_frame(prepared, ns_cfg)
-        if neg_mask.any():
-            manifold_df = prepared.loc[~neg_mask].copy()
-            if len(manifold_df) == 0:
-                raise ValueError(
-                    "No rows left after excluding negative-label mentions for manifold fit"
-                )
-        else:
-            manifold_df = prepared
 
         embeddings = np.stack(manifold_df["embed"].values).astype(
             np.float32, copy=False
         )
         self.transform_config = transform_config
         self.transformer = EmbeddingTransformer(transform_config)
-        umap_clustering, _, pca_residuals, pca_mahalanobis = (
+        umap_clustering, umap_visualization, pca_residuals, pca_mahalanobis = (
             self.transformer.fit_transform(embeddings)
         )
+        embeddings_normed = self.transformer._l2_normalize_rows(embeddings)
+        pca_reduced = self.transformer.pca.transform(embeddings_normed)
         self.training_pca_residuals = np.asarray(pca_residuals, dtype=np.float32)
         self.training_pca_mahalanobis = np.asarray(pca_mahalanobis, dtype=np.float32)
+        self.training_umap_clustering = np.asarray(umap_clustering, dtype=np.float32)
+        self.training_umap_visualization = np.asarray(
+            umap_visualization, dtype=np.float32
+        )
+        self.training_pca_reduced = np.asarray(pca_reduced, dtype=np.float32)
 
         self.clusterer = hdbscan.HDBSCAN(
-            min_cluster_size=best_mcs,
+            min_cluster_size=min_cluster_size,
             gen_min_span_tree=True,
             prediction_data=True,
         )
         cluster_labels_arr = self.clusterer.fit_predict(umap_clustering)
         cluster_labels = cluster_labels_arr.astype(int, copy=False)
+        self.clustering_fit_metrics = compute_clustering_fit_metrics(
+            self.clusterer,
+            manifold_df,
+            min_cluster_size=min_cluster_size,
+            cluster_labels=cluster_labels,
+        )
 
         tc_cols = ["pmid", "entity", "mention"]
         missing = [c for c in tc_cols if c not in manifold_df.columns]
@@ -752,6 +666,10 @@ class Linker:
                 self.kb_config = replace(kb_config, entity_count=len(self.vocabulary))
             else:
                 self.kb_config = kb_config
+
+        fit_report = self.build_clustering_report()
+        self._strip_training_metrics_for_prediction()
+        self._fit_clustering_report = fit_report
 
     def _load_embeddings_from_file(
         self, embeddings_path: pathlib.Path, kb_labels: set[str] | None = None
@@ -849,8 +767,116 @@ class Linker:
             return np.zeros_like(v, dtype=np.float64)
         return (v - mean) / std
 
+    @staticmethod
+    def _mention_interval_half_open(
+        row: dict[str, object],
+    ) -> tuple[int, int, int] | None:
+        """Document character interval ``[start, end)`` for overlap tests, or ``None``."""
+        it = row.get("itext")
+        if it is None:
+            return None
+        it_i = int(it)
+        aa = row.get("a_abs")
+        bb = row.get("b_abs")
+        if aa is not None and bb is not None:
+            return (it_i, int(aa), int(bb))
+        aa = row.get("a")
+        bb = row.get("b")
+        if aa is not None and bb is not None:
+            return (it_i, int(aa), int(bb))
+        return None
+
+    @staticmethod
+    def _char_intervals_overlap(
+        u: tuple[int, int, int], v: tuple[int, int, int]
+    ) -> bool:
+        if u[0] != v[0]:
+            return False
+        _, a1, b1 = u
+        _, a2, b2 = v
+        return a1 < b2 and a2 < b1
+
+    @staticmethod
+    def _span_extent_chars(row: dict[str, object]) -> int:
+        iv = Linker._mention_interval_half_open(row)
+        if iv is not None:
+            return max(iv[2] - iv[1], 0)
+        return len(str(row.get("mention", "")))
+
+    @staticmethod
+    def _dedupe_overlapping_prediction_rows(
+        rows: list[dict[str, object]],
+    ) -> list[dict[str, object]]:
+        """Drop redundant W1/W2/W3 windows that cover the same text region.
+
+        Rows without a usable ``(itext, …)`` interval are never merged with others.
+
+        Overlap is union of intersecting half-open character intervals on the same
+        document. Within each connected component, keep the row with highest
+        ``score``; ties prefer a shorter span, then lexicographic ``mention``.
+
+        Returned rows are sorted by ``(itext, a_abs or a)`` for stable output.
+        """
+        n = len(rows)
+        if n <= 1:
+            return rows
+
+        intervals: list[tuple[int, int, int] | None] = [
+            Linker._mention_interval_half_open(r) for r in rows
+        ]
+        parent = list(range(n))
+
+        def find(i: int) -> int:
+            while parent[i] != i:
+                parent[i] = parent[parent[i]]
+                i = parent[i]
+            return i
+
+        def union(i: int, j: int) -> None:
+            ri, rj = find(i), find(j)
+            if ri != rj:
+                parent[ri] = rj
+
+        for i in range(n):
+            for j in range(i + 1, n):
+                ui, uj = intervals[i], intervals[j]
+                if ui is None or uj is None:
+                    continue
+                if Linker._char_intervals_overlap(ui, uj):
+                    union(i, j)
+
+        comp_members: dict[int, list[int]] = defaultdict(list)
+        for i in range(n):
+            comp_members[find(i)].append(i)
+
+        chosen: list[dict[str, object]] = []
+        for members in comp_members.values():
+
+            def rank_key(idx: int) -> tuple[float, int, str]:
+                r = rows[idx]
+                return (
+                    -float(r.get("score", 0.0)),
+                    Linker._span_extent_chars(r),
+                    str(r.get("mention", "")),
+                )
+
+            best = min(members, key=rank_key)
+            chosen.append(rows[best])
+
+        def sort_key(r: dict[str, object]) -> tuple[int, int]:
+            it = r.get("itext")
+            it_i = int(it) if it is not None else -1
+            aa = r.get("a_abs")
+            if aa is not None:
+                return it_i, int(aa)
+            aa = r.get("a")
+            return it_i, int(aa) if aa is not None else -1
+
+        chosen.sort(key=sort_key)
+        return chosen
+
     def training_anomaly_metric_summary(self) -> dict[str, dict[str, float]] | None:
-        """Quantile summary for calibrated anomaly analysis from fit-time metrics."""
+        """Quantile summary from stored per-mention PCA metrics (legacy pickles only after fit)."""
         if (
             self.training_pca_residuals is None
             or self.training_pca_mahalanobis is None
@@ -1011,16 +1037,11 @@ class Linker:
         if tt is None:
             return {"entities": [], "word_groupings": {}}
 
-        if self.transformer is not None and self.clusterer is not None:
-            kb_items = self._predict_with_clustering(
-                tt,
-                vocabulary,
-                threshold=threshold,
-            )
-        else:
-            raise TypeError(
-                "Neither transformer/clusterer nor index is set. Call fit() first."
-            )
+        kb_items = self._predict_with_clustering(
+            tt,
+            vocabulary,
+            threshold=threshold,
+        )
 
         for item in kb_items:
             item.pop("lemma", None)
@@ -1055,13 +1076,9 @@ class Linker:
         Returns:
             List of entity predictions
         """
-        if self.transformer is None or self.clusterer is None:
+        if self.transformer is None or self.clusterer is None or self.screener is None:
             raise ValueError(
-                "Transformer and clusterer must be fitted before prediction"
-            )
-        if self.screener is None:
-            raise ValueError(
-                "Linker.screener is required for clustering predict(); refit the model."
+                "Screener, Transformer and Clusterer must be fitted before prediction"
             )
 
         # Convert to numpy
@@ -1101,6 +1118,9 @@ class Linker:
 
             # For now, return the first entity in the cluster
             predicted_entity = cluster_entities[0]
+            # HDBSCAN soft membership from ``approximate_predict`` on UMAP coords (not a
+            # per-token margin). Nested windows can map to nearly the same point after
+            # PCA→UMAP, so ``cluster_prob`` may tie even when raw span means differ.
             score = cluster_prob
 
             kb_item = {
@@ -1115,7 +1135,7 @@ class Linker:
             }
             kb_items.append(kb_item)
 
-        return kb_items
+        return self._dedupe_overlapping_prediction_rows(kb_items)
 
     def _kb_lemma_index_by_wg(self, nlp: object) -> dict[WordGrouping, dict[str, str]]:
         """Build ``{word_grouping: {lemma_string: kb_property_label}}`` from ``labels_map``.

@@ -1,5 +1,8 @@
 """Mention-level fused parquets for ``Linker.fit`` (inner join + concat, analysis-aligned)."""
 
+import json
+from pathlib import Path
+
 import pandas as pd
 
 from numpy.random import RandomState
@@ -8,9 +11,44 @@ from pelinker.config import (
     ClusteringOptimizationConfig,
     EmbeddingModelMetadata,
     EmbeddingSourceSpec,
+    LinkerFitConfig,
+    NegativeScreenerConfig,
 )
 from pelinker.model import Linker
+from pelinker.onto import NEGATIVE_LABEL
+from pelinker.reporting import (
+    LINKER_FIT_CLUSTERING_REPORT_BASENAME,
+    write_clustering_report_json,
+)
 from pelinker.transform import TransformConfig
+
+
+def _two_source_parquets(tmp_path, n_ent: int, pmids: tuple[str, ...]):
+    p1 = tmp_path / "s0.parquet"
+    p2 = tmp_path / "s1.parquet"
+    rows1 = []
+    rows2 = []
+    for k in range(n_ent):
+        for pmid in pmids:
+            rows1.append(
+                {
+                    "pmid": pmid,
+                    "entity": f"p{k}",
+                    "mention": "m",
+                    "embed": [float(k), 0.1],
+                }
+            )
+            rows2.append(
+                {
+                    "pmid": pmid,
+                    "entity": f"p{k}",
+                    "mention": "m",
+                    "embed": [0.2, float(k) * 0.05],
+                }
+            )
+    pd.DataFrame(rows1).to_parquet(p1)
+    pd.DataFrame(rows2).to_parquet(p2)
+    return p1, p2
 
 
 def test_fused_fit_two_parquets_stacks_embedding_dim(tmp_path):
@@ -49,10 +87,72 @@ def test_fused_fit_two_parquets_stacks_embedding_dim(tmp_path):
     pd.DataFrame(rows1).to_parquet(p1)
     pd.DataFrame(rows2).to_parquet(p2)
 
-    opt = ClusteringOptimizationConfig(
+    fit_cfg = LinkerFitConfig(min_class_size=1, batch_size=500)
+    linker = Linker(labels_map=labels_map, embedding_metadata=metadata)
+    linker.fit(
+        [p1, p2],
+        transform_config=TransformConfig(
+            pca_components=4, umap_components=2, umap_viz_components=2
+        ),
+        min_cluster_size=2,
+        fit_config=fit_cfg,
+    )
+    assert linker.transformer is not None
+    assert len(linker.vocabulary) == n_ent
+    assert linker.transformer.pca is not None
+    assert linker.transformer.pca.n_features_in_ == 4
+    assert linker.clusterer is not None
+    assert getattr(linker.clusterer, "prediction_data_", None) is not None
+    assert linker.cluster_composition is not None
+    assert linker.cluster_composition.global_property_mass
+    assert linker.cluster_consensus_names
+    assert linker.screener_in_sample_metrics is None
+    assert linker.clustering_fit_metrics is not None
+    assert linker.clustering_fit_metrics.min_cluster_size == 2
+    assert 0.0 <= linker.clustering_fit_metrics.noise_fraction <= 1.0
+    assert linker.clustering_fit_metrics.n_samples == 2 * n_ent
+    report = linker.take_fit_clustering_report()
+    assert report is not None
+    assert len(report.assignments) == 2 * n_ent
+    assert set(report.assignments.columns) >= {
+        "pmid",
+        "entity",
+        "mention",
+        "cluster",
+    }
+    assert len(report.pca_residuals) == 2 * n_ent
+    assert report.umap_clustering.shape == (2 * n_ent, 2)
+
+
+def test_fit_with_synthetic_negatives_screener_metrics_and_dump_load(tmp_path):
+    metadata = EmbeddingModelMetadata(
+        sources=(
+            EmbeddingSourceSpec(model_type="a", layers_spec="1"),
+            EmbeddingSourceSpec(model_type="a", layers_spec="2"),
+        )
+    )
+    n_ent = 10
+    labels_map = {f"e{k}": f"p{k}" for k in range(n_ent)}
+    p1, p2 = _two_source_parquets(tmp_path, n_ent, ("a", "b"))
+
+    rows_neg1 = [
+        {"pmid": "z", "entity": NEGATIVE_LABEL, "mention": "n", "embed": [9.0, 9.0]}
+    ]
+    rows_neg2 = [
+        {"pmid": "z", "entity": NEGATIVE_LABEL, "mention": "n", "embed": [9.1, 8.9]}
+    ]
+    d1 = pd.read_parquet(p1)
+    d2 = pd.read_parquet(p2)
+    pd.concat([d1, pd.DataFrame(rows_neg1)], ignore_index=True).to_parquet(p1)
+    pd.concat([d2, pd.DataFrame(rows_neg2)], ignore_index=True).to_parquet(p2)
+
+    fit_cfg = LinkerFitConfig(
         min_class_size=1,
-        max_scale=30,
         batch_size=500,
+        negative_screener=NegativeScreenerConfig(
+            kind="lda",
+            negative_label=NEGATIVE_LABEL,
+        ),
     )
     linker = Linker(labels_map=labels_map, embedding_metadata=metadata)
     linker.fit(
@@ -61,196 +161,23 @@ def test_fused_fit_two_parquets_stacks_embedding_dim(tmp_path):
             pca_components=4, umap_components=2, umap_viz_components=2
         ),
         min_cluster_size=2,
-        clustering_optimization_config=opt,
+        fit_config=fit_cfg,
     )
-    assert linker.transformer is not None
-    assert len(linker.vocabulary) == n_ent
-    assert linker.transformer.pca is not None
-    assert linker.transformer.pca.n_features_in_ == 4
-    assert linker.clusterer is not None
-    assert getattr(linker.clusterer, "prediction_data_", None) is not None
-    assert linker.training_cluster_frame is not None
-    assert len(linker.training_cluster_frame) == 2 * n_ent
-    assert set(linker.training_cluster_frame.columns) >= {
-        "pmid",
-        "entity",
-        "mention",
-        "cluster",
-    }
-    assert linker.cluster_composition is not None
-    assert linker.cluster_composition.global_property_mass
-    assert linker.cluster_consensus_names
-
-
-def test_fused_fit_optimize_clustering_grid_then_full_fit(tmp_path):
-    """Grid search uses ``frac`` subsample; final model fits on all prepared rows."""
-    metadata = EmbeddingModelMetadata(
-        sources=(
-            EmbeddingSourceSpec(model_type="a", layers_spec="1"),
-            EmbeddingSourceSpec(model_type="a", layers_spec="2"),
-        )
-    )
-    n_ent = 20
-    labels_map = {f"e{k}": f"p{k}" for k in range(n_ent)}
-    p1 = tmp_path / "s0.parquet"
-    p2 = tmp_path / "s1.parquet"
-    rows1 = []
-    rows2 = []
-    for k in range(n_ent):
-        for pmid in ("a", "b", "c", "d"):
-            rows1.append(
-                {
-                    "pmid": pmid,
-                    "entity": f"p{k}",
-                    "mention": "m",
-                    "embed": [float(k), 0.1],
-                }
-            )
-            rows2.append(
-                {
-                    "pmid": pmid,
-                    "entity": f"p{k}",
-                    "mention": "m",
-                    "embed": [0.2, float(k) * 0.05],
-                }
-            )
-    pd.DataFrame(rows1).to_parquet(p1)
-    pd.DataFrame(rows2).to_parquet(p2)
-
-    opt = ClusteringOptimizationConfig(
-        min_class_size=4,
-        max_scale=25,
-        frac=0.7,
-        rns=RandomState(7),
-        batch_size=500,
-    )
-    linker = Linker(labels_map=labels_map, embedding_metadata=metadata)
-    linker.fit(
-        [p1, p2],
-        transform_config=TransformConfig(
-            pca_components=4, umap_components=2, umap_viz_components=2
-        ),
-        optimize_clustering=True,
-        clustering_optimization_config=opt,
-    )
-    assert linker.clusterer is not None
-    assert linker.training_cluster_frame is not None
-    assert len(linker.training_cluster_frame) == 4 * n_ent
-
-
-def test_fit_writes_clustering_report_artifacts_when_report_dir_set(tmp_path):
-    """``clustering_report_dir`` mirrors clustering_quality-style CSV, pickle, and metrics plot."""
-    metadata = EmbeddingModelMetadata(
-        sources=(
-            EmbeddingSourceSpec(model_type="a", layers_spec="1"),
-            EmbeddingSourceSpec(model_type="a", layers_spec="2"),
-        )
-    )
-    n_ent = 12
-    labels_map = {f"e{k}": f"p{k}" for k in range(n_ent)}
-    p1 = tmp_path / "s0.parquet"
-    p2 = tmp_path / "s1.parquet"
-    rows1 = []
-    rows2 = []
-    for k in range(n_ent):
-        for pmid in ("a", "b", "c", "d"):
-            rows1.append(
-                {
-                    "pmid": pmid,
-                    "entity": f"p{k}",
-                    "mention": "m",
-                    "embed": [float(k), 0.1],
-                }
-            )
-            rows2.append(
-                {
-                    "pmid": pmid,
-                    "entity": f"p{k}",
-                    "mention": "m",
-                    "embed": [0.2, float(k) * 0.05],
-                }
-            )
-    pd.DataFrame(rows1).to_parquet(p1)
-    pd.DataFrame(rows2).to_parquet(p2)
-
-    opt = ClusteringOptimizationConfig(
-        min_class_size=4,
-        max_scale=25,
-        frac=1.0,
-        rns=RandomState(0),
-        batch_size=500,
-    )
-    report_dir = tmp_path / "clustering_report"
-    linker = Linker(labels_map=labels_map, embedding_metadata=metadata)
-    linker.fit(
-        [p1, p2],
-        transform_config=TransformConfig(
-            pca_components=4, umap_components=2, umap_viz_components=2
-        ),
-        optimize_clustering=True,
-        clustering_optimization_config=opt,
-        clustering_report_dir=report_dir,
+    assert linker.screener is not None
+    assert linker.screener_in_sample_metrics is not None
+    assert linker.screener_in_sample_metrics.n_negative_label_mentions >= 1
+    assert linker.screener_in_sample_metrics.n_kb_mentions >= 1
+    fit_report = linker.take_fit_clustering_report()
+    assert fit_report is not None
+    assert NEGATIVE_LABEL not in set(
+        fit_report.assignments["entity"].astype(str).unique()
     )
 
-    assert (report_dir / "results.csv").is_file()
-    assert (report_dir / "results_grid_per_sample.csv").is_file()
-    assert (report_dir / "fine_clustering_metadata.pkl.gz").is_file()
-    assert (report_dir / "fusion2_a_1__a_2.png").is_file()
-    assert not (report_dir / "fusion2_a_1__a_2_clustering_report.pkl.gz").is_file()
-
-
-def test_fit_writes_clustering_report_pickle_when_dump_flag(tmp_path):
-    import gzip
-    import json
-    import pickle
-
-    metadata = EmbeddingModelMetadata(
-        sources=(EmbeddingSourceSpec(model_type="x", layers_spec="9"),)
-    )
-    n_ent = 8
-    labels_map = {f"e{k}": f"p{k}" for k in range(n_ent)}
-    p = tmp_path / "one.parquet"
-    rows = []
-    for k in range(n_ent):
-        for pmid in ("a", "b", "c"):
-            rows.append(
-                {
-                    "pmid": pmid,
-                    "entity": f"p{k}",
-                    "mention": "m",
-                    "embed": [float(k), 0.1, 0.2],
-                }
-            )
-    pd.DataFrame(rows).to_parquet(p)
-    opt = ClusteringOptimizationConfig(
-        min_class_size=2,
-        min_scale=2,
-        max_scale=20,
-        frac=1.0,
-        rns=RandomState(1),
-        batch_size=500,
-    )
-    report_dir = tmp_path / "reports"
-    linker = Linker(labels_map=labels_map, embedding_metadata=metadata)
-    linker.fit(
-        p,
-        transform_config=TransformConfig(
-            pca_components=3, umap_components=2, umap_viz_components=2
-        ),
-        optimize_clustering=True,
-        clustering_optimization_config=opt,
-        clustering_report_dir=report_dir,
-        dump_clustering_report=True,
-    )
-    out = report_dir / "x_9_clustering_report.pkl.gz"
-    assert out.is_file()
-    with gzip.open(out, "rb") as zf:
-        loaded = pickle.load(zf)
-    assert isinstance(loaded, dict)
-    assert loaded["schema"] == "pelinker.clustering_report.v2"
-    json.dumps(loaded)
-    assert isinstance(loaded["metrics_df"], list)
-    assert isinstance(loaded["pca_residuals"], list)
+    model_path = tmp_path / "linker_metrics"
+    linker.dump(model_path)
+    loaded = Linker.load(model_path)
+    assert loaded.screener_in_sample_metrics == linker.screener_in_sample_metrics
+    assert loaded.clustering_fit_metrics == linker.clustering_fit_metrics
 
 
 def test_estimate_model_clustering_multi_file_paths(tmp_path):
@@ -303,30 +230,7 @@ def test_fit_stores_and_serializes_training_pca_metrics(tmp_path):
     )
     n_ent = 12
     labels_map = {f"e{k}": f"p{k}" for k in range(n_ent)}
-    p1 = tmp_path / "s0.parquet"
-    p2 = tmp_path / "s1.parquet"
-    rows1 = []
-    rows2 = []
-    for k in range(n_ent):
-        for pmid in ("a", "b", "c"):
-            rows1.append(
-                {
-                    "pmid": pmid,
-                    "entity": f"p{k}",
-                    "mention": "m",
-                    "embed": [float(k), 0.1],
-                }
-            )
-            rows2.append(
-                {
-                    "pmid": pmid,
-                    "entity": f"p{k}",
-                    "mention": "m",
-                    "embed": [0.2, float(k) * 0.05],
-                }
-            )
-    pd.DataFrame(rows1).to_parquet(p1)
-    pd.DataFrame(rows2).to_parquet(p2)
+    p1, p2 = _two_source_parquets(tmp_path, n_ent, ("a", "b", "c"))
 
     linker = Linker(labels_map=labels_map, embedding_metadata=metadata)
     linker.fit(
@@ -335,32 +239,49 @@ def test_fit_stores_and_serializes_training_pca_metrics(tmp_path):
             pca_components=4, umap_components=2, umap_viz_components=2
         ),
         min_cluster_size=2,
-        clustering_optimization_config=ClusteringOptimizationConfig(
-            min_class_size=1,
-            max_scale=20,
-            batch_size=500,
-        ),
+        fit_config=LinkerFitConfig(min_class_size=1, batch_size=500),
     )
 
-    assert linker.training_cluster_frame is not None
-    assert linker.training_pca_residuals is not None
-    assert linker.training_pca_mahalanobis is not None
-    assert linker.training_pca_residuals.shape == (len(linker.training_cluster_frame),)
-    assert linker.training_pca_mahalanobis.shape == (
-        len(linker.training_cluster_frame),
-    )
-    assert (linker.training_pca_residuals >= 0.0).all()
-    assert (linker.training_pca_mahalanobis >= 0.0).all()
-    summary = linker.training_anomaly_metric_summary()
-    assert summary is not None
-    assert set(summary.keys()) == {"residual", "mahalanobis", "combined_max_z"}
+    report = linker.take_fit_clustering_report()
+    assert report is not None
+    n = len(report.assignments)
+    assert report.pca_residuals.shape == (n,)
+    assert report.pca_mahalanobis.shape == (n,)
+    assert (report.pca_residuals >= 0.0).all()
+    assert (report.pca_mahalanobis >= 0.0).all()
 
     model_path = tmp_path / "linker_residual_test"
     linker.dump(model_path)
     loaded = Linker.load(model_path)
-    assert loaded.training_pca_residuals is not None
-    assert loaded.training_pca_mahalanobis is not None
-    assert loaded.training_pca_residuals.shape == linker.training_pca_residuals.shape
-    assert (
-        loaded.training_pca_mahalanobis.shape == linker.training_pca_mahalanobis.shape
+    assert loaded.clustering_fit_metrics == linker.clustering_fit_metrics
+
+
+def test_fit_clustering_report_json_roundtrip(tmp_path: Path) -> None:
+    metadata = EmbeddingModelMetadata(
+        sources=(
+            EmbeddingSourceSpec(model_type="a", layers_spec="1"),
+            EmbeddingSourceSpec(model_type="a", layers_spec="2"),
+        )
     )
+    n_ent = 8
+    labels_map = {f"e{k}": f"p{k}" for k in range(n_ent)}
+    p1, p2 = _two_source_parquets(tmp_path, n_ent, ("1", "2"))
+
+    linker = Linker(labels_map=labels_map, embedding_metadata=metadata)
+    linker.fit(
+        [p1, p2],
+        transform_config=TransformConfig(
+            pca_components=4, umap_components=2, umap_viz_components=2
+        ),
+        min_cluster_size=2,
+        fit_config=LinkerFitConfig(min_class_size=1, batch_size=500),
+    )
+    report = linker.take_fit_clustering_report()
+    assert report is not None
+    out = tmp_path / LINKER_FIT_CLUSTERING_REPORT_BASENAME
+    write_clustering_report_json(out, report)
+    blob = json.loads(out.read_text(encoding="utf-8"))
+    assert blob["schema"] == "pelinker.clustering_report.v2"
+    n = len(report.assignments)
+    assert len(blob["pca_residuals"]) == n
+    assert len(blob["pca_mahalanobis"]) == n

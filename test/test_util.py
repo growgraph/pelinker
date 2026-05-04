@@ -134,6 +134,15 @@ def test_map_word_indexes_to_token_indexes():
     assert len(miti) == 4
 
 
+def test_map_spans_to_spans_basic_overlapping_sliding_windows():
+    """W2/W3 windows overlap; later windows must still include shared prefix tokens."""
+    ix_words = [(0, 9), (6, 18)]
+    token_offsets = [(0, 5), (6, 9), (10, 18)]
+    miti = map_spans_to_spans_basic(ix_words, token_offsets)
+    assert miti[(0, 9)] == [0, 1]
+    assert miti[(6, 18)] == [1, 2]
+
+
 class _FakeChunkMapper:
     @staticmethod
     def map_chunk_to_text(_itext, _ichunk):

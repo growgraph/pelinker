@@ -1,12 +1,16 @@
 from __future__ import annotations
 
+import gzip
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+import json
 import math
+import pathlib
 from typing import Any
-
 import numpy as np
 import pandas as pd
+
+from pelinker.config import ScreenerKind
 
 _JSON_CLUSTERING_REPORT_SCHEMA = "pelinker.clustering_report.v2"
 
@@ -67,6 +71,33 @@ def negative_screener_cv_summary_from_eval_dict(
         )
 
     return NegativeScreenerCvSummary(lda=_block("lda"), svm=_block("svm"))
+
+
+@dataclass(frozen=True)
+class NegativeScreenerInSampleMetrics:
+    """Train-set precision / recall / F1 for detecting ``negative_label`` (binary label 1)."""
+
+    precision: float
+    recall: float
+    f1: float
+    n_kb_mentions: int
+    """Rows whose ``entity`` is not the synthetic negative label (class 0)."""
+    n_negative_label_mentions: int
+    """Rows whose ``entity`` equals the synthetic negative label (class 1)."""
+    kind: ScreenerKind
+
+
+@dataclass(frozen=True)
+class ClusteringFitMetrics:
+    """Fit-time clustering diagnostics at a fixed ``min_cluster_size``."""
+
+    min_cluster_size: int
+    dbcv: float | None
+    """HDBSCAN ``relative_validity_`` when available."""
+    ari: float | None
+    n_clusters_emergent: int
+    noise_fraction: float
+    n_samples: int
 
 
 def _screener_cv_block_to_jsonable(
@@ -188,12 +219,25 @@ def _ndarray_to_jsonable_nested(arr: np.ndarray) -> Any:
     return _json_normalize(np.asarray(arr).tolist())
 
 
+# Basenames for artifacts under one report directory (``pelinker-fit`` / clustering search).
+LINKER_FIT_CLUSTERING_REPORT_BASENAME = "linker_fit.clustering_report.json.gz"
+CLUSTERING_SEARCH_RESULTS_CSV_BASENAME = "results.csv"
+CLUSTERING_SEARCH_GRID_PER_SAMPLE_CSV_BASENAME = "results_grid_per_sample.csv"
+CLUSTERING_SEARCH_FINE_METADATA_BASENAME = "fine_clustering_metadata.pkl.gz"
+CLUSTERING_QUALITY_CHECKPOINT_BASENAME = "clustering_quality.state.json.gz"
+
+
+def linker_fit_clustering_report_path(report_dir: str | pathlib.Path) -> pathlib.Path:
+    """Filesystem path for the fit-time :class:`ClusteringReport` JSON under ``report_dir``."""
+    return pathlib.Path(report_dir).expanduser() / LINKER_FIT_CLUSTERING_REPORT_BASENAME
+
+
 def clustering_report_to_jsonable_dict(report: ClusteringReport) -> dict[str, Any]:
     """
     Flatten a :class:`ClusteringReport` into JSON-serializable built-ins (no DataFrames/ndarrays).
 
     Intended for ``json.dumps`` or for pickling a stable, language-adjacent blob. Schema version
-    is stored under ``\"schema\"`` for forward compatibility.
+    is stored under ``"schema"`` for forward compatibility.
     """
     ari_out: float | None
     if report.ari is None:
@@ -226,6 +270,22 @@ def clustering_report_to_jsonable_dict(report: ClusteringReport) -> dict[str, An
             )
         ),
     }
+
+
+def write_clustering_report_json(
+    path: str | pathlib.Path, report: ClusteringReport, *, indent: int = 2
+) -> None:
+    """
+    Serialize ``report`` with :func:`clustering_report_to_jsonable_dict` to UTF-8 JSON.
+
+    Parent directories are created when missing.
+    """
+    p = pathlib.Path(path).expanduser()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    payload = clustering_report_to_jsonable_dict(report)
+
+    with gzip.open(p, mode="wt", encoding="utf-8", compresslevel=9) as f:
+        json.dump(payload, f, indent=indent)
 
 
 @dataclass(frozen=True)

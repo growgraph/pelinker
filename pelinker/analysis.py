@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import pathlib
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from typing import Literal
@@ -20,16 +21,25 @@ from pelinker.plotting import (
 )
 from pelinker.embedding_fusion import concat_mention_level_embedding_sources
 from pelinker.reporting import (
+    ClusteringFitMetrics,
     ClusteringHyperparameters,
     ClusteringReport,
     NegativeScreenerCvSummary,
+    NegativeScreenerInSampleMetrics,
     negative_screener_cv_summary_from_eval_dict,
 )
-from sklearn.metrics import adjusted_rand_score
+from sklearn.metrics import adjusted_rand_score, f1_score, precision_score, recall_score
 from numpy.random import RandomState
 
-from pelinker.config import ClusteringOptimizationConfig, TransformConfig
-from pelinker.negative_screener import evaluate_negative_screener_models
+from pelinker.config import (
+    ClusteringOptimizationConfig,
+    NegativeScreenerConfig,
+    TransformConfig,
+)
+from pelinker.negative_screener import (
+    NegativeClassScreener,
+    evaluate_negative_screener_models,
+)
 from pelinker.transform import compute_transform_artifacts
 
 
@@ -229,6 +239,115 @@ def metrics_df_with_grid_sample_columns(
     )
 
 
+def split_by_negative_label(
+    dfr: pd.DataFrame,
+    negative_label: str,
+) -> tuple[np.ndarray, pd.DataFrame]:
+    """
+    Split a mention frame into a boolean mask of synthetic-negative rows and the
+    manifold frame (KB / non-negative rows only).
+    """
+    neg_mask = dfr["entity"].astype(str).values == negative_label
+    manifold_df = dfr.loc[~neg_mask].copy()
+    return neg_mask, manifold_df
+
+
+def evaluate_negative_screener_cv_summary(
+    dfr: pd.DataFrame,
+    cfg: NegativeScreenerConfig,
+) -> NegativeScreenerCvSummary | None:
+    """Stratified CV for LDA vs linear SVM on negative vs KB (same task as grid analysis)."""
+    neg_mask = dfr["entity"].astype(str).values == cfg.negative_label
+    if not neg_mask.any():
+        return None
+    X_all = np.stack(dfr["embed"].values).astype(np.float32, copy=False)
+    y_bin = neg_mask.astype(np.int64)
+    raw_cv = evaluate_negative_screener_models(
+        X_all,
+        y_bin,
+        n_splits=cfg.cv_n_splits,
+        test_size=cfg.cv_test_size,
+        random_state=cfg.cv_random_state,
+    )
+    if raw_cv is None:
+        return None
+    return negative_screener_cv_summary_from_eval_dict(raw_cv)
+
+
+def fit_negative_screener_with_metrics(
+    dfr: pd.DataFrame,
+    config: NegativeScreenerConfig,
+) -> tuple[NegativeClassScreener, NegativeScreenerInSampleMetrics | None]:
+    """
+    Fit the persisted screener on ``dfr`` and report in-sample PR/F1 for detecting
+    ``negative_label`` when both classes are present.
+    """
+    screener = NegativeClassScreener.fit_from_frame(dfr, config)
+    y_true = (dfr["entity"].astype(str).values == config.negative_label).astype(
+        np.int64
+    )
+    n_kb = int(np.sum(y_true == 0))
+    n_neg = int(np.sum(y_true == 1))
+    if n_kb == 0 or n_neg == 0:
+        return screener, None
+    X = np.stack(dfr["embed"].values).astype(np.float32, copy=False)
+    y_pred = screener.predict_is_negative(X).astype(np.int64)
+    prec = float(precision_score(y_true, y_pred, pos_label=1, zero_division=0))
+    rec = float(recall_score(y_true, y_pred, pos_label=1, zero_division=0))
+    f1 = float(f1_score(y_true, y_pred, pos_label=1, zero_division=0))
+    return screener, NegativeScreenerInSampleMetrics(
+        precision=prec,
+        recall=rec,
+        f1=f1,
+        n_kb_mentions=n_kb,
+        n_negative_label_mentions=n_neg,
+        kind=config.kind,
+    )
+
+
+def compute_clustering_fit_metrics(
+    clusterer: object,
+    manifold_df: pd.DataFrame,
+    *,
+    min_cluster_size: int,
+    cluster_labels: np.ndarray,
+) -> ClusteringFitMetrics:
+    """DBCV, ARI vs ``entity``, and cluster counts for a fitted HDBSCAN model."""
+    labels = np.asarray(cluster_labels, dtype=np.int64).ravel()
+    n = int(labels.shape[0])
+    label_set = set(labels.tolist())
+    n_clusters_emergent = len(label_set) - (1 if -1 in label_set else 0)
+    noise_count = int(np.sum(labels == -1))
+    noise_fraction = float(noise_count) / float(n) if n > 0 else 0.0
+
+    rv = getattr(clusterer, "relative_validity_", None)
+    dbcv: float | None
+    if rv is None:
+        dbcv = None
+    else:
+        rv_f = float(rv)
+        if math.isnan(rv_f) or math.isinf(rv_f):
+            dbcv = None
+        else:
+            dbcv = rv_f
+
+    ari_score: float | None
+    if "entity" in manifold_df.columns and len(manifold_df) == n:
+        property_labels = manifold_df["entity"].astype("category").cat.codes.values
+        ari_score = compute_adjusted_rand_index(property_labels, labels)
+    else:
+        ari_score = None
+
+    return ClusteringFitMetrics(
+        min_cluster_size=min_cluster_size,
+        dbcv=dbcv,
+        ari=ari_score,
+        n_clusters_emergent=n_clusters_emergent,
+        noise_fraction=noise_fraction,
+        n_samples=n,
+    )
+
+
 def estimate_clustering_from_frame(
     dfr: pd.DataFrame,
     transform_config: TransformConfig,
@@ -274,24 +393,10 @@ def estimate_clustering_from_frame(
         if len(dfr) == 0:
             return None
 
-    negative_screener_cv: NegativeScreenerCvSummary | None = None
-    dfr_manifold = dfr
-    neg_mask = dfr["entity"].astype(str).values == neg_label
-    if neg_mask.any():
-        X_all = np.stack(dfr["embed"].values).astype(np.float32, copy=False)
-        y_bin = neg_mask.astype(np.int64)
-        raw_cv = evaluate_negative_screener_models(
-            X_all,
-            y_bin,
-            n_splits=screener_cfg.cv_n_splits,
-            test_size=screener_cfg.cv_test_size,
-            random_state=screener_cfg.cv_random_state,
-        )
-        if raw_cv is not None:
-            negative_screener_cv = negative_screener_cv_summary_from_eval_dict(raw_cv)
-        dfr_manifold = dfr.loc[~neg_mask].copy()
-        if len(dfr_manifold) == 0:
-            return None
+    negative_screener_cv = evaluate_negative_screener_cv_summary(dfr, screener_cfg)
+    _, dfr_manifold = split_by_negative_label(dfr, neg_label)
+    if len(dfr_manifold) == 0:
+        return None
 
     number_properties = int(dfr_manifold["entity"].nunique())
 
@@ -326,25 +431,23 @@ def estimate_clustering_from_frame(
 
     clusterer = hdbscan.HDBSCAN(min_cluster_size=best_size, gen_min_span_tree=True)
     labels = clusterer.fit_predict(artifacts.umap_clustering)
-    label_set = set(labels.tolist())
-    n_clusters_emergent = len(label_set) - (1 if -1 in label_set else 0)
+    fit_metrics = compute_clustering_fit_metrics(
+        clusterer,
+        dfr_manifold,
+        min_cluster_size=best_size,
+        cluster_labels=labels,
+    )
     assignments = dfr_manifold[["entity"]].copy()
     for optional_col in ["pmid", "mention"]:
         if optional_col in dfr_manifold.columns:
             assignments[optional_col] = dfr_manifold[optional_col]
     assignments["cluster"] = labels.astype(int, copy=False)
 
-    ari_score = None
-    if "entity" in assignments.columns and "cluster" in assignments.columns:
-        property_labels = assignments["entity"].astype("category").cat.codes.values
-        cluster_labels = assignments["cluster"].values
-        ari_score = compute_adjusted_rand_index(property_labels, cluster_labels)
-
     return ClusteringReport(
         hyperparameters=ClusteringHyperparameters(min_cluster_size=best_size),
         best_score=best_score,
         number_properties=number_properties,
-        n_clusters_emergent=n_clusters_emergent,
+        n_clusters_emergent=fit_metrics.n_clusters_emergent,
         metrics_df=metrics_df,
         assignments=assignments,
         pca_residuals=artifacts.pca_residuals,
@@ -353,7 +456,7 @@ def estimate_clustering_from_frame(
         umap_visualization=artifacts.umap_visualization,
         pca_reduced=artifacts.pca_reduced,
         negative_screener_cv=negative_screener_cv,
-        ari=ari_score,
+        ari=fit_metrics.ari,
     )
 
 
@@ -460,16 +563,6 @@ def mention_frame_from_embedding_paths(
         read_status=read_status,
         show_read_progress=show_read_progress,
     )
-
-
-def filter_mention_frame_by_kb_labels(
-    frame: pd.DataFrame,
-    kb_labels: set[str] | None,
-) -> pd.DataFrame:
-    """Restrict rows to ``entity`` values present in ``kb_labels`` (skip if ``kb_labels`` is None)."""
-    if kb_labels is None:
-        return frame.copy()
-    return frame.loc[frame["entity"].isin(kb_labels)].copy()
 
 
 def drop_entities_with_few_mentions(

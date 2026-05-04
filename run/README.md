@@ -111,7 +111,7 @@ Embeds a knowledge base corpus using the same pipeline as **stage (A)** of `peli
 Module: **`pelinker.cli.fit`**. It runs the linker training pipeline in **two conceptual stages**:
 
 1. **Stage (A)** — `embed_kb_corpus(...)` (same function as `run/embed_kb_corpus.py`) when **`input_text_table_path`** is set: **`kb_path`** + text table → **`embeddings_parquet`**.
-2. **Stage (B)** — `Linker.fit(...)` on that Parquet: fusion / PCA / UMAP / optimized HDBSCAN → fitted linker; serialized via `Linker.dump` (joblib at **`{output_path}.gz`**; the `.gz` suffix is appended automatically).
+2. **Stage (B)** — `Linker.fit(...)` on that Parquet: fusion / negative screener / PCA / UMAP / HDBSCAN at a fixed `min_cluster_size` → fitted linker; serialized via `Linker.dump` (joblib at **`{output_path}.gz`**; the `.gz` suffix is appended automatically). Choose `min_cluster_size` upstream (e.g. `run/analysis/clustering_quality.py`); this CLI does not run a grid search during fit.
 
 If you omit **`input_text_table_path`**, only **stage (B)** runs (you must already have **`embeddings_parquet`** on disk, e.g. from a prior `embed_kb_corpus.py` run).
 
@@ -147,13 +147,12 @@ Hydra’s **`hydra.output_subdir`** defaults to **`null`** here (no `.hydra` fol
 | `layers_spec` | `1` | Which layers to use (string parsed by `str2layers`; e.g. comma-separated indices). |
 | `pca_components` | `100` | PCA dimensionality before UMAP. |
 | `umap_dim` | `8` | UMAP output dimension for clustering. |
-| `min_class_size` | `20` | Lower bound for clustering optimization / HDBSCAN (see `ClusteringOptimizationConfig`). |
-| `max_scale` | `120` | Upper bound for the optimization grid over `min_cluster_size`. |
+| `min_class_size` | `20` | Minimum mention rows per KB `entity` before training (negative label exempt; see `LinkerFitConfig`). |
+| `min_cluster_size` | `20` | HDBSCAN `min_cluster_size` for stage (B); set from analysis / grid search outside this CLI. |
 | `output_path` | *(see below)* | Where `linker.dump` writes the artifact. |
 | `use_gpu` | `false` | GPU for transformer encoding when embedding the corpus. |
 | `input_buffer_rows` | `1000` | Stage (A): rows per pandas read pass over the text table (I/O buffer; does **not** control GPU memory). |
 | `encoder_batch_size` | `200` | Stage (A): table rows per encoder forward pass—**lower this if the GPU runs out of memory**. |
-| `frac` | `1.0` | Fraction of rows to keep when sampling the mention parquet for clustering optimization (stage B); same idea as `clustering_quality.py --frac`. |
 | `batch_size` | `1000` | Stage (B): rows per batch when **reading large embedding parquet files**; same role as `clustering_quality.py --batch-size`. |
 | `nlp_model` | `en_core_web_trf` | spaCy pipeline for mention extraction (`uv run spacy download en_core_web_trf`). |
 | `max_input_buffers` | *(unset)* | Stage (A): stop after this many text-table read passes (each up to `input_buffer_rows` rows); unrelated to `encoder_batch_size`. |

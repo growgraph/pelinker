@@ -1,30 +1,31 @@
 import logging
 from dataclasses import dataclass
 from datetime import date
-from importlib.resources import files
 from pathlib import Path
 from typing import Any, Literal, cast
 
 import hydra
 import pandas as pd
 from hydra.core.config_store import ConfigStore
-from numpy.random import RandomState
 from omegaconf import MISSING, OmegaConf
 
-from pelinker.clustering_quality_checkpoint import combination_key_from_members
 from pelinker.config import (
-    ClusteringOptimizationConfig,
     EmbeddingModelMetadata,
     EmbeddingSourceSpec,
     EmbeddingTrainingConfig,
     KBConfig,
+    LinkerFitConfig,
     NegativeScreenerConfig,
     TransformConfig,
 )
 from pelinker.embedder import embed_kb_corpus
 from pelinker.model import Linker
+from pelinker.reporting import (
+    linker_fit_clustering_report_path,
+    write_clustering_report_json,
+)
 from pelinker.onto import NEGATIVE_LABEL
-from pelinker.util import expand_config_path, layers2str, str2layers
+from pelinker.util import expand_config_path
 
 logger = logging.getLogger(__name__)
 
@@ -52,23 +53,12 @@ class FitCliConfig:
     pca_components: int = 100
     umap_dim: int = 8
     min_class_size: int = 20
-    max_scale: int = 120
-    # None → max(1, min_class_size // 2) in ClusteringOptimizationConfig.resolved_min_scale
-    min_scale: int | None = None
-    clustering_grid_step: int = 5
-    # Stage-B HDBSCAN hyperparameter chosen upstream (e.g. run/analysis/clustering_quality.py).
-    # When set, fit uses this exact value unless optimize_clustering=True.
-    min_cluster_size: int | None = None
-    # If true, rerun grid search during fit and ignore ``min_cluster_size``.
-    optimize_clustering: bool = False
-    # Filesystem path for the saved model; None → bundled store filename under ``pelinker.store``.
-    output_path: str | None = None
-    # If set, clustering reports are written exactly here. If unset, defaults to
-    # ``{base}/reports/{YYYY-MM-DD}_{model-abbrev}/`` with ``base`` = parent of
-    # ``output_path`` when that is set, else the process working directory.
-    clustering_report_dir: str | None = None
-    # When True and reports dir is resolved, also gzip-pickle a JSON-serializable report dict.
-    dump_clustering_report: bool = True
+    # Stage-B HDBSCAN ``min_cluster_size`` (choose upstream, e.g. ``run/analysis/clustering_quality.py``).
+    min_cluster_size: int = 20
+    # Filesystem base path for ``Linker.dump`` (``.gz`` added by the linker).
+    model_path: str | None = None
+    # Directory for fit-time reports (``linker_fit.clustering_report.json``).
+    report_path: str | None = None
     embeddings_parquet: Any = MISSING
     input_text_table_path: str | None = None
     use_gpu: bool = False
@@ -83,12 +73,8 @@ class FitCliConfig:
     screener_kind: str = "lda"
     """``lda`` or ``svm``; persisted as :attr:`~pelinker.model.Linker.screener`."""
     # Stage (B): parquet batching (``batch_size`` rows per read batch).
-    # ``frac`` subsamples rows only for ``min_cluster_size`` grid search when ``optimize_clustering`` is on; final fit uses all prepared rows.
-    frac: float = 1.0
     n_embedding_batches: int | None = None  # max read batches per parquet; None = all
     batch_size: int = 1000
-    # RNG seed for grid-search row subsampling (``ClusteringOptimizationConfig.rns``); final fit is not subsampled.
-    clustering_seed: int = 13
     kb_name: str | None = None
     kb_version: str = "0.1.0"
     kb_created_at: str | None = None
@@ -113,6 +99,8 @@ class FitCliConfig:
             raise ValueError(
                 f"screener_kind must be 'lda' or 'svm', got {self.screener_kind!r}"
             )
+        if self.min_cluster_size < 2:
+            raise ValueError("min_cluster_size must be >= 2")
 
 
 def _coerce_str_list(val: object) -> list[str]:
@@ -265,57 +253,6 @@ def _embedding_metadata(
     )
 
 
-def _default_model_store_name(meta: EmbeddingModelMetadata) -> str:
-    if len(meta.sources) == 1:
-        s0 = meta.sources[0]
-        return (
-            f"pelinker.model.{s0.model_type}.{layers2str(str2layers(s0.layers_spec))}"
-        )
-    members = [(s.model_type, s.layers_spec) for s in meta.sources]
-    key = combination_key_from_members(members)
-    safe = "".join(c if c.isalnum() or c in "-_" else "_" for c in key)
-    return f"pelinker.model.{safe}"
-
-
-def _embedding_model_report_abbrev(meta: EmbeddingModelMetadata) -> str:
-    """Short, path-safe tag for default clustering report subdirs (aligned with store naming)."""
-    if len(meta.sources) == 1:
-        s0 = meta.sources[0]
-        raw = f"{s0.model_type}.{layers2str(str2layers(s0.layers_spec))}"
-    else:
-        members = [(s.model_type, s.layers_spec) for s in meta.sources]
-        raw = combination_key_from_members(members)
-    return "".join(c if c.isalnum() or c in "-_" else "_" for c in raw)
-
-
-def _clustering_report_path_for_fit(
-    *,
-    explicit_dir: object,
-    output_path: Path | None,
-    embedding_metadata: EmbeddingModelMetadata,
-    today: date | None = None,
-) -> Path:
-    """
-    Where to write clustering optimization reports.
-
-    - Non-empty ``explicit_dir`` (config ``clustering_report_dir``): that directory
-      exactly (after expanduser / env vars).
-    - Otherwise: ``{base}/reports/{iso-date}_{model-abbrev}/`` where ``base`` is
-      ``output_path.parent`` if the model is saved to a path, else ``Path.cwd()``.
-    """
-    if explicit_dir is not None and explicit_dir is not MISSING:
-        s = str(explicit_dir).strip()
-        if s:
-            cr = expand_config_path(s)
-            if cr is None:
-                raise ValueError(f"Invalid clustering_report_dir: {explicit_dir!r}")
-            return Path(cr)
-    day = today or date.today()
-    run_tag = f"{day.isoformat()}_{_embedding_model_report_abbrev(embedding_metadata)}"
-    base = Path(output_path).parent if output_path is not None else Path.cwd()
-    return base / "reports" / run_tag
-
-
 def _abort_if_outputs_exist(paths: list[Path], *, context: str) -> None:
     existing = [p for p in paths if p.is_file()]
     if not existing:
@@ -331,20 +268,26 @@ def _abort_if_outputs_exist(paths: list[Path], *, context: str) -> None:
 
 def fit(cfg: FitCliConfig) -> None:
     """
-    Run embedding (optional), fit a ``Linker`` from parquet(s) (optional), and save the model (optional).
+    Run embedding (optional), fit a ``Linker`` from parquet(s) (optional), and write outputs.
 
-    - ``pipeline=auto``: if ``input_text_table_path`` is set, embed then fit (unless outputs exist);
-      if unset, fit only from existing parquet(s).
-    - ``pipeline=embed_only``: write parquet(s) only.
-    - ``pipeline=fit_only``: load mention-level parquet(s), train like ``estimate_model_clustering`` / ``Linker.fit``, save.
-    - ``pipeline=both``: require a text table; write parquet(s) then fit and save.
+    Paths (no implicit fallbacks — missing required paths raise):
 
-    Multiple values for ``embeddings_parquet`` fuse mention-level files in list order (inner join on
-    pmid/entity/mention, same as ``estimate_model_clustering``). Set ``model_types`` /
-    ``layers_specs`` (or scalars ``model_type`` / ``layers_spec``) so ``embedding_metadata.sources``
-    matches that order. If a list field is omitted, each path may supply ``model_type`` and/or
-    ``layers_spec`` via a matching filename stem (``..._<model>_<layers>.parquet``, as in
-    ``run/loop.fit.sh``); otherwise the scalar defaults apply for that component.
+    - ``embeddings_parquet``: output path(s) for ``embed_only`` / ``both`` stage (A), or input
+      parquet(s) for ``fit_only`` / ``both`` stage (B).
+    - ``report_path``: directory; fit stages write ``linker_fit.clustering_report.json`` there
+      (see :func:`pelinker.reporting.linker_fit_clustering_report_path`).
+    - ``model_path``: filesystem path passed to ``Linker.dump`` for fit stages.
+
+    Pipelines:
+
+    - ``pipeline=auto``: embed then fit if ``input_text_table_path`` is set; else fit from parquet.
+    - ``pipeline=embed_only``: write parquet(s) only (``model_path`` / ``report_path`` not used).
+    - ``pipeline=fit_only``: fit from existing parquet(s); requires ``model_path`` and ``report_path``.
+    - ``pipeline=both``: text table + embed then fit; requires ``model_path`` and ``report_path``.
+
+    Multiple ``embeddings_parquet`` values fuse in list order (inner join on pmid/entity/mention).
+    Set ``model_types`` / ``layers_specs`` (or scalars) so ``embedding_metadata.sources`` matches;
+    or infer ``model_type`` / ``layers_spec`` from each filename stem when lists are omitted.
     """
     logging.basicConfig(
         level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
@@ -383,7 +326,8 @@ def fit(cfg: FitCliConfig) -> None:
     )
 
     input_text_table_path = expand_config_path(cfg.input_text_table_path)
-    output_path = expand_config_path(cfg.output_path)
+    model_path = expand_config_path(cfg.model_path)
+    report_path_resolved = expand_config_path(cfg.report_path)
 
     path_strs = _coerce_str_list(cfg.embeddings_parquet)
     if not path_strs:
@@ -416,6 +360,16 @@ def fit(cfg: FitCliConfig) -> None:
         raise ValueError(
             f"pipeline={effective} requires input_text_table_path for stage (A)."
         )
+
+    if effective in ("fit_only", "both"):
+        if model_path is None:
+            raise ValueError(
+                "model_path is required for pipeline fit_only, both, or auto when fitting"
+            )
+        if report_path_resolved is None:
+            raise ValueError(
+                "report_path is required for pipeline fit_only, both, or auto when fitting"
+            )
 
     if effective == "fit_only":
         missing = [p for p in embed_paths if not p.is_file()]
@@ -469,15 +423,10 @@ def fit(cfg: FitCliConfig) -> None:
         logger.info("Embed-only pipeline finished; not fitting or saving a linker.")
         return
 
-    clustering_config = ClusteringOptimizationConfig(
+    linker_fit_cfg = LinkerFitConfig(
         min_class_size=cfg.min_class_size,
-        max_scale=cfg.max_scale,
-        min_scale=cfg.min_scale,
-        clustering_grid_step=cfg.clustering_grid_step,
-        rns=RandomState(cfg.clustering_seed),
-        frac=cfg.frac,
-        n_embedding_batches=cfg.n_embedding_batches,
         batch_size=cfg.batch_size,
+        n_embedding_batches=cfg.n_embedding_batches,
         negative_screener=NegativeScreenerConfig(
             kind=cfg.screener_kind,
             negative_label=cfg.negative_label,
@@ -502,38 +451,16 @@ def fit(cfg: FitCliConfig) -> None:
         embedding_metadata=embedding_metadata,
     )
 
-    resolved_clustering_reports = _clustering_report_path_for_fit(
-        explicit_dir=cfg.clustering_report_dir,
-        output_path=output_path,
-        embedding_metadata=embedding_metadata,
-    )
-    logger.info("Clustering reports directory: %s", resolved_clustering_reports)
-
     logger.info("Stage (B): Linker.fit from %s", embed_paths)
-    if cfg.min_cluster_size is not None and cfg.min_cluster_size < 2:
-        raise ValueError("min_cluster_size must be >= 2 when provided")
-
-    if cfg.optimize_clustering and cfg.min_cluster_size is not None:
-        logger.warning(
-            "optimize_clustering=True: ignoring fixed min_cluster_size=%s",
-            cfg.min_cluster_size,
-        )
-
-    effective_min_cluster_size = (
-        None if cfg.optimize_clustering else cfg.min_cluster_size
-    )
 
     linker.fit(
         embeddings=embed_paths if len(embed_paths) > 1 else embed_paths[0],
         transform_config=transform_config,
-        min_cluster_size=effective_min_cluster_size,
+        min_cluster_size=cfg.min_cluster_size,
+        fit_config=linker_fit_cfg,
         kb_labels=kb_labels,
-        optimize_clustering=cfg.optimize_clustering,
-        clustering_optimization_config=clustering_config,
         embedding_training=None,
         kb_config=kb_config,
-        clustering_report_dir=resolved_clustering_reports,
-        dump_clustering_report=cfg.dump_clustering_report,
     )
 
     logger.info("Fitted Linker model with %s entities", len(linker.vocabulary))
@@ -542,15 +469,19 @@ def fit(cfg: FitCliConfig) -> None:
         len(set(linker.cluster_assignments.values())),
     )
 
-    if output_path is None:
-        file_spec = files("pelinker.store").joinpath(
-            _default_model_store_name(embedding_metadata)
-        )
-    else:
-        file_spec = output_path
+    if model_path is None or report_path_resolved is None:
+        raise ValueError("model_path and report_path must be set when fitting")
 
-    logger.info("Saving model to %s", file_spec)
-    linker.dump(file_spec)
+    report_path_resolved.mkdir(parents=True, exist_ok=True)
+    fit_report = linker.take_fit_clustering_report()
+    if fit_report is None:
+        raise RuntimeError("Linker.fit produced no clustering report to serialize")
+    report_json = linker_fit_clustering_report_path(report_path_resolved)
+    write_clustering_report_json(report_json, fit_report)
+    logger.info("Wrote clustering report to %s", report_json)
+
+    logger.info("Saving model to %s", model_path)
+    linker.dump(model_path)
 
     logger.info("Model saved successfully!")
 

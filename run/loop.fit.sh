@@ -97,11 +97,15 @@ for model in "${mtypes[@]}"; do
         layer_tag="${layer_trimmed//,/_}"
         emb_file="${OUTPUT_PARQUET_PREFIX}/res_${model}_${layer_tag}.parquet"
         model_file="${OUTPUT_MODEL_PREFIX}/pelinker.${model}.${layer_tag}"
+        report_dir="${OUTPUT_MODEL_PREFIX}/reports/${model}_${layer_tag}"
+        mkdir -p "$report_dir"
         uv run pelinker-fit \
             kb_path="$KB_CSV_PATH" \
             input_text_table_path="$INPUT_TEXT_TABLE_PATH" \
             embeddings_parquet="$emb_file" \
-            output_path="$model_file" \
+            pipeline=both \
+            model_path="$model_file" \
+            report_path="$report_dir" \
             model_type="$model" \
             layers_spec="$layer_trimmed" \
             nlp_model=en_core_web_trf \

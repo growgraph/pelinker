@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import gzip
 import json
 import pathlib
 from dataclasses import dataclass, field
@@ -10,9 +11,10 @@ from hashlib import sha256
 from typing import Any, Literal
 
 from pelinker.onto import NEGATIVE_LABEL
+from pelinker.reporting import CLUSTERING_QUALITY_CHECKPOINT_BASENAME
 
 CHECKPOINT_VERSION = 1
-DEFAULT_CHECKPOINT_NAME = "clustering_quality.state.json"
+DEFAULT_CHECKPOINT_NAME = CLUSTERING_QUALITY_CHECKPOINT_BASENAME
 
 StageState = Literal["pending", "in_progress", "complete", "skipped"]
 RunMode = Literal["single", "fusion2", "fusion3", "all"]
@@ -235,8 +237,17 @@ def reconcile_fusion_checkpoint_params(
     return len(removed_keys)
 
 
+def _checkpoint_path_is_gzip(path: pathlib.Path) -> bool:
+    """True when the on-disk format is gzip-compressed JSON (e.g. ``*.json.gz``)."""
+    return path.suffix.lower() == ".gz"
+
+
 def load_checkpoint(path: pathlib.Path) -> ClusteringQualityCheckpoint:
-    raw = path.read_text(encoding="utf-8")
+    if _checkpoint_path_is_gzip(path):
+        with gzip.open(path, "rt", encoding="utf-8") as f:
+            raw = f.read()
+    else:
+        raw = path.read_text(encoding="utf-8")
     data = json.loads(raw)
     if not isinstance(data, dict):
         raise ValueError("checkpoint must be a JSON object")
@@ -252,7 +263,12 @@ def save_checkpoint_atomic(
     payload = json.dumps(
         checkpoint.to_json_dict(), indent=2, sort_keys=True, ensure_ascii=False
     )
-    tmp.write_text(payload + "\n", encoding="utf-8")
+    text = payload + "\n"
+    if _checkpoint_path_is_gzip(path):
+        with gzip.open(tmp, "wt", encoding="utf-8", newline="\n") as gz:
+            gz.write(text)
+    else:
+        tmp.write_text(text, encoding="utf-8")
     tmp.replace(path)
 
 

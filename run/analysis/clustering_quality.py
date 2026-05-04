@@ -4,6 +4,7 @@ import pathlib
 import sys
 from typing import Literal
 
+import numpy as np
 import pandas as pd
 from numpy.random import RandomState
 from rich.console import Console
@@ -55,6 +56,9 @@ from pelinker.plotting import (
     plot_umap_viz,
 )
 from pelinker.reporting import (
+    CLUSTERING_SEARCH_FINE_METADATA_BASENAME,
+    CLUSTERING_SEARCH_GRID_PER_SAMPLE_CSV_BASENAME,
+    CLUSTERING_SEARCH_RESULTS_CSV_BASENAME,
     ClusteringReport,
     ClusteringSearchSummaryRow,
     clustering_search_summary_row_from_flat_dict,
@@ -214,6 +218,10 @@ def _fine_clustering_metadata_df(
     out.insert(0, "sample_idx", sample_idx)
     out.insert(0, "layer", layer)
     out.insert(0, "model", model)
+    n = len(out)
+    if len(report.pca_residuals) == n and len(report.pca_mahalanobis) == n:
+        out["pca_residual"] = np.asarray(report.pca_residuals, dtype=np.float64)
+        out["pca_mahalanobis"] = np.asarray(report.pca_mahalanobis, dtype=np.float64)
     return out
 
 
@@ -382,10 +390,10 @@ def _results_from_checkpoint(
     help="Directory containing parquet files",
 )
 @click.option(
-    "--output-dir",
+    "--report-path",
     type=click.Path(path_type=pathlib.Path),
-    default=None,
-    help="Output directory for all results (default: input_dir)",
+    required=True,
+    help="Directory for all run outputs (CSV, plots, checkpoint, …).",
 )
 @click.option(
     "--umap-dim",
@@ -504,7 +512,7 @@ def _results_from_checkpoint(
     "--checkpoint-path",
     type=click.Path(path_type=pathlib.Path),
     default=None,
-    help=f"Checkpoint JSON path (default: <output-dir>/{DEFAULT_CHECKPOINT_NAME})",
+    help=f"Checkpoint JSON path (default: <report-path>/{DEFAULT_CHECKPOINT_NAME})",
 )
 @click.option(
     "--negative-label",
@@ -532,7 +540,7 @@ def _results_from_checkpoint(
 )
 def main(
     input_dir: pathlib.Path,
-    output_dir: pathlib.Path,
+    report_path: pathlib.Path,
     umap_dim: int,
     pca_components: int,
     min_class_size: int,
@@ -564,7 +572,7 @@ def main(
     scores (see ``--fusion-pairs`` / ``--fusion-triples``), then clusters the
     concatenated mention-level vectors via ``estimate_model_clustering(..., file_paths=...)``.
 
-    Checkpointing is on by default (``--resume``): progress is saved under the output directory.
+    Checkpointing is on by default (``--resume``): progress is saved under ``--report-path``.
     Use ``--no-resume`` to discard the on-disk checkpoint and start from an empty state.
     """
     console = Console(force_terminal=True, width=120, legacy_windows=False)
@@ -597,14 +605,11 @@ def main(
             console.print(f"[red]Error loading selected labels KB: {e}[/red]")
             return
 
-    if output_dir is None:
-        output_dir = input_dir
-    else:
-        output_dir = output_dir.expanduser()
-    output_dir.mkdir(parents=True, exist_ok=True)
-    output_path = output_dir / "results.csv"
-    detail_path = output_dir / "results_grid_per_sample.csv"
-    fine_metadata_path = output_dir / "fine_clustering_metadata.pkl.gz"
+    report_path = report_path.expanduser()
+    report_path.mkdir(parents=True, exist_ok=True)
+    results_csv_path = report_path / CLUSTERING_SEARCH_RESULTS_CSV_BASENAME
+    detail_path = report_path / CLUSTERING_SEARCH_GRID_PER_SAMPLE_CSV_BASENAME
+    fine_metadata_path = report_path / CLUSTERING_SEARCH_FINE_METADATA_BASENAME
     if not resume:
         for artifact in (detail_path, fine_metadata_path):
             try:
@@ -636,7 +641,7 @@ def main(
     ckpt_path = (
         checkpoint_path.expanduser()
         if checkpoint_path is not None
-        else output_dir / DEFAULT_CHECKPOINT_NAME
+        else report_path / DEFAULT_CHECKPOINT_NAME
     )
 
     if resume and ckpt_path.exists():
@@ -879,12 +884,12 @@ def main(
                     if len(file_metrics) > 1:
                         plot_metrics_with_error_bars(
                             file_metrics,
-                            output_dir / f"{model}_{layer}_error_bars.png",
+                            report_path / f"{model}_{layer}_error_bars.png",
                             chosen_min_cluster_size=float(pooled_mcs),
                         )
                     else:
                         plot_metrics(
-                            file_metrics[0], output_dir / f"{model}_{layer}.png"
+                            file_metrics[0], report_path / f"{model}_{layer}.png"
                         )
 
                     _mark_combination_done(
@@ -1098,7 +1103,7 @@ def main(
                         metrics_by_file[(model_label, layer_label)] = fusion_metrics
 
                         safe = layer_label.replace("/", "_").replace("+", "__")
-                        out_metric = output_dir / f"{model_label}_{safe}.png"
+                        out_metric = report_path / f"{model_label}_{safe}.png"
                         if len(fusion_metrics) > 1:
                             plot_metrics_with_error_bars(
                                 fusion_metrics,
@@ -1152,7 +1157,7 @@ def main(
 
     df_results = pd.DataFrame([r.to_flat_dict() for r in results])
     df_results = df_results.sort_values(["model", "layer"])
-    df_results.to_csv(output_path, index=False)
+    df_results.to_csv(results_csv_path, index=False)
 
     df_grid_detail = _read_optional_csv(detail_path)
     if df_grid_detail is not None and not df_grid_detail.empty:
@@ -1160,7 +1165,7 @@ def main(
         tmp_grid = detail_path.with_suffix(detail_path.suffix + ".tmp")
         df_grid_detail.to_csv(tmp_grid, index=False)
         tmp_grid.replace(detail_path)
-        scatter_path = output_dir / "model.dbcv_vs_ari.png"
+        scatter_path = report_path / "model.dbcv_vs_ari.png"
         if plot_dbcv_vs_ari_from_grid(df_grid_detail, scatter_path):
             console.print(
                 f"[green]✓[/green] DBCV vs ARI scatter saved to: "
@@ -1169,7 +1174,7 @@ def main(
 
     df_heatmap = df_results[~df_results["model"].isin(["fusion2", "fusion3"])].copy()
 
-    heatmap_path = output_dir / "model.perf.heatmap.png"
+    heatmap_path = report_path / "model.perf.heatmap.png"
     if len(df_heatmap) > 0:
         plot_heatmap(
             df_heatmap, heatmap_path, metric="best_score", metric_label="Best Score"
@@ -1184,7 +1189,7 @@ def main(
         and "ari" in df_heatmap.columns
         and df_heatmap["ari"].notna().any()
     ):
-        ari_heatmap_path = output_dir / "model.ari.heatmap.png"
+        ari_heatmap_path = report_path / "model.ari.heatmap.png"
         plot_heatmap(
             df_heatmap,
             ari_heatmap_path,
@@ -1228,7 +1233,9 @@ def main(
         )
 
     console.print(table)
-    console.print(f"\n[green]✓[/green] Results saved to: [cyan]{output_path}[/cyan]")
+    console.print(
+        f"\n[green]✓[/green] Results saved to: [cyan]{results_csv_path}[/cyan]"
+    )
     if df_grid_detail is not None and not df_grid_detail.empty:
         console.print(
             f"[green]✓[/green] Per-sample grid (all min_cluster_size values) saved to: "
@@ -1283,7 +1290,7 @@ def main(
         )
 
     if best_report is not None:
-        umap_viz_path = output_dir / "umap_best.html"
+        umap_viz_path = report_path / "umap_best.html"
         console.print(
             "[green]✓[/green] Generating UMAP visualization for best model..."
         )

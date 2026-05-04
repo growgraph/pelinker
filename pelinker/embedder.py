@@ -62,10 +62,10 @@ def _embed_corpus_single_source(
     nlp = spacy.load(training.nlp_model)
     layers = str2layers(source.layers_spec)
 
-    df_props = pd.read_csv(training.kb_csv_path)
-    entities = df_props["label"].tolist()
+    df_kb = pd.read_csv(training.kb_csv_path)
+    entities = df_kb["label"].tolist()
 
-    logger.info("Loaded %s entities", df_props.shape[0])
+    logger.info("Loaded %s entities", df_kb.shape[0])
     logger.info("Layers are set to %s", layers)
 
     file_format = _detect_file_format(training.input_text_table_path)
