@@ -328,8 +328,10 @@ def main(
             include_prediction_kb_validation=kb_validation,
         )
         filtered = pres.filter_by_score(thr_score)
+        public_entity_fields = not include_anomaly_metrics and not kb_validation
         out = filtered.to_dict(
             include_entity_anomaly_metrics=include_anomaly_metrics,
+            public_entity_fields=public_entity_fields,
         )
     except Exception:
         logger.exception("predict failed")

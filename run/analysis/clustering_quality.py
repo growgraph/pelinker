@@ -222,6 +222,22 @@ def _fine_clustering_metadata_df(
     if len(report.pca_residuals) == n and len(report.pca_mahalanobis) == n:
         out["pca_residual"] = np.asarray(report.pca_residuals, dtype=np.float64)
         out["pca_mahalanobis"] = np.asarray(report.pca_mahalanobis, dtype=np.float64)
+    if len(report.pca_spectral_entropy) == n:
+        out["pca_spectral_entropy"] = np.asarray(
+            report.pca_spectral_entropy, dtype=np.float64
+        )
+    if len(report.pca_residual_label_01) == n:
+        out["pca_residual_label_01"] = np.asarray(
+            report.pca_residual_label_01, dtype=np.int64
+        )
+    if len(report.pca_mahalanobis_label_01) == n:
+        out["pca_mahalanobis_label_01"] = np.asarray(
+            report.pca_mahalanobis_label_01, dtype=np.int64
+        )
+    if len(report.pca_spectral_entropy_label_01) == n:
+        out["pca_spectral_entropy_label_01"] = np.asarray(
+            report.pca_spectral_entropy_label_01, dtype=np.int64
+        )
     return out
 
 

@@ -26,6 +26,7 @@ from pelinker.reporting import (
     ClusteringReport,
     NegativeScreenerCvSummary,
     NegativeScreenerInSampleMetrics,
+    entity_negative_label_mask_01,
     negative_screener_cv_summary_from_eval_dict,
 )
 from sklearn.metrics import adjusted_rand_score, f1_score, precision_score, recall_score
@@ -443,6 +444,10 @@ def estimate_clustering_from_frame(
             assignments[optional_col] = dfr_manifold[optional_col]
     assignments["cluster"] = labels.astype(int, copy=False)
 
+    res_a = artifacts.pca_residuals
+    mah_a = artifacts.pca_mahalanobis
+    ent_a = artifacts.pca_spectral_entropy
+    y_neg = entity_negative_label_mask_01(dfr_manifold["entity"], neg_label)
     return ClusteringReport(
         hyperparameters=ClusteringHyperparameters(min_cluster_size=best_size),
         best_score=best_score,
@@ -450,12 +455,17 @@ def estimate_clustering_from_frame(
         n_clusters_emergent=fit_metrics.n_clusters_emergent,
         metrics_df=metrics_df,
         assignments=assignments,
-        pca_residuals=artifacts.pca_residuals,
-        pca_mahalanobis=artifacts.pca_mahalanobis,
+        pca_residuals=res_a,
+        pca_mahalanobis=mah_a,
+        pca_spectral_entropy=ent_a,
+        pca_residual_label_01=y_neg,
+        pca_mahalanobis_label_01=y_neg,
+        pca_spectral_entropy_label_01=y_neg,
         umap_clustering=artifacts.umap_clustering,
         umap_visualization=artifacts.umap_visualization,
         pca_reduced=artifacts.pca_reduced,
         negative_screener_cv=negative_screener_cv,
+        manifold_oov_cv=None,
         ari=fit_metrics.ari,
     )
 

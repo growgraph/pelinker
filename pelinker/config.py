@@ -180,6 +180,32 @@ class NegativeScreenerConfig:
             raise ValueError("cv_test_size must be in (0, 1)")
 
 
+@dataclass(frozen=True)
+class ManifoldOovScreenerConfig:
+    """3D (residual, Mahalanobis, spectral entropy) OOV score model; predict-time gate only."""
+
+    enabled: bool = True
+    cv_n_splits: int = 20
+    cv_test_size: float = 0.2
+    cv_random_state: int = 42
+    dt_max_depth_candidates: tuple[int | None, ...] = (None, 4, 8)
+    """``None`` means unrestricted depth (sklearn default)."""
+    dt_min_samples_leaf_candidates: tuple[int, ...] = (1, 2, 5)
+
+    def __post_init__(self) -> None:
+        if self.cv_n_splits < 2:
+            raise ValueError("cv_n_splits must be >= 2")
+        if not 0.0 < self.cv_test_size < 1.0:
+            raise ValueError("cv_test_size must be in (0, 1)")
+        if not self.dt_max_depth_candidates:
+            raise ValueError("dt_max_depth_candidates must be non-empty")
+        if not self.dt_min_samples_leaf_candidates:
+            raise ValueError("dt_min_samples_leaf_candidates must be non-empty")
+        for leaf in self.dt_min_samples_leaf_candidates:
+            if int(leaf) < 1:
+                raise ValueError("dt_min_samples_leaf_candidates values must be >= 1")
+
+
 @dataclass
 class LinkerFitConfig:
     """Parquet read + mention filters + screener settings for :meth:`~pelinker.model.Linker.fit`."""
@@ -190,6 +216,9 @@ class LinkerFitConfig:
     n_embedding_batches: int | None = None
     negative_screener: NegativeScreenerConfig = field(
         default_factory=NegativeScreenerConfig
+    )
+    manifold_oov_screener: ManifoldOovScreenerConfig = field(
+        default_factory=ManifoldOovScreenerConfig
     )
 
     def __post_init__(self) -> None:

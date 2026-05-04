@@ -2703,7 +2703,7 @@ dependencies = [
 ]
 name = "pelinker"
 source = {editable = "."}
-version = "0.1.3"
+version = "0.2.0"
 
 [package.metadata]
 provides-extras = ["dev", "docs", "gpu"]

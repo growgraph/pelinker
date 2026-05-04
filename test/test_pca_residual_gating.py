@@ -82,16 +82,22 @@ def test_embedding_transformer_transform_returns_dual_pca_metrics() -> None:
     )
     transformer.fit(embeddings)
 
-    umap_clustering, umap_visualization, pca_residuals, pca_mahalanobis = (
-        transformer.transform(embeddings)
-    )
+    (
+        umap_clustering,
+        umap_visualization,
+        pca_residuals,
+        pca_mahalanobis,
+        pca_spectral_entropy,
+    ) = transformer.transform(embeddings)
 
     assert umap_clustering.shape == (12, 2)
     assert umap_visualization.shape == (12, 2)
     assert pca_residuals.shape == (12,)
     assert pca_mahalanobis.shape == (12,)
+    assert pca_spectral_entropy.shape == (12,)
     assert np.all(pca_residuals >= 0.0)
     assert np.all(pca_mahalanobis >= 0.0)
+    assert np.all(pca_spectral_entropy >= 0.0)
 
 
 def test_compute_transform_artifacts_exposes_pca_metric_arrays() -> None:
@@ -111,8 +117,10 @@ def test_compute_transform_artifacts_exposes_pca_metric_arrays() -> None:
 
     assert artifacts.pca_residuals.shape == (len(df),)
     assert artifacts.pca_mahalanobis.shape == (len(df),)
+    assert artifacts.pca_spectral_entropy.shape == (len(df),)
     assert (artifacts.pca_residuals >= 0.0).all()
     assert (artifacts.pca_mahalanobis >= 0.0).all()
+    assert (artifacts.pca_spectral_entropy >= 0.0).all()
 
 
 class _DummyTransformer:
@@ -124,13 +132,14 @@ class _DummyTransformer:
 
     def transform(
         self, embeddings: np.ndarray
-    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         n = embeddings.shape[0]
         return (
             np.zeros((n, 2), dtype=np.float32),
             np.zeros((n, 2), dtype=np.float32),
             np.array([0.05, 2.5], dtype=np.float32),
             np.array([0.1, 4.0], dtype=np.float32),
+            np.array([0.2, 0.3], dtype=np.float32),
         )
 
 
@@ -167,7 +176,10 @@ def test_predict_with_clustering_adds_anomaly_metrics(monkeypatch) -> None:
     assert out[0]["score"] == 0.9
     assert "pca_residual" in out[0]
     assert "pca_mahalanobis" in out[0]
+    assert "pca_spectral_entropy" in out[0]
+    assert "manifold_oov_score" in out[0]
     assert "anomaly_score_max_z" in out[0]
+    assert np.isnan(float(out[0]["manifold_oov_score"]))
 
 
 def test_predict_with_clustering_respects_cluster_probability_threshold(

@@ -1,4 +1,15 @@
-# PELinker (Property Entity LINKER)
+# PELinker (Property Entity LINKER) <img src="https://raw.githubusercontent.com/growgraph/pelinker/refs/heads/main/static/favicon.ico" alt="PELinkder Logo" style="height: 32px; width:32px;"/>
+
+### Entity linking for BERT-like models
+
+![Python](https://img.shields.io/badge/python-3.10-blue.svg) 
+[![License](https://img.shields.io/badge/license-BSD--3--Clause-blue?style=flat-square)](https://img.shields.io/badge/license-BSD--3--Clause-blue?style=flat-square)
+[![pre-commit](https://github.com/growgraph/pelinker/actions/workflows/pre-commit.yml/badge.svg)](https://github.com/growgraph/pelinker/actions/workflows/pre-commit.yml)
+
+---
+
+## Overview
+
 
 Entity linking for BERT-like models
 

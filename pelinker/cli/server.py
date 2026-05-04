@@ -1,14 +1,15 @@
 from __future__ import annotations
-
+from fastapi.staticfiles import StaticFiles
 import logging
 from contextlib import asynccontextmanager
 from dataclasses import asdict, dataclass, field
 from datetime import date
 from importlib.resources import files
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Any
 
 from typing_extensions import Self
+from fastapi.openapi.docs import get_swagger_ui_html
 
 import hydra
 import uvicorn
@@ -22,9 +23,11 @@ from starlette.middleware.gzip import GZipMiddleware
 from pelinker.config import EmbeddingModelMetadata, KBConfig
 from pelinker.model import Linker
 from pelinker.onto import MAX_LENGTH
-from pelinker.util import str2layers, layers2str
 
 logger = logging.getLogger(__name__)
+
+# Repo-root ``static/`` (sibling of the ``pelinker`` package), not CWD-relative.
+_STATIC_DIR = Path(__file__).resolve().parents[2] / "static"
 
 
 @dataclass
@@ -35,20 +38,18 @@ class ServerCliConfig:
     port: int = 8599
     """Path to the dumped linker **without** ``.gz`` (same as ``Linker.dump`` / ``Linker.load``). If omitted, uses the packaged store path built from ``model_type`` and ``layers_spec``."""
     model_file_spec: str | None = None
-    model_type: str = "pubmedbert"
-    layers_spec: str = "1"
     thr_score: float = 0.5
     use_gpu: bool = False
     cors_allow_origins: list[str] = field(default_factory=lambda: ["*"])
 
 
-class LinkRequest(BaseModel):
+class _LinkTextsBody(BaseModel):
+    """Shared ``text`` / ``texts`` input shape for ``/link`` and ``/link/debug``."""
+
     model_config = ConfigDict(extra="ignore")
 
     text: str | None = Field(default=None, min_length=1)
     texts: list[str] | None = None
-    thr_score: float | None = None
-    use_gpu: bool | None = None
 
     @model_validator(mode="after")
     def _coalesce_texts(self) -> Self:
@@ -63,6 +64,22 @@ class LinkRequest(BaseModel):
             object.__setattr__(self, "texts", [self.text])
             return self
         raise ValueError("Provide 'text' or non-empty 'texts'")
+
+
+class LinkRequest(_LinkTextsBody):
+    thr_score: float | None = None
+    use_gpu: bool | None = None
+    max_length: int | None = Field(default=None, ge=1, le=8192)
+
+
+class LinkDebugRequest(_LinkTextsBody):
+    """Same inputs as ``/link`` plus flags matching ``pelinker.cli.link_files``."""
+
+    thr_score: float | None = None
+    use_gpu: bool | None = None
+    max_length: int | None = Field(default=None, ge=1, le=8192)
+    include_entity_anomaly_metrics: bool = False
+    kb_validation: bool = False
 
 
 class ServerState:
@@ -84,11 +101,7 @@ def _resolve_model_file_spec(cfg: ServerCliConfig) -> Any:
         if p.suffix == ".gz":
             p = p.with_suffix("")
         return p
-    layers = str2layers(cfg.layers_spec)
-    layers_str = layers2str(layers)
-    return files("pelinker.store").joinpath(
-        f"pelinker.model.{cfg.model_type}.{layers_str}"
-    )
+    return files("pelinker.store").joinpath("model.v0")
 
 
 def _load_linker(cfg: ServerCliConfig) -> tuple[Linker, str]:
@@ -101,15 +114,6 @@ def _load_linker(cfg: ServerCliConfig) -> tuple[Linker, str]:
             f"No dumped model at {resolved!s}.gz (check model_file_spec or model_type/layers_spec)."
         ) from exc
 
-    if linker.embedding_metadata is None:
-        linker.embedding_metadata = EmbeddingModelMetadata.from_single(
-            cfg.model_type, cfg.layers_spec
-        )
-        logger.warning(
-            "Loaded linker had no embedding_metadata; using cfg: model_type=%r layers_spec=%r",
-            cfg.model_type,
-            cfg.layers_spec,
-        )
     return linker, resolved
 
 
@@ -130,19 +134,23 @@ def _transform_to_jsonable(linker: Linker) -> dict[str, Any] | None:
     return asdict(tc)
 
 
+def _embedding_metadata_to_json(
+    em: EmbeddingModelMetadata | None,
+) -> dict[str, Any] | None:
+    """Full serialization of :class:`~pelinker.config.EmbeddingModelMetadata` from the artifact."""
+    if em is None:
+        return None
+    return asdict(em)
+
+
 def build_info_payload(state: ServerState) -> dict[str, Any]:
     linker = state.linker
     em = linker.embedding_metadata
-    sources_json: list[dict[str, str]] = []
-    if em is not None:
-        sources_json = [
-            {"model_type": s.model_type, "layers_spec": s.layers_spec}
-            for s in em.sources
-        ]
     cluster_ids = set(linker.cluster_assignments.values())
     return {
         "resolved_model_path": state.resolved_model_path,
-        "embedding_metadata": {"sources": sources_json} if em is not None else None,
+        "embedding_metadata": _embedding_metadata_to_json(em),
+        "nlp_model_name": linker.nlp_model_name,
         "kb": _kb_to_jsonable(linker.kb_config),
         "vocabulary_size": len(linker.vocabulary),
         "cluster_count": len(cluster_ids),
@@ -169,7 +177,7 @@ def create_app(cfg: ServerCliConfig) -> FastAPI:
         yield
         state_holder["state"] = None
 
-    app = FastAPI(title="pelinker", lifespan=lifespan)
+    app = FastAPI(title="pelinker", lifespan=lifespan, docs_url=None)
     app.add_middleware(GZipMiddleware, minimum_size=512)
     app.add_middleware(
         CORSMiddleware,
@@ -185,29 +193,93 @@ def create_app(cfg: ServerCliConfig) -> FastAPI:
             raise HTTPException(status_code=503, detail="Server not ready")
         return s
 
-    StateDep = Annotated[ServerState, Depends(get_state)]
+    if _STATIC_DIR.is_dir():
+        app.mount(
+            "/static",
+            StaticFiles(directory=str(_STATIC_DIR)),
+            name="static",
+        )
+
+    _favicon_url = (
+        "/static/favicon.ico"
+        if (_STATIC_DIR / "favicon.ico").is_file()
+        else "https://fastapi.tiangolo.com/img/favicon.png"
+    )
+
+    @app.get("/docs", include_in_schema=False)
+    async def custom_swagger_ui():
+        return get_swagger_ui_html(
+            openapi_url=app.openapi_url,
+            title="Pelinker API Docs",
+            swagger_favicon_url=_favicon_url,
+        )
+
+    @app.get("/health")
+    def health() -> dict[str, str]:
+        return {"status": "ok"}
 
     @app.get("/info")
-    def info(state: StateDep) -> dict[str, Any]:
+    def info(state: ServerState = Depends(get_state)) -> dict[str, Any]:
         return build_info_payload(state)
 
+    @app.get("/model")
+    def model_info(state: ServerState = Depends(get_state)) -> dict[str, Any]:
+        """Embedding identity and spaCy pipeline name (from the loaded linker artifact)."""
+        linker = state.linker
+        return {
+            "embedding_metadata": _embedding_metadata_to_json(
+                linker.embedding_metadata
+            ),
+            "nlp_model_name": linker.nlp_model_name,
+        }
+
     @app.post("/link")
-    def link(body: LinkRequest, state: StateDep) -> dict[str, Any]:
+    def link(
+        body: LinkRequest, state: ServerState = Depends(get_state)
+    ) -> dict[str, Any]:
         assert body.texts is not None
         thr_s = body.thr_score if body.thr_score is not None else state.cfg.thr_score
         use_gpu = body.use_gpu if body.use_gpu is not None else state.cfg.use_gpu
+        max_len = body.max_length if body.max_length is not None else MAX_LENGTH
         try:
             pres = state.linker.predict(
                 body.texts,
-                MAX_LENGTH,
+                max_length=max_len,
                 threshold=0.0,
                 use_gpu=use_gpu,
             )
-            r = pres.filter_by_score(thr_s).to_dict()
+            r = pres.filter_by_score(thr_s).to_dict(public_entity_fields=True)
         except Exception as exc:
             logger.exception("link failed")
             raise HTTPException(status_code=500, detail=str(exc)) from exc
         return r
+
+    @app.post("/link/debug")
+    def link_debug(
+        body: LinkDebugRequest, state: ServerState = Depends(get_state)
+    ) -> dict[str, Any]:
+        """Predict with per-mention diagnostics (``mention_anomaly``) and optional KB validation."""
+        assert body.texts is not None
+        thr_s = body.thr_score if body.thr_score is not None else state.cfg.thr_score
+        use_gpu = body.use_gpu if body.use_gpu is not None else state.cfg.use_gpu
+        max_len = body.max_length if body.max_length is not None else MAX_LENGTH
+        try:
+            pres = state.linker.predict(
+                body.texts,
+                max_length=max_len,
+                threshold=0.0,
+                use_gpu=use_gpu,
+                include_mention_anomaly=True,
+                include_prediction_kb_validation=body.kb_validation,
+            )
+            filtered = pres.filter_by_score(thr_s)
+            return filtered.to_dict(
+                include_entity_anomaly_metrics=body.include_entity_anomaly_metrics,
+                include_debug=True,
+            )
+        except Exception as exc:
+            logger.exception("link/debug failed")
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
 
     return app
 

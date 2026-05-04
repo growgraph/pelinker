@@ -12,7 +12,24 @@ import pandas as pd
 
 from pelinker.config import ScreenerKind
 
-_JSON_CLUSTERING_REPORT_SCHEMA = "pelinker.clustering_report.v2"
+_JSON_CLUSTERING_REPORT_SCHEMA = "pelinker.clustering_report.v5"
+
+
+def entity_negative_label_mask_01(
+    entities: pd.Series | np.ndarray,
+    negative_label: str,
+) -> np.ndarray:
+    """
+    Per-row binary labels aligned with ``entities``: ``1`` if the row's ``entity`` equals
+    ``negative_label`` (same convention as the negative screener positive class), else ``0``.
+    """
+    if isinstance(entities, pd.Series):
+        s = entities.astype(str).to_numpy()
+    else:
+        s = np.asarray(entities).astype(str)
+    if s.size == 0:
+        return np.zeros(0, dtype=np.int64)
+    return (s == negative_label).astype(np.int64, copy=False)
 
 
 @dataclass(frozen=True)
@@ -182,11 +199,20 @@ class ClusteringReport:
     assignments: pd.DataFrame
     pca_residuals: np.ndarray
     pca_mahalanobis: np.ndarray
+    pca_spectral_entropy: np.ndarray
+    pca_residual_label_01: np.ndarray
+    """``1`` iff ``entity == negative_label`` on that row (same length as ``pca_residuals``)."""
+    pca_mahalanobis_label_01: np.ndarray
+    """Same mask as ``pca_residual_label_01`` (repeated for per-metric plots)."""
+    pca_spectral_entropy_label_01: np.ndarray
+    """Same mask as ``pca_residual_label_01`` (repeated for per-metric plots)."""
     umap_clustering: np.ndarray
     umap_visualization: np.ndarray
     pca_reduced: np.ndarray
     negative_screener_cv: NegativeScreenerCvSummary | None = None
     """Stratified CV metrics for LDA and linear SVM (negative vs KB); ``None`` when screening is off or infeasible."""
+    manifold_oov_cv: dict[str, Any] | None = None
+    """CV F1 summary for 3D manifold OOV model selection; ``None`` when disabled or infeasible."""
     ari: float | None = None
 
 
@@ -258,6 +284,18 @@ def clustering_report_to_jsonable_dict(report: ClusteringReport) -> dict[str, An
         "assignments": _dataframe_to_jsonable_records(report.assignments),
         "pca_residuals": _ndarray_to_jsonable_nested(report.pca_residuals),
         "pca_mahalanobis": _ndarray_to_jsonable_nested(report.pca_mahalanobis),
+        "pca_spectral_entropy": _ndarray_to_jsonable_nested(
+            report.pca_spectral_entropy
+        ),
+        "pca_residual_label_01": _ndarray_to_jsonable_nested(
+            report.pca_residual_label_01
+        ),
+        "pca_mahalanobis_label_01": _ndarray_to_jsonable_nested(
+            report.pca_mahalanobis_label_01
+        ),
+        "pca_spectral_entropy_label_01": _ndarray_to_jsonable_nested(
+            report.pca_spectral_entropy_label_01
+        ),
         "umap_clustering": _ndarray_to_jsonable_nested(report.umap_clustering),
         "umap_visualization": _ndarray_to_jsonable_nested(report.umap_visualization),
         "pca_reduced": _ndarray_to_jsonable_nested(report.pca_reduced),
@@ -268,6 +306,11 @@ def clustering_report_to_jsonable_dict(report: ClusteringReport) -> dict[str, An
             else _json_normalize(
                 _negative_screener_cv_summary_to_jsonable(report.negative_screener_cv)
             )
+        ),
+        "manifold_oov_cv": (
+            None
+            if report.manifold_oov_cv is None
+            else _json_normalize(report.manifold_oov_cv)
         ),
     }
 

@@ -1,8 +1,10 @@
 # Run Scripts Documentation
 
-This directory contains scripts for preprocessing knowledge bases, embedding corpora, and analyzing embedding quality.
+This directory contains scripts for preprocessing knowledge bases, embedding corpora, analyzing embedding quality, and producing **OOV / manifold anomaly** figures from fit reports plus batch-linked mention dumps.
 
 For a **single end-to-end train** (corpus embedding → KB filtering/aggregation → PCA/UMAP → optimized HDBSCAN clustering → serialized linker artifact), use the packaged CLI `pelinker.cli.fit` documented in [Fitting the linker model](#fitting-the-linker-model) below.
+
+The published **MkDocs** site mirrors this layout at a high level under [Run scripts & CLIs](https://growgraph.github.io/pelinker/user_guide/run_scripts_and_cli/) (source: `docs/user_guide/run_scripts_and_cli.md`). Package **version** is `version` in the repo root `pyproject.toml`.
 
 ## Directory Structure
 
@@ -10,14 +12,17 @@ For a **single end-to-end train** (corpus embedding → KB filtering/aggregation
 run/
 ├── README.md                    # This file
 ├── embed_kb_corpus.py          # Embed knowledge base corpus
+├── test_server.py              # Smoke-test pelinker.cli.server HTTP routes
 ├── loop.embed.kb.corpus.sh     # Batch embedding (grid over model × layer)
 ├── loop.fit.sh                 # Batch full fit: same grid, runs pelinker-fit (A+B)
 ├── preprocessing/               # Property knowledge base generation
 │   ├── extract_properties_go.py    # Extract from GO-CAMs ontology
 │   ├── extract_properties_ro.py    # Extract from Relations Ontology
 │   └── merge_properties.py         # Merge properties from all sources
-├── analysis/                    # Embedding quality evaluation
+├── analysis/                    # Embedding quality & OOV diagnostics
 │   ├── clustering_quality.py       # Measure clustering quality of embeddings
+│   ├── oov_analysis.py             # Fit report + OOV mention dump → PDF figures
+│   ├── replot_dbcv_ari_scatter.py  # DBCV vs ARI scatter from existing grid CSV
 │   └── select_diverse_entities.py  # Select diverse entity subsets
 └── obsolete/                    # Deprecated scripts (not actively maintained)
     ├── analysis/
@@ -199,6 +204,47 @@ uv run pelinker-fit \
   use_gpu=true
 ```
 
+## Batch linking (`pelinker-link-files`)
+
+Module: **`pelinker.cli.link_files`**. Console script: **`uv run pelinker-link-files`** (same as `uv run python -m pelinker.cli.link_files`).
+
+Runs **`Linker.predict`** on one or more UTF-8 inputs (plain text = one document per file, or JSON objects / lists with a `text` field—see `--help`). Typical flags:
+
+| Flag | Role |
+|------|------|
+| `-m` / `--model` | Linker artifact path (`Linker.load`; may omit or include `.gz` per loader rules). |
+| `--thr-score` | Minimum cluster membership score (same role as server `thr_score`). |
+| `-o` / `--output` | Write the full JSON report (entities, scores, optional GT echo). |
+| `--dump-mention-anomaly PATH` | Per-mention table with PCA residual / Mahalanobis-style metrics; format from extension: **`.parquet`**, **`.csv`**, **`.jsonl`**. Feeds **`run/analysis/oov_analysis.py`**. |
+| `--include-anomaly-metrics` | Attach anomaly fields to **entity** records in the JSON output. |
+| `--kb-validation` | Include KB lemma validation-style fields where applicable. |
+| `--use-gpu` | CUDA for the encoder path when available. |
+
+## HTTP server smoke tests
+
+After you have a dumped linker (packaged default or `output_path` from fit), you can run the **FastAPI** server from **`pelinker.cli.server`**. Configuration uses Hydra like fit; defaults live in `pelinker/conf/server.yaml`.
+
+**Start the server** (pick one):
+
+- `uv run pelinker-serves` (console script from `pyproject.toml`)
+- `uv run python -m pelinker.cli.server` (equivalent module invocation)
+
+Common Hydra overrides: `host`, `port` (default **8599**), `model_file_spec` (linker dump **without** the `.gz` suffix—same rule as `Linker.load`), `thr_score`, `use_gpu`, `cors_allow_origins`. API routes include `GET /health`, `GET /info`, `GET /model`, `POST /link`, and `POST /link/debug`; interactive docs are at **`/docs`** when the server is up.
+
+### `test_server.py`
+
+Small **Click** client in this directory to hit those routes while developing. Start the server in one terminal, then:
+
+```bash
+uv run python run/test_server.py --endpoint health
+uv run python run/test_server.py --endpoint info
+uv run python run/test_server.py --endpoint model
+uv run python run/test_server.py --endpoint link
+uv run python run/test_server.py --endpoint link-debug
+```
+
+Use **`--host`** / **`--port`** so they match the running server (defaults: `localhost` and **8599**). For **`link`** and **`link-debug`**, omit **`--input-path`** to send a built-in two-document `texts` example, or pass a JSON file whose root is an object with **`text`** or **`texts`** (optional keys such as `thr_score`, `use_gpu`, `max_length`; for debug, `include_entity_anomaly_metrics`, `kb_validation`). Plain or **`.json.gz`** files are accepted (via `pelinker.io.load_json_path`). Use **`--output`** to write the JSON response to a file instead of printing; **`--timeout`** defaults to 300 seconds for slow cold starts.
+
 ## Analysis Scripts
 
 Scripts in the `analysis/` directory evaluate embedding quality and select diverse entities.
@@ -235,3 +281,24 @@ Selects semantically diverse entities from a knowledge base using clustering-bas
   - Uses K-means clustering to identify diverse groups
   - Selects the most representative entity from each cluster (preferring generic/simple terms)
 - **Use Case**: Useful for creating evaluation sets or reducing knowledge base size while maintaining semantic coverage
+
+### `oov_analysis.py`
+
+Publication-style **figures** for pre-classifier anomaly space: compares training (fit) mentions with **KB-validated OOV** vs **unconfirmed OOV** using PCA residual and Mahalanobis-style distances from the fit-B clustering report, plus ROC/PR and decision-boundary sweeps.
+
+- **Inputs**:
+  - **`--fit-report`**: gzipped JSON clustering report with `pca_residuals` / `pca_mahalanobis` (training anchor distribution).
+  - **`--oov-csv`**: Mention-level table from **`pelinker-link-files --dump-mention-anomaly`** (or equivalent columns).
+  - **`--out-dir`**: Directory for output PDFs.
+- **Run**: `uv run python run/analysis/oov_analysis.py --help` for the full CLI (composite “paper” figure, alignment with the negative screener, etc.).
+- **Dependencies**: Uses **`matplotlib`** / **`seaborn`**; install optional **dev** extras if needed (`uv sync --extra dev` so the plotting stack matches `pyproject.toml`).
+
+### `replot_dbcv_ari_scatter.py`
+
+Rebuilds the **DBCV vs ARI** scatter PNG from an existing **`results_grid_per_sample.csv`** produced by `clustering_quality.py` (no re-embedding).
+
+```bash
+uv run python run/analysis/replot_dbcv_ari_scatter.py path/to/results_grid_per_sample.csv
+```
+
+Optional **`-o` / `--output`** overrides the default path next to the CSV (`model.dbcv_vs_ari.png`).

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
+from typing import cast
 
 import torch
 
@@ -10,7 +11,7 @@ from pelinker.linker_kb_lemma import (
     enrich_entity_predictions_kb_validation,
     lookup_kb_training_entity_label,
 )
-from pelinker.model import Linker
+from pelinker.model import Linker, LinkerPredictResult
 from pelinker.onto import MentionCandidate, WordGrouping
 
 
@@ -84,7 +85,9 @@ def test_predict_include_prediction_kb_validation(monkeypatch) -> None:
         "score": 1.0,
         "pca_residual": 0.0,
         "pca_mahalanobis": 0.0,
+        "pca_spectral_entropy": 0.0,
         "anomaly_score_max_z": 0.0,
+        "manifold_oov_score": 0.0,
     }
     fake_index = {WordGrouping.W1: {"alpha tok": "Alpha Label"}}
 
@@ -132,7 +135,9 @@ def test_predict_merges_kb_validation_into_debug_mentions(monkeypatch) -> None:
         "score": 1.0,
         "pca_residual": 0.0,
         "pca_mahalanobis": 0.0,
+        "pca_spectral_entropy": 0.0,
         "anomaly_score_max_z": 0.0,
+        "manifold_oov_score": 0.0,
         "mention_source_index": 0,
     }
     debug_row: dict[str, object] = {
@@ -215,3 +220,74 @@ def test_predict_debug_mentions_length_matches_mention_list(monkeypatch) -> None
     out = linker.predict(["t"], include_debug_mentions=True)
     assert out.debug_mentions is not None
     assert len(out.debug_mentions) == len(mentions)
+
+
+def test_predict_default_entities_omit_kb_training_label(monkeypatch) -> None:
+    linker = Linker(labels_map={"e1": "Alpha"})
+    cand = MentionCandidate(
+        mention="m",
+        a=0,
+        b=1,
+        itext=0,
+        a_abs=10,
+        b_abs=20,
+        word_grouping=WordGrouping.W1,
+        lemma="x",
+    )
+    pred_row: dict[str, object] = {
+        **dataclasses.asdict(cand),
+        "entity_id_predicted": "e1",
+        "score": 1.0,
+        "pca_residual": 0.0,
+        "pca_mahalanobis": 0.0,
+        "pca_spectral_entropy": 0.0,
+        "anomaly_score_max_z": 0.0,
+        "manifold_oov_score": 0.0,
+    }
+    monkeypatch.setattr(
+        linker,
+        "_encode_mentions",
+        lambda texts, max_length, use_gpu=False: (
+            torch.zeros(1, 4, dtype=torch.float32),
+            [cand],
+            _PrimaryStub(),
+        ),
+    )
+    monkeypatch.setattr(
+        linker,
+        "_predict_with_clustering",
+        lambda *args, **kwargs: ([pred_row], None),
+    )
+    out = linker.predict(["x"])
+    assert "kb_training_entity" not in out.entities[0]
+
+
+def test_linker_predict_result_to_dict_public_entity_fields() -> None:
+    raw: dict[str, object] = {
+        "mention": "motivates",
+        "a": 0,
+        "b": 20,
+        "a_abs": 134,
+        "b_abs": 143,
+        "ichunk": 0,
+        "itext": 1,
+        "word_grouping": 1,
+        "entity_id_predicted": "PEL.000012",
+        "score": 0.77,
+        "pca_residual": 0.44,
+        "pca_mahalanobis": 8.85,
+        "pca_spectral_entropy": 0.5,
+        "anomaly_score_max_z": 1.83,
+        "manifold_oov_score": -0.1,
+        "kb_training_entity": "facilitates",
+    }
+    r = LinkerPredictResult(entities=[dict(raw)])
+    e = cast(dict[str, object], r.to_dict(public_entity_fields=True)["entities"][0])
+    assert e["a"] == 134
+    assert e["b"] == 143
+    assert "a_abs" not in e and "b_abs" not in e
+    assert "word_grouping" not in e
+    assert "pca_residual" not in e
+    assert "pca_spectral_entropy" not in e
+    assert "manifold_oov_score" not in e
+    assert "kb_training_entity" not in e

@@ -26,6 +26,7 @@ class TransformArtifacts:
     umap_visualization: np.ndarray
     pca_residuals: np.ndarray
     pca_mahalanobis: np.ndarray
+    pca_spectral_entropy: np.ndarray
 
     def umap_clustering_df(self) -> pd.DataFrame:
         n_umap = int(self.umap_clustering.shape[1])
@@ -56,6 +57,7 @@ class TransformArtifacts:
             {
                 "pca_residual": self.pca_residuals,
                 "pca_mahalanobis": self.pca_mahalanobis,
+                "pca_spectral_entropy": self.pca_spectral_entropy,
             },
             index=self.index,
         )
@@ -83,6 +85,8 @@ class EmbeddingTransformer:
         self.umap: umap.UMAP | None = None
         self.umap_viz: umap.UMAP | None = None
         self._mahalanobis_eps = 1e-12
+        self._entropy_row_sum_eps = 1e-12
+        self._entropy_log_eps = 1e-10
 
     @staticmethod
     def _l2_normalize_rows(embeddings: np.ndarray) -> np.ndarray:
@@ -93,7 +97,7 @@ class EmbeddingTransformer:
 
     def _compute_pca_metrics(
         self, embeddings_normed: np.ndarray, pca_reduced: np.ndarray
-    ) -> tuple[np.ndarray, np.ndarray]:
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         if self.pca is None:
             raise ValueError("PCA is not initialized")
         pca_reconstructed = self.pca.inverse_transform(pca_reduced)
@@ -103,7 +107,15 @@ class EmbeddingTransformer:
         mahalanobis = np.sqrt(
             np.sum((pca_reduced / np.sqrt(safe_var)) ** 2, axis=1),
         )
-        return residual_norms, mahalanobis
+        pr = np.asarray(pca_reduced, dtype=np.float64)
+        squared = pr * pr
+        row_sums = np.maximum(
+            squared.sum(axis=1, keepdims=True),
+            self._entropy_row_sum_eps,
+        )
+        p = squared / row_sums
+        spectral_entropy = -np.sum(p * np.log(p + self._entropy_log_eps), axis=1)
+        return residual_norms, mahalanobis, spectral_entropy
 
     def fit(self, embeddings: np.ndarray) -> "EmbeddingTransformer":
         """
@@ -151,7 +163,7 @@ class EmbeddingTransformer:
 
     def transform(
         self, embeddings: np.ndarray
-    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         """
         Transform embeddings through the pipeline.
 
@@ -159,11 +171,13 @@ class EmbeddingTransformer:
             embeddings: Array of shape (n_samples, n_features) containing embeddings
 
         Returns:
-            Tuple of (umap_clustering, umap_visualization, pca_residuals, pca_mahalanobis) arrays
+            Tuple of (umap_clustering, umap_visualization, pca_residuals, pca_mahalanobis,
+            pca_spectral_entropy) arrays
             - umap_clustering: Shape (n_samples, umap_components) for clustering
             - umap_visualization: Shape (n_samples, umap_viz_components) for visualization
             - pca_residuals: Shape (n_samples,) PCA reconstruction residual norm per sample
             - pca_mahalanobis: Shape (n_samples,) Mahalanobis distance in PCA subspace
+            - pca_spectral_entropy: Shape (n_samples,) Shannon entropy of normalized squared PCA coords
         """
         if self.pca is None or self.umap is None or self.umap_viz is None:
             raise ValueError(
@@ -172,8 +186,8 @@ class EmbeddingTransformer:
 
         embeddings_normed = self._l2_normalize_rows(embeddings)
         pca_reduced = self.pca.transform(embeddings_normed)
-        pca_residuals, pca_mahalanobis = self._compute_pca_metrics(
-            embeddings_normed, pca_reduced
+        pca_residuals, pca_mahalanobis, pca_spectral_entropy = (
+            self._compute_pca_metrics(embeddings_normed, pca_reduced)
         )
 
         # Apply UMAP for clustering
@@ -182,11 +196,17 @@ class EmbeddingTransformer:
         # Apply UMAP for visualization
         umap_visualization = self.umap_viz.transform(pca_reduced)
 
-        return umap_clustering, umap_visualization, pca_residuals, pca_mahalanobis
+        return (
+            umap_clustering,
+            umap_visualization,
+            pca_residuals,
+            pca_mahalanobis,
+            pca_spectral_entropy,
+        )
 
     def fit_transform(
         self, embeddings: np.ndarray
-    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         """
         Fit the pipeline and transform embeddings in one step.
 
@@ -194,7 +214,8 @@ class EmbeddingTransformer:
             embeddings: Array of shape (n_samples, n_features) containing embeddings
 
         Returns:
-            Tuple of (umap_clustering, umap_visualization, pca_residuals, pca_mahalanobis) arrays
+            Tuple of (umap_clustering, umap_visualization, pca_residuals, pca_mahalanobis,
+            pca_spectral_entropy) arrays
         """
         return self.fit(embeddings).transform(embeddings)
 
@@ -232,8 +253,8 @@ def compute_transform_artifacts(
     # and exported PCA columns (avoids duplicate PCA transform pass).
     embedding_vectors_normed = transformer._l2_normalize_rows(embedding_vectors)
     pca_reduced = transformer.pca.transform(embedding_vectors_normed)
-    pca_residuals, pca_mahalanobis = transformer._compute_pca_metrics(
-        embedding_vectors_normed, pca_reduced
+    pca_residuals, pca_mahalanobis, pca_spectral_entropy = (
+        transformer._compute_pca_metrics(embedding_vectors_normed, pca_reduced)
     )
     umap_clustering = transformer.umap.transform(pca_reduced)
     umap_visualization = transformer.umap_viz.transform(pca_reduced)
@@ -245,4 +266,5 @@ def compute_transform_artifacts(
         umap_visualization=umap_visualization,
         pca_residuals=pca_residuals,
         pca_mahalanobis=pca_mahalanobis,
+        pca_spectral_entropy=pca_spectral_entropy,
     )

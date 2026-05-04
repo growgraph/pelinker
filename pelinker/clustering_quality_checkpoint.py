@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from hashlib import sha256
 from typing import Any, Literal
 
+from pelinker.io.json_files import is_gzip_file_path, load_json_path
 from pelinker.onto import NEGATIVE_LABEL
 from pelinker.reporting import CLUSTERING_QUALITY_CHECKPOINT_BASENAME
 
@@ -237,18 +238,8 @@ def reconcile_fusion_checkpoint_params(
     return len(removed_keys)
 
 
-def _checkpoint_path_is_gzip(path: pathlib.Path) -> bool:
-    """True when the on-disk format is gzip-compressed JSON (e.g. ``*.json.gz``)."""
-    return path.suffix.lower() == ".gz"
-
-
 def load_checkpoint(path: pathlib.Path) -> ClusteringQualityCheckpoint:
-    if _checkpoint_path_is_gzip(path):
-        with gzip.open(path, "rt", encoding="utf-8") as f:
-            raw = f.read()
-    else:
-        raw = path.read_text(encoding="utf-8")
-    data = json.loads(raw)
+    data = load_json_path(path)
     if not isinstance(data, dict):
         raise ValueError("checkpoint must be a JSON object")
     return ClusteringQualityCheckpoint.from_json_dict(data)
@@ -264,7 +255,7 @@ def save_checkpoint_atomic(
         checkpoint.to_json_dict(), indent=2, sort_keys=True, ensure_ascii=False
     )
     text = payload + "\n"
-    if _checkpoint_path_is_gzip(path):
+    if is_gzip_file_path(path):
         with gzip.open(tmp, "wt", encoding="utf-8", newline="\n") as gz:
             gz.write(text)
     else:

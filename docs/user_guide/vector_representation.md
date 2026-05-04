@@ -72,4 +72,5 @@ The transformer is run **once**; the loop over `word_modes` only recomputes spaC
 
 ## See also
 
+- **[Run scripts & CLIs](run_scripts_and_cli.md)** — training, server, and batch linking entry points.
 - Generated module pages: **API Reference** → `pelinker.util`, `pelinker.onto`.

@@ -6,7 +6,7 @@ from collections import defaultdict
 from collections.abc import Sequence
 import dataclasses
 from dataclasses import dataclass, replace
-from typing import TypedDict, cast
+from typing import Any, TypedDict, cast
 
 import pandas as pd
 import torch
@@ -26,6 +26,13 @@ from pelinker.config import (
     LinkerFitConfig,
     TransformConfig,
 )
+from pelinker.manifold_oov_screener import (
+    ManifoldOovScoreModel,
+    build_manifold_oov_training_arrays,
+    evaluate_manifold_oov_cv,
+    fit_manifold_oov_lda_no_cv,
+    fit_manifold_oov_score_model,
+)
 from pelinker.negative_screener import NegativeClassScreener
 from pelinker.analysis import (
     compute_clustering_fit_metrics,
@@ -38,6 +45,7 @@ from pelinker.reporting import (
     ClusteringHyperparameters,
     ClusteringReport,
     NegativeScreenerInSampleMetrics,
+    entity_negative_label_mask_01,
 )
 from pelinker.embedder import embed_kb_corpus
 from pelinker.embedding_fusion import (
@@ -57,6 +65,7 @@ from pelinker.linker_kb_lemma import (
 from pelinker.onto import (
     MAX_LENGTH,
     MentionCandidate,
+    NEGATIVE_LABEL,
     WordGrouping,
 )
 from pelinker.transform import EmbeddingTransformer
@@ -86,7 +95,9 @@ class EntityPredictionRow(TypedDict):
     score: float
     pca_residual: float
     pca_mahalanobis: float
+    pca_spectral_entropy: float
     anomaly_score_max_z: float
+    manifold_oov_score: float
 
 
 @dataclass(frozen=True, slots=True)
@@ -115,17 +126,46 @@ class LinkerPredictResult:
         include_debug: bool = False,
         include_entity_anomaly_metrics: bool = True,
         strip_mention_source_index: bool = True,
+        public_entity_fields: bool = False,
     ) -> dict[str, object]:
-        """Serialize for JSON APIs. Debug rows use the legacy key ``mention_anomaly``."""
+        """Serialize for JSON APIs. Debug rows use the legacy key ``mention_anomaly``.
+
+        When ``public_entity_fields`` is true (used by ``/link`` and the link-files CLI
+        in default mode), entity rows omit anomaly metrics, KB validation labels, and
+        ``word_grouping``; character spans use document-global ``a`` / ``b`` (from
+        internal ``a_abs`` / ``b_abs``), not chunk-local coordinates.
+        """
         entities_out: list[dict[str, object]] = []
         for r in self.entities:
             e = dict(r)
             if strip_mention_source_index:
                 e.pop("mention_source_index", None)
-            if not include_entity_anomaly_metrics:
+            if public_entity_fields:
                 e.pop("pca_residual", None)
                 e.pop("pca_mahalanobis", None)
+                e.pop("pca_spectral_entropy", None)
                 e.pop("anomaly_score_max_z", None)
+                e.pop("manifold_oov_score", None)
+                e.pop("word_grouping", None)
+                for k in (
+                    "kb_training_entity",
+                    "kb_training_entity_from_lemma",
+                    "kb_training_entity_for_prediction",
+                    "lemma_kb_matches_predicted_entity",
+                ):
+                    e.pop(k, None)
+                chunk_a = e.pop("a", None)
+                chunk_b = e.pop("b", None)
+                abs_a = e.pop("a_abs", None)
+                abs_b = e.pop("b_abs", None)
+                e["a"] = abs_a if abs_a is not None else chunk_a
+                e["b"] = abs_b if abs_b is not None else chunk_b
+            elif not include_entity_anomaly_metrics:
+                e.pop("pca_residual", None)
+                e.pop("pca_mahalanobis", None)
+                e.pop("pca_spectral_entropy", None)
+                e.pop("anomaly_score_max_z", None)
+                e.pop("manifold_oov_score", None)
             entities_out.append(e)
         payload: dict[str, object] = {"entities": entities_out}
         if include_debug and self.debug_mentions is not None:
@@ -175,6 +215,7 @@ class Linker:
         self.training_cluster_frame: pd.DataFrame | None = None
         self.training_pca_residuals: np.ndarray | None = None
         self.training_pca_mahalanobis: np.ndarray | None = None
+        self.training_pca_spectral_entropy: np.ndarray | None = None
         self.training_umap_clustering: np.ndarray | None = None
         self.training_umap_visualization: np.ndarray | None = None
         self.training_pca_reduced: np.ndarray | None = None
@@ -183,6 +224,10 @@ class Linker:
         self.screener: NegativeClassScreener | None = None
         self.screener_in_sample_metrics: NegativeScreenerInSampleMetrics | None = None
         self.clustering_fit_metrics: ClusteringFitMetrics | None = None
+        self.manifold_oov: ManifoldOovScoreModel | None = kwargs.pop(
+            "manifold_oov", None
+        )
+        self._manifold_oov_cv_payload: dict[str, object] | None = None
         self._hf_tokenizer = None
         self._hf_model = None
         self._hf_models_by_type: dict[str, tuple[object, object]] = {}
@@ -219,6 +264,8 @@ class Linker:
             "entity_id_predicted",
             "score",
             "kb_training_entity",
+            "pca_spectral_entropy",
+            "manifold_oov_score",
         )
         keys_when_validation: tuple[str, ...] = (
             "kb_training_entity_from_lemma",
@@ -260,6 +307,10 @@ class Linker:
             pe_model.training_pca_residuals = None
         if "training_pca_mahalanobis" not in pe_model.__dict__:
             pe_model.training_pca_mahalanobis = None
+        if "training_pca_spectral_entropy" not in pe_model.__dict__:
+            pe_model.training_pca_spectral_entropy = None
+        if "manifold_oov" not in pe_model.__dict__:
+            pe_model.manifold_oov = None
         if "training_umap_clustering" not in pe_model.__dict__:
             pe_model.training_umap_clustering = None
         if "training_umap_visualization" not in pe_model.__dict__:
@@ -301,9 +352,11 @@ class Linker:
         self.training_cluster_frame = None
         self.training_pca_residuals = None
         self.training_pca_mahalanobis = None
+        self.training_pca_spectral_entropy = None
         self.training_umap_clustering = None
         self.training_umap_visualization = None
         self.training_pca_reduced = None
+        self._manifold_oov_cv_payload = None
 
     def build_clustering_report(self) -> ClusteringReport | None:
         """
@@ -320,6 +373,7 @@ class Linker:
             tcf is None
             or self.training_pca_residuals is None
             or self.training_pca_mahalanobis is None
+            or self.training_pca_spectral_entropy is None
             or self.training_umap_clustering is None
             or self.training_umap_visualization is None
             or self.training_pca_reduced is None
@@ -330,6 +384,7 @@ class Linker:
         if (
             len(self.training_pca_residuals) != n
             or len(self.training_pca_mahalanobis) != n
+            or len(self.training_pca_spectral_entropy) != n
             or self.training_umap_clustering.shape[0] != n
             or self.training_umap_visualization.shape[0] != n
             or self.training_pca_reduced.shape[0] != n
@@ -358,6 +413,17 @@ class Linker:
 
         number_properties = int(tcf["entity"].nunique())
 
+        res_f = np.asarray(self.training_pca_residuals, dtype=np.float64)
+        mah_f = np.asarray(self.training_pca_mahalanobis, dtype=np.float64)
+        ent_f = np.asarray(self.training_pca_spectral_entropy, dtype=np.float64)
+
+        neg_lbl = (
+            self.screener.negative_label
+            if self.screener is not None
+            else NEGATIVE_LABEL
+        )
+        y_neg = entity_negative_label_mask_01(tcf["entity"], neg_lbl)
+
         return ClusteringReport(
             hyperparameters=ClusteringHyperparameters(
                 min_cluster_size=m.min_cluster_size
@@ -367,14 +433,23 @@ class Linker:
             n_clusters_emergent=m.n_clusters_emergent,
             metrics_df=metrics_df,
             assignments=assignments,
-            pca_residuals=np.asarray(self.training_pca_residuals, dtype=np.float64),
-            pca_mahalanobis=np.asarray(self.training_pca_mahalanobis, dtype=np.float64),
+            pca_residuals=res_f,
+            pca_mahalanobis=mah_f,
+            pca_spectral_entropy=ent_f,
+            pca_residual_label_01=y_neg,
+            pca_mahalanobis_label_01=y_neg,
+            pca_spectral_entropy_label_01=y_neg,
             umap_clustering=np.asarray(self.training_umap_clustering, dtype=np.float64),
             umap_visualization=np.asarray(
                 self.training_umap_visualization, dtype=np.float64
             ),
             pca_reduced=np.asarray(self.training_pca_reduced, dtype=np.float64),
             negative_screener_cv=None,
+            manifold_oov_cv=(
+                cast(dict[str, Any], self._manifold_oov_cv_payload)
+                if self._manifold_oov_cv_payload is not None
+                else None
+            ),
             ari=m.ari,
         )
 
@@ -503,12 +578,6 @@ class Linker:
                     "and columns pmid, entity, mention, embed)."
                 )
 
-            # prepared = drop_entities_with_few_mentions(
-            #     raw,
-            #     fc.min_class_size,
-            #     negative_label=fc.negative_screener.negative_label,
-            # )
-
             self._fit_clustering_on_prepared_mentions(
                 prepared=raw,
                 transform_config=transform_config,
@@ -557,18 +626,53 @@ class Linker:
         )
         self.transform_config = transform_config
         self.transformer = EmbeddingTransformer(transform_config)
-        umap_clustering, umap_visualization, pca_residuals, pca_mahalanobis = (
-            self.transformer.fit_transform(embeddings)
-        )
+        (
+            umap_clustering,
+            umap_visualization,
+            pca_residuals,
+            pca_mahalanobis,
+            pca_spectral_entropy,
+        ) = self.transformer.fit_transform(embeddings)
         embeddings_normed = self.transformer._l2_normalize_rows(embeddings)
         pca_reduced = self.transformer.pca.transform(embeddings_normed)
         self.training_pca_residuals = np.asarray(pca_residuals, dtype=np.float32)
         self.training_pca_mahalanobis = np.asarray(pca_mahalanobis, dtype=np.float32)
+        self.training_pca_spectral_entropy = np.asarray(
+            pca_spectral_entropy, dtype=np.float32
+        )
         self.training_umap_clustering = np.asarray(umap_clustering, dtype=np.float32)
         self.training_umap_visualization = np.asarray(
             umap_visualization, dtype=np.float32
         )
         self.training_pca_reduced = np.asarray(pca_reduced, dtype=np.float32)
+
+        mo_cfg = fit_cfg.manifold_oov_screener
+        self._manifold_oov_cv_payload = None
+        self.manifold_oov = None
+        if mo_cfg.enabled:
+            built_xy = build_manifold_oov_training_arrays(
+                prepared,
+                manifold_df,
+                self.transformer,
+                negative_label=ns_cfg.negative_label,
+            )
+            if built_xy is not None:
+                X_mo, y_mo = built_xy
+                n0 = int(np.sum(y_mo == 0))
+                n1 = int(np.sum(y_mo == 1))
+                if n0 < 2 or n1 < 2:
+                    self.manifold_oov, cv_pl = fit_manifold_oov_lda_no_cv(X_mo, y_mo)
+                    self._manifold_oov_cv_payload = cv_pl
+                else:
+                    cv_eval = evaluate_manifold_oov_cv(X_mo, y_mo, mo_cfg)
+                    if cv_eval is not None:
+                        self.manifold_oov, cv_pl = fit_manifold_oov_score_model(
+                            X_mo,
+                            y_mo,
+                            mo_cfg,
+                            cv_payload_and_winner=cv_eval,
+                        )
+                        self._manifold_oov_cv_payload = cv_pl
 
         self.clusterer = hdbscan.HDBSCAN(
             min_cluster_size=min_cluster_size,
@@ -760,7 +864,9 @@ class Linker:
         cluster_membership_prob: float,
         pca_residual: float,
         pca_mahalanobis: float,
+        pca_spectral_entropy: float,
         anomaly_score_max_z: float,
+        manifold_oov_score: float,
     ) -> EntityPredictionRow:
         """Merge mention span fields with clustering outputs; ``score`` is cluster soft membership."""
         base = dataclasses.asdict(item)
@@ -769,7 +875,9 @@ class Linker:
         out["score"] = cluster_membership_prob
         out["pca_residual"] = pca_residual
         out["pca_mahalanobis"] = pca_mahalanobis
+        out["pca_spectral_entropy"] = pca_spectral_entropy
         out["anomaly_score_max_z"] = anomaly_score_max_z
+        out["manifold_oov_score"] = manifold_oov_score
         return out
 
     @staticmethod
@@ -849,6 +957,7 @@ class Linker:
         if (
             self.training_pca_residuals is None
             or self.training_pca_mahalanobis is None
+            or self.training_pca_spectral_entropy is None
             or len(self.training_pca_residuals) == 0
             or len(self.training_pca_mahalanobis) == 0
         ):
@@ -856,7 +965,14 @@ class Linker:
 
         residual = np.asarray(self.training_pca_residuals, dtype=np.float64)
         mahal = np.asarray(self.training_pca_mahalanobis, dtype=np.float64)
-        combined = np.maximum(self._zscore(residual), self._zscore(mahal))
+        entropy = np.asarray(self.training_pca_spectral_entropy, dtype=np.float64)
+        combined = np.maximum.reduce(
+            [
+                self._zscore(residual),
+                self._zscore(mahal),
+                self._zscore(entropy),
+            ]
+        )
         quantiles = [0.5, 0.9, 0.95, 0.99]
 
         def _q(values: np.ndarray) -> dict[str, float]:
@@ -867,6 +983,7 @@ class Linker:
         return {
             "residual": _q(residual),
             "mahalanobis": _q(mahal),
+            "spectral_entropy": _q(entropy),
             "combined_max_z": _q(combined),
         }
 
@@ -1011,6 +1128,10 @@ class Linker:
         :meth:`LinkerPredictResult.to_dict` with ``include_debug=True`` to emit the legacy
         ``mention_anomaly`` key for JSON consumers.
 
+        ``kb_training_entity`` (human label from ``labels_map`` for the predicted id)
+        is attached only when mention-debug or KB validation is requested, not on the
+        default prediction path.
+
         When ``include_prediction_kb_validation`` is true, each row in ``entities`` gains
         validation-only fields comparing mention lemmas to KB training ``entity`` labels
         (same index as training-time matching): ``kb_training_entity_from_lemma``,
@@ -1055,11 +1176,12 @@ class Linker:
             )
 
         preds_obj = cast(list[dict[str, object]], predictions)
-        for row in preds_obj:
-            eid = row.get("entity_id_predicted")
-            row["kb_training_entity"] = (
-                self.labels_map.get(str(eid)) if eid is not None else None
-            )
+        if want_debug or include_prediction_kb_validation:
+            for row in preds_obj:
+                eid = row.get("entity_id_predicted")
+                row["kb_training_entity"] = (
+                    self.labels_map.get(str(eid)) if eid is not None else None
+                )
 
         if mention_anomaly is not None:
             self._merge_prediction_fields_into_debug_mentions(
@@ -1083,7 +1205,9 @@ class Linker:
         screener_margin: np.ndarray,
         residuals: np.ndarray,
         mahalanobis: np.ndarray,
+        spectral_entropy: np.ndarray,
         combined: np.ndarray,
+        manifold_oov_scores: np.ndarray,
         kb_lemma_by_wg: dict[WordGrouping, dict[str, str]],
     ) -> list[dict[str, object]]:
         rows: list[dict[str, object]] = []
@@ -1110,7 +1234,9 @@ class Linker:
                     "kb_property_match": kb_property,
                     "pca_residual": float(residuals[i]),
                     "pca_mahalanobis": float(mahalanobis[i]),
+                    "pca_spectral_entropy": float(spectral_entropy[i]),
                     "anomaly_score_max_z": float(combined[i]),
+                    "manifold_oov_score": float(manifold_oov_scores[i]),
                     "screener_is_negative": bool(screener_neg[i]),
                     "screener_decision": float(screener_margin[i]),
                 }
@@ -1124,7 +1250,9 @@ class Linker:
         screener_margin: np.ndarray,
         residuals: np.ndarray,
         mahalanobis: np.ndarray,
+        spectral_entropy: np.ndarray,
         combined: np.ndarray,
+        manifold_oov_scores: np.ndarray,
         kb_lemma_by_wg: dict[WordGrouping, dict[str, str]],
     ) -> list[dict[str, object]]:
         return self._build_mention_anomaly_rows(
@@ -1133,7 +1261,9 @@ class Linker:
             screener_margin,
             residuals,
             mahalanobis,
+            spectral_entropy,
             combined,
+            manifold_oov_scores,
             kb_lemma_by_wg,
         )
 
@@ -1201,19 +1331,43 @@ class Linker:
                     nan_vec,
                     nan_vec,
                     nan_vec,
+                    nan_vec,
+                    nan_vec,
                     kb_lemma_by_wg,
                 )
             return [], None
 
         emb_k = embeddings_np[idx_keep]
-        _umap_k, _, res_k, mah_k = self.transformer.transform(emb_k)
+        _umap_k, _, res_k, mah_k, ent_k = self.transformer.transform(emb_k)
         cl_k, cp_k = approximate_predict(self.clusterer, _umap_k)
         cl_arr = cl_k.astype(np.int64, copy=False)
         cp_arr = np.asarray(cp_k, dtype=np.float64).ravel()
-        combined_k = np.maximum(self._zscore(res_k), self._zscore(mah_k))
+        combined_k = np.maximum.reduce(
+            [
+                self._zscore(res_k),
+                self._zscore(mah_k),
+                self._zscore(ent_k),
+            ]
+        )
+        mo = self.manifold_oov
+        if mo is not None:
+            X3 = np.column_stack(
+                [
+                    np.asarray(res_k, dtype=np.float64),
+                    np.asarray(mah_k, dtype=np.float64),
+                    np.asarray(ent_k, dtype=np.float64),
+                ]
+            )
+            oov_scores_k = mo.score(X3)
+            oov_gate_k = mo.is_oov(X3)
+        else:
+            oov_scores_k = np.full(len(idx_keep), np.nan, dtype=np.float64)
+            oov_gate_k = np.zeros(len(idx_keep), dtype=bool)
 
         for j, mention_i in enumerate(idx_keep):
             item = mentions[int(mention_i)]
+            if bool(oov_gate_k[j]):
+                continue
             cluster_id = int(cl_arr[j])
             cluster_prob = float(cp_arr[j])
             # Skip HDBSCAN outliers and low-confidence assignments.
@@ -1239,7 +1393,9 @@ class Linker:
                 cluster_membership_prob=cluster_prob,
                 pca_residual=float(res_k[j]),
                 pca_mahalanobis=float(mah_k[j]),
+                pca_spectral_entropy=float(ent_k[j]),
                 anomaly_score_max_z=float(combined_k[j]),
+                manifold_oov_score=float(oov_scores_k[j]),
             )
             cast(dict[str, object], row)["mention_source_index"] = int(mention_i)
             candidates.append(row)
@@ -1250,17 +1406,23 @@ class Linker:
             assert kb_lemma_by_wg is not None
             residuals = np.full(n_mentions, np.nan, dtype=np.float64)
             mahalanobis = np.full(n_mentions, np.nan, dtype=np.float64)
+            spectral_entropy = np.full(n_mentions, np.nan, dtype=np.float64)
             combined_full = np.full(n_mentions, np.nan, dtype=np.float64)
+            manifold_oov_full = np.full(n_mentions, np.nan, dtype=np.float64)
             residuals[idx_keep] = res_k
             mahalanobis[idx_keep] = mah_k
+            spectral_entropy[idx_keep] = ent_k
             combined_full[idx_keep] = combined_k
+            manifold_oov_full[idx_keep] = oov_scores_k
             return deduped, self._mention_anomaly_from_full_vectors(
                 mentions,
                 screener_neg,
                 screener_margin,
                 residuals,
                 mahalanobis,
+                spectral_entropy,
                 combined_full,
+                manifold_oov_full,
                 kb_lemma_by_wg,
             )
         return deduped, None

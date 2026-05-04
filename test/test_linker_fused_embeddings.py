@@ -1,5 +1,6 @@
 """Mention-level fused parquets for ``Linker.fit`` (inner join + concat, analysis-aligned)."""
 
+import gzip
 import json
 from pathlib import Path
 
@@ -163,12 +164,14 @@ def test_fit_with_synthetic_negatives_screener_metrics_and_dump_load(tmp_path):
         min_cluster_size=2,
         fit_config=fit_cfg,
     )
+    assert linker.manifold_oov is not None
     assert linker.screener is not None
     assert linker.screener_in_sample_metrics is not None
     assert linker.screener_in_sample_metrics.n_negative_label_mentions >= 1
     assert linker.screener_in_sample_metrics.n_kb_mentions >= 1
     fit_report = linker.take_fit_clustering_report()
     assert fit_report is not None
+    assert fit_report.manifold_oov_cv is not None
     assert NEGATIVE_LABEL not in set(
         fit_report.assignments["entity"].astype(str).unique()
     )
@@ -176,6 +179,7 @@ def test_fit_with_synthetic_negatives_screener_metrics_and_dump_load(tmp_path):
     model_path = tmp_path / "linker_metrics"
     linker.dump(model_path)
     loaded = Linker.load(model_path)
+    assert loaded.manifold_oov is not None
     assert loaded.screener_in_sample_metrics == linker.screener_in_sample_metrics
     assert loaded.clustering_fit_metrics == linker.clustering_fit_metrics
 
@@ -247,8 +251,10 @@ def test_fit_stores_and_serializes_training_pca_metrics(tmp_path):
     n = len(report.assignments)
     assert report.pca_residuals.shape == (n,)
     assert report.pca_mahalanobis.shape == (n,)
+    assert report.pca_spectral_entropy.shape == (n,)
     assert (report.pca_residuals >= 0.0).all()
     assert (report.pca_mahalanobis >= 0.0).all()
+    assert (report.pca_spectral_entropy >= 0.0).all()
 
     model_path = tmp_path / "linker_residual_test"
     linker.dump(model_path)
@@ -280,8 +286,16 @@ def test_fit_clustering_report_json_roundtrip(tmp_path: Path) -> None:
     assert report is not None
     out = tmp_path / LINKER_FIT_CLUSTERING_REPORT_BASENAME
     write_clustering_report_json(out, report)
-    blob = json.loads(out.read_text(encoding="utf-8"))
-    assert blob["schema"] == "pelinker.clustering_report.v2"
+    with gzip.open(out, mode="rt", encoding="utf-8") as fh:
+        blob = json.load(fh)
+    assert blob["schema"] == "pelinker.clustering_report.v5"
     n = len(report.assignments)
     assert len(blob["pca_residuals"]) == n
     assert len(blob["pca_mahalanobis"]) == n
+    assert len(blob["pca_spectral_entropy"]) == n
+    assert len(blob["pca_residual_label_01"]) == n
+    assert len(blob["pca_mahalanobis_label_01"]) == n
+    assert len(blob["pca_spectral_entropy_label_01"]) == n
+    assert blob["pca_residual_label_01"] == [0] * n
+    assert blob["pca_mahalanobis_label_01"] == [0] * n
+    assert blob["pca_spectral_entropy_label_01"] == [0] * n
