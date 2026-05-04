@@ -1,0 +1,65 @@
+[
+    {
+        "text": "p53 mutations predispose cancer cell development, promote their survival and metastasis, and lead to ineffective therapeutic responses and unfavorable prognosis. No drug that abrogates the oncogenic functions of mutant p53 has been approved for cancer treatment. Here, we performed whole-genome sequencing of 663 esophageal squamous cell carcinoma (ESCC) tumor tissues and paired normal tissues. The results indicated that ESCC samples from our cohort had a more dispersed distribution of TP53 mutants and a higher proportion of nonsense mutants than European and American ESCC samples in the International Agency for Research on Cancer (IARC) database. The most frequent p53 mutations disrupt the inhibition of proliferation, migration, and invasion mediated by wild-type p53 in ESCC. Furthermore, p53 mutations alter its protein nucleoplasmic localization and protein stability. The p53 mutation G245S (p53-G245S) interacts with heterogeneous nuclear ribonucleoprotein A2B1 (hnRNPA2B1) to increase protein translation of phosphatidylinositol-dependent Arf GAP (AGAP1) by promoting AGAP1 mRNA stability. AGAP1 promotes cancer cell proliferation and metastasis by enhancing exosome formation. Furthermore, we explored the combination of the HSP90 inhibitor HSP90i and the AGAP1 inhibitor QS11 could inhibit ESCC cell proliferation and metastasis. Thus, the p53-G245S/hnRNPA2B1/AGAP1 axis promotes ESCC progression by enhancing exosome formation, and the combination of an HSP90 inhibitor and an AGAP1 inhibitor may serve as a potential therapeutic strategy."
+    },
+    {
+        "text": "The ignition switch actuates the starter motor when the driver turns the key. This action causes the engine to begin combustion. Once the engine starts, the alternator activates the battery charging system."
+    },
+    {
+        "text": "Protein A binds to receptor B on the cell membrane. This binding activates a signaling cascade inside the cell. The cascade controls the transcription of several downstream genes."
+    },
+    {
+        "text": "The braking system has part a hydraulic circuit and a brake pad assembly. The hydraulic circuit actuates the pads against the rotor. This process constrains the wheel's motion."
+    },
+    {
+        "text": "The alarm sensor detects smoke and triggers the warning siren. The siren causes occupants to evacuate the building. This evacuation process occurs in the office complex."
+    },
+    {
+        "text": "A manager supervises the daily operations of the warehouse. This oversight controls how goods are dispatched. The dispatch process precedes the final customer delivery."
+    },
+    {
+        "text": "Enzyme E associates with cofactor F before catalysis begins. The cofactor activates the enzyme's reactive site. The activated enzyme then binds to the substrate."
+    },
+    {
+        "text": "The software platform contains process modules for authentication and reporting. The authentication module controls user access. Reporting functions are realized in the analytics subsystem."
+    },
+    {
+        "text": "Rainfall causes the river level to rise rapidly. The elevated water level constrains road access in nearby villages. Emergency response operations occur in the flooded area."
+    },
+    {
+        "text": "The policy framework includes several regulatory mechanisms as parts. These mechanisms govern industrial emissions. Their enforcement motivates firms to adopt cleaner technologies."
+    },
+    {
+        "text": "Ligand molecules attach to receptor proteins on the membrane surface. This interaction triggers intracellular responses. The responses activate metabolic pathways in the cytoplasm."
+    },
+    {
+        "text": "The training phase precedes the deployment phase in the machine learning workflow. During deployment, the model controls automated recommendations. These recommendations influence user decisions."
+    },
+    {
+        "text": "The central processor has part an arithmetic logic unit and a control unit. The control unit directs the execution of instructions. These instructions cause changes in memory state."
+    },
+    {
+        "text": "The catalyst converts the precursor into an active compound. This transformation activates the therapeutic effect of the drug. The effect is realized in the patient's immune response."
+    },
+    {
+        "text": "The lock mechanism engages when the handle is turned. This engagement restricts the movement of the door. The locking process occurs in the entry system."
+    },
+    {
+        "text": "The conductor coordinates the orchestra during rehearsal. His gestures control the tempo of the musicians. The rehearsal precedes the evening performance."
+    },
+    {
+        "text": "The mobile app integrates messaging and payment services. The payment service links with the banking gateway. This association enables secure financial transactions."
+    },
+    {
+        "text": "The thermostat regulates the heating unit in the building. Its signals actuate the furnace when the temperature drops. This action maintains the desired indoor climate."
+    },
+    {
+        "text": "The medication binds with the target receptor in the nervous system. This interaction causes a reduction in pain signals. The relief effect occurs in the patient after administration."
+    },
+    {
+        "text": "The manufacturing workflow begins with material preparation. This step comes before assembly of the components. Assembly produces the final device for packaging."
+    },
+    {
+        "text": "The ecosystem includes predators, prey, and decomposers as parts. Predators regulate prey populations. This balance controls the stability of the environment."
+    }
+]

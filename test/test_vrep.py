@@ -14,8 +14,8 @@ def test_vrep_word_groupings(tokenizer_model_scibert, nlp):
         model,
         layers_spec,
         [WordGrouping.W1, WordGrouping.W2],
+        nlp,
         max_length=MAX_LENGTH,
-        nlp=nlp,
     )
 
     wg_w1 = report[WordGrouping.W1].expression_data[0].expressions

@@ -2,7 +2,9 @@ import click
 import pathlib
 import logging
 
+from pelinker.config import EmbeddingModelMetadata, EmbeddingTrainingConfig
 from pelinker.embedder import embed_kb_corpus
+from pelinker.onto import NEGATIVE_LABEL
 
 logger = logging.getLogger(__name__)
 
@@ -11,8 +13,8 @@ logger = logging.getLogger(__name__)
 @click.option(
     "--model-type",
     type=click.STRING,
-    default="biobert",
-    help="Backbone model type for token embeddings.",
+    default="pubmedbert",
+    help="Backbone model type for token embeddings (same vocabulary as pelinker.cli.fit).",
 )
 @click.option(
     "--layers-spec",
@@ -44,16 +46,18 @@ logger = logging.getLogger(__name__)
     help="Enable GPU acceleration if CUDA is available",
 )
 @click.option(
-    "--chunk-size",
+    "--input-buffer-rows",
+    "input_buffer_rows",
     type=click.INT,
     default=1000,
-    help="Chunk size for streaming input. Each chunk is split into batches and serialized.",
+    help="Rows per pandas read pass over the text table (I/O only; not encoder batch size).",
 )
 @click.option(
-    "--batch-size",
+    "--encoder-batch-size",
+    "encoder_batch_size",
     type=click.INT,
     default=200,
-    help="Embedding batch size inside a chunk.",
+    help="Table rows per transformer encoder forward pass (lower if GPU runs out of memory).",
 )
 @click.option(
     "--nlp-model",
@@ -62,10 +66,32 @@ logger = logging.getLogger(__name__)
     help="spaCy model to use for tokenization/lemmas.",
 )
 @click.option(
-    "--head",
+    "--max-input-buffers",
+    "max_input_buffers",
     type=click.INT,
     default=None,
-    help="Number of chunks to process (skip it for all chunks).",
+    help="Stop after this many text-table read passes (each up to --input-buffer-rows rows).",
+)
+@click.option(
+    "--negatives-per-positive",
+    "negatives_per_positive",
+    type=click.FLOAT,
+    default=0.0,
+    help="Sample this many random negative mentions per positive mention.",
+)
+@click.option(
+    "--negative-label",
+    "negative_label",
+    type=click.STRING,
+    default=NEGATIVE_LABEL,
+    help="Entity label used for sampled negatives.",
+)
+@click.option(
+    "--negative-seed",
+    "negative_seed",
+    type=click.INT,
+    default=None,
+    help="Random seed for deterministic negative sampling.",
 )
 def run(
     model_type,
@@ -74,28 +100,37 @@ def run(
     kb_csv_path,
     output_parquet_path,
     use_gpu,
-    chunk_size,
-    batch_size,
+    input_buffer_rows,
+    encoder_batch_size,
     nlp_model,
-    head,
+    max_input_buffers,
+    negatives_per_positive,
+    negative_label,
+    negative_seed,
 ):
     # Set up logging
     logging.basicConfig(
         level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
     )
 
-    # Call the embedding function
-    embed_kb_corpus(
-        model_type=model_type,
-        layers_spec=layers_spec,
+    metadata = EmbeddingModelMetadata.from_single(model_type, layers_spec)
+    training = EmbeddingTrainingConfig(
         input_text_table_path=input_text_table_path,
         kb_csv_path=kb_csv_path,
-        output_parquet_path=output_parquet_path,
         use_gpu=use_gpu,
-        chunk_size=chunk_size,
-        batch_size=batch_size,
+        input_buffer_rows=input_buffer_rows,
+        encoder_batch_size=encoder_batch_size,
         nlp_model=nlp_model,
-        head=head,
+        max_input_buffers=max_input_buffers,
+        negatives_per_positive=negatives_per_positive,
+        negative_label=negative_label,
+        negative_seed=negative_seed,
+    )
+
+    embed_kb_corpus(
+        metadata=metadata,
+        training=training,
+        output_parquet_path=output_parquet_path,
     )
 
 

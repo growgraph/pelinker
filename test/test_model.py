@@ -17,7 +17,7 @@ def text():
 
 
 @pytest.mark.skip("fix later")
-def test_load(text, tokenizer_model_biobert_stsb, nlp):
+def test_load(text):
     layer_spec = "sent"
     layers = Linker.str2layers(layer_spec)
 
@@ -27,7 +27,6 @@ def test_load(text, tokenizer_model_biobert_stsb, nlp):
         f"pelinker.model.biobert-stsb.{layers_str}"
     )
     model = Linker.load(file_path)
-    t_tokenizer, t_model = tokenizer_model_biobert_stsb
 
-    r = model.predict([text], t_tokenizer, t_model, nlp, MAX_LENGTH, True)
-    assert r["entities"][-1]["mention"] == "decreased"
+    r = model.predict([text], max_length=MAX_LENGTH, threshold=1.0)
+    assert r.entities[-1]["mention"] == "decreased"

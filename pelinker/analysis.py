@@ -1,230 +1,47 @@
+from __future__ import annotations
+
+import math
 import pathlib
+from collections.abc import Callable, Iterable, Mapping, Sequence
+from typing import Literal
 
 import numpy as np
 import pandas as pd
 import torch
 import hdbscan
-from pelinker.io import read_batches
-from pelinker.reporting import ClusteringReport
-from sklearn.metrics import confusion_matrix
-from scipy.optimize import linear_sum_assignment
-from torch.nn import functional as F
-from collections.abc import Mapping
-from typing import Iterable
+from pelinker.clustering_grid import (
+    aggregate_grid_metrics,
+    evaluate_cluster_size_grid,
+    solve_optimal_min_cluster_size_from_aggregated,
+)
+from pelinker.plotting import (
+    GRID_COL_CHOSEN_MIN_CLUSTER_SIZE,
+    GRID_COL_SAMPLE_ARI,
+    GRID_COL_SAMPLE_BEST_DBCV,
+)
+from pelinker.embedding_fusion import concat_mention_level_embedding_sources
+from pelinker.reporting import (
+    ClusteringFitMetrics,
+    ClusteringHyperparameters,
+    ClusteringReport,
+    NegativeScreenerCvSummary,
+    NegativeScreenerInSampleMetrics,
+    entity_negative_label_mask_01,
+    negative_screener_cv_summary_from_eval_dict,
+)
+from sklearn.metrics import adjusted_rand_score, f1_score, precision_score, recall_score
 from numpy.random import RandomState
 
-from pelinker.transform import TransformConfig, get_umap_columns, transform_embeddings
-
-
-def evaluate_cluster_size_grid(
-    dfr2: pd.DataFrame,
-    umap_columns: list[str],
-    sizes: list[int],
-    max_pairs_per_cluster: int = 200_000,
-) -> pd.DataFrame:
-    """
-    Evaluate clustering metrics on a grid of min_cluster_size values.
-
-    Uses DBCV (Density-Based Clustering Validation) metric.
-
-    Args:
-        dfr2: DataFrame with UMAP-reduced embeddings
-        umap_columns: List of UMAP column names
-        sizes: List of min_cluster_size values to evaluate
-
-    Returns:
-        DataFrame with columns: min_cluster_size, icm, n_clusters, dbcv
-    """
-    # OPTIMIZATION: materialize UMAP features once as float32 to reduce repeated
-    # DataFrame slicing and keep HDBSCAN input memory footprint lower.
-    umap_values = dfr2[umap_columns].to_numpy(dtype=np.float32, copy=False)
-
-    metrics = []
-    for size in sizes:
-        clusterer = hdbscan.HDBSCAN(min_cluster_size=size, gen_min_span_tree=True)
-        labels = clusterer.fit_predict(umap_values)
-
-        ic = []
-        for ix in np.unique(labels):
-            if ix == -1:  # Skip noise points
-                continue
-            cluster_values = umap_values[labels == ix]
-            if len(cluster_values) < 2:
-                continue
-            tgroup = torch.from_numpy(cluster_values)
-            st = cosine_similarity_std(
-                tgroup, max_pairs=max_pairs_per_cluster, random_seed=13
-            )
-            ic += [float(st)]
-
-        icm = np.mean(ic) if ic else np.nan
-
-        # Compute DBCV score
-        unique_labels = set(labels)
-        n_clusters = len(unique_labels) - (1 if -1 in unique_labels else 0)
-
-        # DBCV is available as relative_validity_ attribute
-        if n_clusters >= 2 and hasattr(clusterer, "relative_validity_"):
-            dbcv = float(clusterer.relative_validity_)
-        else:
-            dbcv = np.nan
-
-        # Only record if we have at least one valid cluster
-        if n_clusters >= 1:
-            metrics += [(size, icm, n_clusters, dbcv)]
-
-    return pd.DataFrame(
-        metrics, columns=["min_cluster_size", "icm", "n_clusters", "dbcv"]
-    )
-
-
-def aggregate_grid_metrics(
-    all_metrics_dfs: list[pd.DataFrame],
-) -> pd.DataFrame:
-    """
-    Aggregate grid evaluation metrics across multiple samples.
-
-    Args:
-        all_metrics_dfs: List of metrics DataFrames from multiple samples
-
-    Returns:
-        DataFrame with columns:
-        - min_cluster_size
-        - dbcv_mean, dbcv_std, dbcv_count
-        - icm_mean, n_clusters_mean
-    """
-    if not all_metrics_dfs:
-        return pd.DataFrame()
-
-    combined = pd.concat(all_metrics_dfs, ignore_index=True)
-
-    aggregated = (
-        combined.groupby("min_cluster_size")
-        .agg(
-            {
-                "dbcv": ["mean", "std", "count"],
-                "icm": "mean",
-                "n_clusters": "mean",
-            }
-        )
-        .reset_index()
-    )
-
-    # Flatten column names
-    aggregated.columns = [
-        "min_cluster_size",
-        "dbcv_mean",
-        "dbcv_std",
-        "dbcv_count",
-        "icm_mean",
-        "n_clusters_mean",
-    ]
-
-    # Fill NaN std with 0 (single sample case)
-    aggregated["dbcv_std"] = aggregated["dbcv_std"].fillna(0.0)
-
-    return aggregated
-
-
-def find_optimal_from_grid(
-    aggregated_metrics: pd.DataFrame,
-    method: str = "mean",
-    uncertainty_penalty: float = 1.0,
-) -> tuple[int, float, float]:
-    """
-    Find optimal min_cluster_size from aggregated grid metrics.
-
-    Uses DBCV (Density-Based Clustering Validation) as the metric (maximize).
-
-    Args:
-        aggregated_metrics: DataFrame from aggregate_grid_metrics()
-        method: How to select optimum:
-            - "mean": Use mean DBCV score (default)
-            - "lower_bound": Use mean - uncertainty_penalty * std (conservative)
-            - "weighted": Weight by inverse variance (more samples = more weight)
-        uncertainty_penalty: Multiplier for std when using "lower_bound" method
-
-    Returns:
-        (best_size, best_score_mean, best_score_std) where score is DBCV
-    """
-    if len(aggregated_metrics) == 0:
-        raise ValueError("No aggregated metrics provided")
-
-    sizes = aggregated_metrics["min_cluster_size"].values
-    means = aggregated_metrics["dbcv_mean"].values
-    stds = aggregated_metrics["dbcv_std"].values
-
-    if method == "mean":
-        scores = means
-    elif method == "lower_bound":
-        # Conservative: prefer points with lower uncertainty
-        scores = means - uncertainty_penalty * stds
-    elif method == "weighted":
-        # Weight by inverse variance (more reliable = higher weight)
-        weights = 1.0 / (stds + 1e-8)  # Add small epsilon to avoid division by zero
-        # Normalize weights
-        weights = weights / weights.sum()
-        # Weighted average (but we still need to pick a discrete point)
-        # So we'll use weighted mean as score
-        scores = means * weights
-    else:
-        raise ValueError(f"Unknown method: {method}")
-
-    best_idx = np.argmax(scores)
-    best_size = int(sizes[best_idx])
-    best_score_mean = float(means[best_idx])
-    best_score_std = float(stds[best_idx])
-
-    return best_size, best_score_mean, best_score_std
-
-
-def cosine_similarity_std(
-    tensor: torch.Tensor, max_pairs: int = 200_000, random_seed: int = 13
-):
-    """
-    Calculate the standard deviation of pairwise cosine similarities
-    for a tensor of shape (n_b, dim_emb).
-
-    Args:
-        tensor: torch.Tensor of shape (n_b, dim_emb)
-
-    Returns:
-        torch.Tensor: scalar tensor containing the standard deviation
-    """
-
-    # OPTIMIZATION: use float32 to reduce memory pressure from intermediate tensors.
-    normalized = F.normalize(tensor.float(), p=2, dim=1)
-
-    n_points = normalized.size(0)
-    if n_points < 2:
-        return torch.tensor(float("nan"), dtype=normalized.dtype)
-
-    total_pairs = n_points * (n_points - 1) // 2
-
-    # For small clusters, exact computation is cheap and keeps original behavior.
-    if total_pairs <= max_pairs:
-        cos_sim_matrix = torch.mm(normalized, normalized.t())
-        triu_indices = torch.triu_indices(
-            cos_sim_matrix.size(0), cos_sim_matrix.size(1), offset=1
-        )
-        cos_similarities = cos_sim_matrix[triu_indices[0], triu_indices[1]]
-        return torch.std(cos_similarities)
-
-    # OPTIMIZATION: avoid O(n^2) similarity matrix for large clusters by sampling
-    # random pairs and estimating the std from sampled cosine similarities.
-    sample_size = min(max_pairs, total_pairs)
-    generator = torch.Generator(device=normalized.device)
-    generator.manual_seed(random_seed)
-
-    idx_i = torch.randint(
-        0, n_points, (sample_size,), generator=generator, device=normalized.device
-    )
-    idx_j = torch.randint(
-        0, n_points - 1, (sample_size,), generator=generator, device=normalized.device
-    )
-    idx_j = idx_j + (idx_j >= idx_i).long()  # ensure i != j
-    cos_similarities = (normalized[idx_i] * normalized[idx_j]).sum(dim=1)
-    return torch.std(cos_similarities)
+from pelinker.config import (
+    ClusteringOptimizationConfig,
+    NegativeScreenerConfig,
+    TransformConfig,
+)
+from pelinker.negative_screener import (
+    NegativeClassScreener,
+    evaluate_negative_screener_models,
+)
+from pelinker.transform import compute_transform_artifacts
 
 
 def get_word_frequencies_from_library(
@@ -339,17 +156,16 @@ def _measure_label_simplicity(
     }
 
 
-def compute_hungarian_accuracy(y_true: np.ndarray, y_pred: np.ndarray) -> float:
+def compute_adjusted_rand_index(y_true: np.ndarray, y_pred: np.ndarray) -> float:
     """
-    Compute clustering accuracy using Hungarian algorithm to optimally match
-    predicted cluster labels to true labels.
+    Compute clustering quality via adjusted Rand index (ARI).
 
     Args:
         y_true: True labels (e.g., property names)
         y_pred: Predicted cluster labels
 
     Returns:
-        Accuracy score between 0 and 1
+        ARI score.
     """
     # Filter out noise points (label -1) for accuracy computation
     valid_mask = y_pred != -1
@@ -362,153 +178,432 @@ def compute_hungarian_accuracy(y_true: np.ndarray, y_pred: np.ndarray) -> float:
     if len(y_true_valid) == 0:
         return 0.0
 
-    # Compute confusion matrix
-    cm = confusion_matrix(y_true_valid, y_pred_valid)
-
-    # Use Hungarian algorithm to find optimal assignment
-    # We negate the matrix because linear_sum_assignment minimizes cost
-    row_ind, col_ind = linear_sum_assignment(-cm)
-
-    # Compute accuracy based on optimal assignment
-    accuracy = cm[row_ind, col_ind].sum() / cm.sum()
-
-    return float(accuracy)
+    ari = adjusted_rand_score(y_true_valid, y_pred_valid)
+    return float(ari)
 
 
-def estimate_model_clustering(
-    file_path: pathlib.Path,
-    rns: RandomState,
-    transform_config: TransformConfig,
+def pooled_min_cluster_size_from_metrics_dfs(
+    metrics_dfs: Sequence[pd.DataFrame],
+    optimization_config: ClusteringOptimizationConfig | None = None,
+) -> tuple[int, float]:
+    """
+    After all bootstrap samples have run a min_cluster_size grid, aggregate their metrics
+    once and return the smoothed ``(chosen_min_cluster_size, raw objective mean at that grid point)``.
+    The objective is set by ``ClusteringOptimizationConfig.grid_objective`` (default: pooled
+    min–max normalized DBCV and ARI).
+    """
+    if not metrics_dfs:
+        raise ValueError("metrics_dfs must be non-empty")
+    config = optimization_config or ClusteringOptimizationConfig()
+    aggregated = aggregate_grid_metrics(list(metrics_dfs))
+    solved = solve_optimal_min_cluster_size_from_aggregated(
+        aggregated,
+        objective=config.grid_objective,
+        method=config.optimization_method,
+        smooth_window=config.grid_smooth_window,
+        plateau_fraction=config.grid_plateau_fraction,
+        derivative_rel_tol=config.grid_derivative_rel_tol,
+    )
+    return solved.chosen_min_cluster_size, solved.score_mean_at_chosen
+
+
+def metrics_df_with_grid_sample_columns(
+    report: ClusteringReport,
     *,
-    min_class_size: int = 20,
-    max_scale: int = 120,
-    frac: float = 0.1,
-    head: int | None = None,
-    batch_size: int = 1000,
+    model: str,
+    layer: str,
+    sample_idx: int,
+    chosen_min_cluster_size: int | None = None,
+) -> pd.DataFrame:
+    """
+    Per-sample grid rows for ``results_grid_per_sample.csv``.
+
+    ``chosen_min_cluster_size`` defaults to the value used to fit this sample's clusters
+    (per-sample grid argmax). Pass the pooled choice from
+    :func:`pooled_min_cluster_size_from_metrics_dfs` so every row shares one consensus marker.
+    """
+    ari = report.ari
+    h = (
+        chosen_min_cluster_size
+        if chosen_min_cluster_size is not None
+        else report.hyperparameters.min_cluster_size
+    )
+    return report.metrics_df.assign(
+        model=model,
+        layer=layer,
+        sample_idx=sample_idx,
+        **{
+            GRID_COL_CHOSEN_MIN_CLUSTER_SIZE: int(h),
+            GRID_COL_SAMPLE_BEST_DBCV: float(report.best_score),
+            GRID_COL_SAMPLE_ARI: float("nan") if ari is None else float(ari),
+        },
+    )
+
+
+def split_by_negative_label(
+    dfr: pd.DataFrame,
+    negative_label: str,
+) -> tuple[np.ndarray, pd.DataFrame]:
+    """
+    Split a mention frame into a boolean mask of synthetic-negative rows and the
+    manifold frame (KB / non-negative rows only).
+    """
+    neg_mask = dfr["entity"].astype(str).values == negative_label
+    manifold_df = dfr.loc[~neg_mask].copy()
+    return neg_mask, manifold_df
+
+
+def evaluate_negative_screener_cv_summary(
+    dfr: pd.DataFrame,
+    cfg: NegativeScreenerConfig,
+) -> NegativeScreenerCvSummary | None:
+    """Stratified CV for LDA vs linear SVM on negative vs KB (same task as grid analysis)."""
+    neg_mask = dfr["entity"].astype(str).values == cfg.negative_label
+    if not neg_mask.any():
+        return None
+    X_all = np.stack(dfr["embed"].values).astype(np.float32, copy=False)
+    y_bin = neg_mask.astype(np.int64)
+    raw_cv = evaluate_negative_screener_models(
+        X_all,
+        y_bin,
+        n_splits=cfg.cv_n_splits,
+        test_size=cfg.cv_test_size,
+        random_state=cfg.cv_random_state,
+    )
+    if raw_cv is None:
+        return None
+    return negative_screener_cv_summary_from_eval_dict(raw_cv)
+
+
+def fit_negative_screener_with_metrics(
+    dfr: pd.DataFrame,
+    config: NegativeScreenerConfig,
+) -> tuple[NegativeClassScreener, NegativeScreenerInSampleMetrics | None]:
+    """
+    Fit the persisted screener on ``dfr`` and report in-sample PR/F1 for detecting
+    ``negative_label`` when both classes are present.
+    """
+    screener = NegativeClassScreener.fit_from_frame(dfr, config)
+    y_true = (dfr["entity"].astype(str).values == config.negative_label).astype(
+        np.int64
+    )
+    n_kb = int(np.sum(y_true == 0))
+    n_neg = int(np.sum(y_true == 1))
+    if n_kb == 0 or n_neg == 0:
+        return screener, None
+    X = np.stack(dfr["embed"].values).astype(np.float32, copy=False)
+    y_pred = screener.predict_is_negative(X).astype(np.int64)
+    prec = float(precision_score(y_true, y_pred, pos_label=1, zero_division=0))
+    rec = float(recall_score(y_true, y_pred, pos_label=1, zero_division=0))
+    f1 = float(f1_score(y_true, y_pred, pos_label=1, zero_division=0))
+    return screener, NegativeScreenerInSampleMetrics(
+        precision=prec,
+        recall=rec,
+        f1=f1,
+        n_kb_mentions=n_kb,
+        n_negative_label_mentions=n_neg,
+        kind=config.kind,
+    )
+
+
+def compute_clustering_fit_metrics(
+    clusterer: object,
+    manifold_df: pd.DataFrame,
+    *,
+    min_cluster_size: int,
+    cluster_labels: np.ndarray,
+) -> ClusteringFitMetrics:
+    """DBCV, ARI vs ``entity``, and cluster counts for a fitted HDBSCAN model."""
+    labels = np.asarray(cluster_labels, dtype=np.int64).ravel()
+    n = int(labels.shape[0])
+    label_set = set(labels.tolist())
+    n_clusters_emergent = len(label_set) - (1 if -1 in label_set else 0)
+    noise_count = int(np.sum(labels == -1))
+    noise_fraction = float(noise_count) / float(n) if n > 0 else 0.0
+
+    rv = getattr(clusterer, "relative_validity_", None)
+    dbcv: float | None
+    if rv is None:
+        dbcv = None
+    else:
+        rv_f = float(rv)
+        if math.isnan(rv_f) or math.isinf(rv_f):
+            dbcv = None
+        else:
+            dbcv = rv_f
+
+    ari_score: float | None
+    if "entity" in manifold_df.columns and len(manifold_df) == n:
+        property_labels = manifold_df["entity"].astype("category").cat.codes.values
+        ari_score = compute_adjusted_rand_index(property_labels, labels)
+    else:
+        ari_score = None
+
+    return ClusteringFitMetrics(
+        min_cluster_size=min_cluster_size,
+        dbcv=dbcv,
+        ari=ari_score,
+        n_clusters_emergent=n_clusters_emergent,
+        noise_fraction=noise_fraction,
+        n_samples=n,
+    )
+
+
+def estimate_clustering_from_frame(
+    dfr: pd.DataFrame,
+    transform_config: TransformConfig,
+    optimization_config: ClusteringOptimizationConfig | None = None,
+    *,
     selected_labels: set[str] | None = None,
     all_metrics_dfs: list[pd.DataFrame] | None = None,
-    optimization_method: str = "mean",
-):
+    aggregation_level: Literal["mention", "entity"] = "mention",
+) -> ClusteringReport | None:
     """
-    Estimate optimal cluster size for a single model/layer file.
+    Run clustering grid search and optional **accumulation** of per-sample grid tables.
 
-    Args:
-        file_path: Path to parquet file
-        rns: RandomState object for reproducible sampling
-        transform_config: TransformConfig instance specifying transformation parameters
-        min_class_size: Minimum class size for filtering
-        max_scale: Maximum value for grid evaluation of min_cluster_size (default: 120)
-        frac: Fraction of dataset to sample
-        head: Number of batches to take (None for all)
-        batch_size: Batch size for reading
-        selected_labels: Optional set of labels from selected labels KB to filter by
-        all_metrics_dfs: Optional list of metrics DataFrames from previous samples.
-                         If provided, will aggregate and find optimum from grid.
-                         If None, evaluates grid for this sample only.
-        optimization_method: Method for finding optimum ("mean", "lower_bound", "weighted")
+    When ``all_metrics_dfs`` is provided, each call appends this sample's ``metrics_df`` to
+    that list. The optimal ``min_cluster_size`` for the final HDBSCAN fit **on this sample**
+    is always the per-sample DBCV argmax on its own grid; run
+    :func:`pooled_min_cluster_size_from_metrics_dfs` after all samples to obtain one consensus
+    choice across bootstraps (for summaries, plots, and optional grid CSV markers).
 
-    Returns:
-        ClusteringReport or None: Report containing clustering results, or None if processing failed
+    ``aggregation_level="entity"`` expects one row per distinct ``entity`` (e.g. fused
+    KB vectors) and skips min-mention-per-entity trimming used for mention-level corpora.
     """
 
-    # Simple check: if file doesn't exist (handles broken symlinks), skip it
-    if not file_path.exists():
-        return None
-    agg = []
+    config = optimization_config or ClusteringOptimizationConfig()
 
-    try:
-        for i, batch in enumerate(
-            read_batches(file_path.as_posix(), batch_size=batch_size)
-        ):
-            sample = batch.sample(frac=frac, random_state=rns)
-            agg += [sample]
-            if head is not None and i >= head - 1:
-                break
-    except Exception:
+    if "embed" not in dfr.columns or "entity" not in dfr.columns:
         return None
 
-    if not agg:
-        return None
-
-    dfr = pd.concat(agg)
-
-    umap_columns = get_umap_columns(transform_config)
-
-    # Filter by selected labels if provided
     if selected_labels is not None:
-        dfr = dfr.loc[dfr["property"].isin(selected_labels)].copy()
+        dfr = dfr.loc[dfr["entity"].isin(selected_labels)].copy()
         if len(dfr) == 0:
             return None
 
-    # trim rare mentions
-    mention_count = dfr["property"].value_counts()
-    low_count_properties = mention_count[
-        ~(mention_count >= min_class_size)
-    ].index.to_list()
+    screener_cfg = config.negative_screener
+    neg_label = screener_cfg.negative_label
 
-    dfr = dfr.loc[~dfr["property"].isin(low_count_properties)].copy()
+    if aggregation_level == "mention":
+        mention_count = dfr["entity"].value_counts()
+        low_count_entities = mention_count[
+            ~(mention_count >= config.min_class_size)
+        ].index.to_list()
+        low_count_entities = [e for e in low_count_entities if e != neg_label]
+        dfr = dfr.loc[~dfr["entity"].isin(low_count_entities)].copy()
+        if len(dfr) == 0:
+            return None
 
-    if len(dfr) == 0:
+    negative_screener_cv = evaluate_negative_screener_cv_summary(dfr, screener_cfg)
+    _, dfr_manifold = split_by_negative_label(dfr, neg_label)
+    if len(dfr_manifold) == 0:
         return None
 
-    # Get number of unique properties before transformation
-    number_properties = dfr["property"].nunique()
+    number_properties = int(dfr_manifold["entity"].nunique())
 
-    dfr2 = transform_embeddings(dfr, config=transform_config, embed_column="embed")
-
-    # Grid evaluation
-    sizes = list(np.arange(int(0.5 * min_class_size), max_scale, 5))
-
-    metrics_df = evaluate_cluster_size_grid(dfr2, umap_columns, sizes)
-
-    # Find optimal cluster size
-    if all_metrics_dfs is not None:
-        # Aggregate with previous samples and find optimum from grid
-        all_metrics_dfs.append(metrics_df)
-        aggregated = aggregate_grid_metrics(all_metrics_dfs)
-        best_size, best_score, best_score_std = find_optimal_from_grid(
-            aggregated, method=optimization_method
-        )
-    else:
-        # Single sample: just use max DBCV from this sample
-        if len(metrics_df) == 0:
-            return None
-        best_idx = metrics_df["dbcv"].idxmax()
-        best_size = int(metrics_df.loc[best_idx, "min_cluster_size"])
-        best_score = float(metrics_df.loc[best_idx, "dbcv"])
-
-    # Apply final clustering with best size
-    clusterer = hdbscan.HDBSCAN(min_cluster_size=best_size, gen_min_span_tree=True)
-    labels = clusterer.fit_predict(dfr2[umap_columns])
-    dfr2_final = dfr2.copy()
-    dfr2_final["class"] = pd.DataFrame(
-        labels, columns=["class"], index=dfr2_final.index
+    artifacts = compute_transform_artifacts(
+        dfr_manifold,
+        config=transform_config,
+        embed_column="embed",
     )
+    umap_clustering_df = artifacts.umap_clustering_df()
 
-    # Compute Hungarian matching accuracy
-    # Use property column as true labels and class column as predicted clusters
-    hungarian_acc = None
-    if "property" in dfr2_final.columns and "class" in dfr2_final.columns:
-        # Convert property labels to numeric for confusion matrix
-        property_labels = dfr2_final["property"].astype("category").cat.codes.values
-        cluster_labels = dfr2_final["class"].values
-        hungarian_acc = compute_hungarian_accuracy(property_labels, cluster_labels)
+    sizes = list(
+        np.arange(
+            config.resolved_min_scale(),
+            config.max_scale,
+            config.clustering_grid_step,
+        )
+    )
+    metrics_df = evaluate_cluster_size_grid(
+        umap_clustering_df,
+        list(umap_clustering_df.columns),
+        sizes,
+    )
+    if len(metrics_df) == 0:
+        return None
 
+    if all_metrics_dfs is not None:
+        all_metrics_dfs.append(metrics_df)
+
+    best_idx = metrics_df["dbcv"].idxmax()
+    best_size = int(metrics_df.loc[best_idx, "min_cluster_size"])
+    best_score = float(metrics_df.loc[best_idx, "dbcv"])
+
+    clusterer = hdbscan.HDBSCAN(min_cluster_size=best_size, gen_min_span_tree=True)
+    labels = clusterer.fit_predict(artifacts.umap_clustering)
+    fit_metrics = compute_clustering_fit_metrics(
+        clusterer,
+        dfr_manifold,
+        min_cluster_size=best_size,
+        cluster_labels=labels,
+    )
+    assignments = dfr_manifold[["entity"]].copy()
+    for optional_col in ["pmid", "mention"]:
+        if optional_col in dfr_manifold.columns:
+            assignments[optional_col] = dfr_manifold[optional_col]
+    assignments["cluster"] = labels.astype(int, copy=False)
+
+    res_a = artifacts.pca_residuals
+    mah_a = artifacts.pca_mahalanobis
+    ent_a = artifacts.pca_spectral_entropy
+    y_neg = entity_negative_label_mask_01(dfr_manifold["entity"], neg_label)
     return ClusteringReport(
-        best_size=best_size,
+        hyperparameters=ClusteringHyperparameters(min_cluster_size=best_size),
         best_score=best_score,
         number_properties=number_properties,
+        n_clusters_emergent=fit_metrics.n_clusters_emergent,
         metrics_df=metrics_df,
-        df=dfr2_final,
-        hungarian_accuracy=hungarian_acc,
+        assignments=assignments,
+        pca_residuals=res_a,
+        pca_mahalanobis=mah_a,
+        pca_spectral_entropy=ent_a,
+        pca_residual_label_01=y_neg,
+        pca_mahalanobis_label_01=y_neg,
+        pca_spectral_entropy_label_01=y_neg,
+        umap_clustering=artifacts.umap_clustering,
+        umap_visualization=artifacts.umap_visualization,
+        pca_reduced=artifacts.pca_reduced,
+        negative_screener_cv=negative_screener_cv,
+        manifold_oov_cv=None,
+        ari=fit_metrics.ari,
     )
+
+
+def estimate_model_clustering(
+    transform_config: TransformConfig,
+    optimization_config: ClusteringOptimizationConfig | None = None,
+    *,
+    file_path: pathlib.Path | None = None,
+    file_paths: Sequence[pathlib.Path] | None = None,
+    dfr: pd.DataFrame | None = None,
+    selected_labels: set[str] | None = None,
+    all_metrics_dfs: list[pd.DataFrame] | None = None,
+    embedding_read_status: Callable[[str], None] | None = None,
+    show_embedding_read_progress: bool = False,
+):
+    """
+    Estimate optimal cluster size from parquet file(s) or a preloaded DataFrame.
+
+    Provide exactly one of ``file_path``, ``file_paths``, or ``dfr``. For multiple parquets,
+    rows are inner-joined on (pmid, entity, mention) and ``embed`` vectors are concatenated
+    in path order (must match ``EmbeddingModelMetadata.sources``). Sampling ``frac`` /
+    ``n_embedding_batches`` are applied while loading each file (batches), then ``frac`` is applied
+    once on the merged
+    mention-level frame.
+
+    Args:
+        transform_config: TransformConfig instance specifying transformation parameters
+        optimization_config: Clustering optimization settings. If None, defaults
+            to ClusteringOptimizationConfig().
+        file_path: Single parquet path (backward-compatible entry point).
+        file_paths: Multiple parquets to fuse at mention level before clustering.
+        dfr: Optional pre-built frame (e.g. fused) with ``entity`` and ``embed`` columns.
+        selected_labels: Optional set of labels from selected labels KB to filter by
+        all_metrics_dfs: Optional mutable list that receives each sample's grid ``DataFrame``
+            (for a pooled choice after the batch via :func:`pooled_min_cluster_size_from_metrics_dfs`).
+        embedding_read_status: Callback for embedding parquet batch progress lines
+            (e.g. append to an existing Rich ``Progress`` task description).
+        show_embedding_read_progress: When True and ``embedding_read_status`` is omitted,
+            show a transient Rich progress display while loading parquet batches.
+
+    Returns:
+        ClusteringReport or None if processing failed
+    """
+    config = optimization_config or ClusteringOptimizationConfig()
+    rns: RandomState = config.rns
+
+    sources = [file_path is not None, file_paths is not None, dfr is not None]
+    if sum(bool(x) for x in sources) != 1:
+        raise ValueError(
+            "Provide exactly one of file_path=, file_paths=, or dfr= to estimate_model_clustering"
+        )
+
+    frame: pd.DataFrame | None
+    if dfr is not None:
+        frame = dfr.copy()
+    else:
+        if file_paths is not None:
+            paths = list(file_paths)
+        else:
+            assert file_path is not None
+            paths = [file_path]
+        if len(paths) == 0:
+            return None
+        frame = concat_mention_level_embedding_sources(
+            paths,
+            batch_size=config.batch_size,
+            n_embedding_batches=config.n_embedding_batches,
+            read_status=embedding_read_status,
+            show_read_progress=show_embedding_read_progress,
+        )
+        if frame is None or len(frame) == 0:
+            return None
+
+    frame = frame.sample(frac=config.frac, random_state=rns, replace=False)
+    if len(frame) == 0:
+        return None
+
+    return estimate_clustering_from_frame(
+        frame,
+        transform_config,
+        optimization_config=config,
+        selected_labels=selected_labels,
+        all_metrics_dfs=all_metrics_dfs,
+        aggregation_level="mention",
+    )
+
+
+def mention_frame_from_embedding_paths(
+    paths: Sequence[pathlib.Path],
+    *,
+    optimization_config: ClusteringOptimizationConfig | None = None,
+    read_status: Callable[[str], None] | None = None,
+    show_read_progress: bool = False,
+) -> pd.DataFrame | None:
+    """
+    Load mention-level rows from parquet file(s) like ``estimate_model_clustering``
+    (batched read, optional multi-source inner join on keys), without ``frac`` subsampling.
+    """
+    cfg = optimization_config or ClusteringOptimizationConfig()
+    return concat_mention_level_embedding_sources(
+        paths,
+        batch_size=cfg.batch_size,
+        n_embedding_batches=cfg.n_embedding_batches,
+        read_status=read_status,
+        show_read_progress=show_read_progress,
+    )
+
+
+def drop_entities_with_few_mentions(
+    frame: pd.DataFrame,
+    min_mentions_per_entity: int,
+    *,
+    negative_label: str | None = None,
+) -> pd.DataFrame:
+    """
+    Drop entities with fewer than ``min_mentions_per_entity`` rows (same rule as
+    ``estimate_clustering_from_frame`` with ``aggregation_level='mention'``).
+
+    When ``negative_label`` is set, that label is never dropped for low mention count
+    (so thin negative tails remain for screener training).
+    """
+    if "entity" not in frame.columns:
+        raise ValueError("frame must contain an 'entity' column")
+    mention_count = frame["entity"].value_counts()
+    low_count = mention_count[
+        ~(mention_count >= min_mentions_per_entity)
+    ].index.to_list()
+    if negative_label is not None:
+        low_count = [e for e in low_count if e != negative_label]
+    return frame.loc[~frame["entity"].isin(low_count)].copy()
 
 
 def embeddings_dict_to_dataframe(
     embeddings_dict: dict[str, tuple[str, torch.Tensor | np.ndarray]],
 ) -> pd.DataFrame:
     """
-    Convert embeddings dictionary to DataFrame format expected by transform_embeddings.
+    Convert embeddings dictionary to DataFrame format expected by transform artifacts.
 
     Args:
         embeddings_dict: Dictionary mapping id -> (label, embedding)

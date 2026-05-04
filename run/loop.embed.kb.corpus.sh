@@ -60,8 +60,10 @@ for model in "${mtypes[@]}"; do
                --model-type "$model" \
                --nlp-model en_core_web_trf \
                --layers-spec "$layer" \
-               --batch-size 100 \
-               --chunk-size 2000 \
+               --encoder-batch-size 100 \
+               --input-buffer-rows 2000 \
+               --negatives-per-positive 1.0 \
+               --negative-seed 13 \
                --use-gpu
     done
 done

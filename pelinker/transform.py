@@ -7,43 +7,60 @@ embeddings through PCA and UMAP before clustering with HDBSCAN.
 Pipeline: LLM embeddings -> PCA -> UMAP -> HDBSCAN
 """
 
-from dataclasses import dataclass
-from typing import Optional
-
 import numpy as np
 import pandas as pd
 import umap
+from dataclasses import dataclass
 from sklearn.decomposition import PCA
 
+from pelinker.config import TransformConfig
 
-@dataclass
-class TransformConfig:
-    """Configuration for the embedding transformation pipeline."""
 
-    # PCA configuration
-    pca_components: int = 50
-    """Number of principal components to keep after PCA reduction."""
+@dataclass(frozen=True)
+class TransformArtifacts:
+    """Typed outputs from PCA+UMAP transformation."""
 
-    # UMAP configuration
-    umap_components: int = 4
-    """Number of UMAP dimensions for clustering (typically 3-5)."""
-    umap_metric: str = "cosine"
-    """Distance metric for UMAP (default: 'cosine')."""
+    index: pd.Index
+    pca_reduced: np.ndarray
+    umap_clustering: np.ndarray
+    umap_visualization: np.ndarray
+    pca_residuals: np.ndarray
+    pca_mahalanobis: np.ndarray
+    pca_spectral_entropy: np.ndarray
 
-    # Visualization UMAP configuration
-    umap_viz_components: int = 3
-    """Number of UMAP dimensions for visualization (default: 3)."""
-    umap_viz_metric: str = "cosine"
-    """Distance metric for visualization UMAP (default: 'cosine')."""
+    def umap_clustering_df(self) -> pd.DataFrame:
+        n_umap = int(self.umap_clustering.shape[1])
+        return pd.DataFrame(
+            self.umap_clustering,
+            index=self.index,
+            columns=[f"u_{j:02d}" for j in range(n_umap)],
+        )
 
-    def __post_init__(self):
-        """Validate configuration parameters."""
-        if self.pca_components < 1:
-            raise ValueError("pca_components must be >= 1")
-        if self.umap_components < 2:
-            raise ValueError("umap_components must be >= 2")
-        if self.umap_viz_components < 2:
-            raise ValueError("umap_viz_components must be >= 2")
+    def umap_visualization_df(self) -> pd.DataFrame:
+        n_umap_viz = int(self.umap_visualization.shape[1])
+        return pd.DataFrame(
+            self.umap_visualization,
+            index=self.index,
+            columns=[f"uviz_{j:02d}" for j in range(n_umap_viz)],
+        )
+
+    def pca_df(self) -> pd.DataFrame:
+        n_pca = int(self.pca_reduced.shape[1])
+        return pd.DataFrame(
+            self.pca_reduced,
+            index=self.index,
+            columns=[f"p_{j:02d}" for j in range(n_pca)],
+        )
+
+    def anomaly_df(self) -> pd.DataFrame:
+        return pd.DataFrame(
+            {
+                "pca_residual": self.pca_residuals,
+                "pca_mahalanobis": self.pca_mahalanobis,
+                "pca_spectral_entropy": self.pca_spectral_entropy,
+            },
+            index=self.index,
+        )
 
 
 class EmbeddingTransformer:
@@ -56,7 +73,7 @@ class EmbeddingTransformer:
         3. UMAP (viz): Reduce PCA output to umap_viz_components dimensions (for visualization)
     """
 
-    def __init__(self, config: Optional[TransformConfig] = None):
+    def __init__(self, config: TransformConfig | None = None):
         """
         Initialize the transformer with configuration.
 
@@ -64,9 +81,41 @@ class EmbeddingTransformer:
             config: TransformConfig instance. If None, uses default configuration.
         """
         self.config = config or TransformConfig()
-        self.pca: Optional[PCA] = None
-        self.umap: Optional[umap.UMAP] = None
-        self.umap_viz: Optional[umap.UMAP] = None
+        self.pca: PCA | None = None
+        self.umap: umap.UMAP | None = None
+        self.umap_viz: umap.UMAP | None = None
+        self._mahalanobis_eps = 1e-12
+        self._entropy_row_sum_eps = 1e-12
+        self._entropy_log_eps = 1e-10
+
+    @staticmethod
+    def _l2_normalize_rows(embeddings: np.ndarray) -> np.ndarray:
+        """L2-normalize each embedding row; keep zero rows unchanged."""
+        norms = np.linalg.norm(embeddings, axis=1, keepdims=True)
+        safe_norms = np.where(norms > 0.0, norms, 1.0)
+        return embeddings / safe_norms
+
+    def _compute_pca_metrics(
+        self, embeddings_normed: np.ndarray, pca_reduced: np.ndarray
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        if self.pca is None:
+            raise ValueError("PCA is not initialized")
+        pca_reconstructed = self.pca.inverse_transform(pca_reduced)
+        residual_norms = np.linalg.norm(embeddings_normed - pca_reconstructed, axis=1)
+        explained_variance = np.asarray(self.pca.explained_variance_, dtype=np.float64)
+        safe_var = np.maximum(explained_variance, self._mahalanobis_eps)
+        mahalanobis = np.sqrt(
+            np.sum((pca_reduced / np.sqrt(safe_var)) ** 2, axis=1),
+        )
+        pr = np.asarray(pca_reduced, dtype=np.float64)
+        squared = pr * pr
+        row_sums = np.maximum(
+            squared.sum(axis=1, keepdims=True),
+            self._entropy_row_sum_eps,
+        )
+        p = squared / row_sums
+        spectral_entropy = -np.sum(p * np.log(p + self._entropy_log_eps), axis=1)
+        return residual_norms, mahalanobis, spectral_entropy
 
     def fit(self, embeddings: np.ndarray) -> "EmbeddingTransformer":
         """
@@ -83,12 +132,20 @@ class EmbeddingTransformer:
 
         n_samples, n_features = embeddings.shape
 
-        # Fit PCA
-        self.pca = PCA(n_components=self.config.pca_components)
-        pca_reduced = self.pca.fit_transform(embeddings)
+        # PCA allows at most min(n_samples, n_features) components (svd_solver='full').
+        pca_n = min(self.config.pca_components, n_samples, n_features)
+        self.pca = PCA(n_components=pca_n)
+        embeddings_normed = self._l2_normalize_rows(embeddings)
+        pca_reduced = self.pca.fit_transform(embeddings_normed)
+
+        # UMAP requires n_neighbors < n_samples; cap the default (15) for tiny frames.
+        n_neighbors = min(15, max(2, n_samples - 1))
+        if n_neighbors >= n_samples:
+            n_neighbors = max(1, n_samples - 1)
 
         # Fit UMAP for clustering
         self.umap = umap.UMAP(
+            n_neighbors=n_neighbors,
             n_components=self.config.umap_components,
             metric=self.config.umap_metric,
         )
@@ -96,6 +153,7 @@ class EmbeddingTransformer:
 
         # Fit UMAP for visualization
         self.umap_viz = umap.UMAP(
+            n_neighbors=n_neighbors,
             n_components=self.config.umap_viz_components,
             metric=self.config.umap_viz_metric,
         )
@@ -103,7 +161,9 @@ class EmbeddingTransformer:
 
         return self
 
-    def transform(self, embeddings: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    def transform(
+        self, embeddings: np.ndarray
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         """
         Transform embeddings through the pipeline.
 
@@ -111,17 +171,24 @@ class EmbeddingTransformer:
             embeddings: Array of shape (n_samples, n_features) containing embeddings
 
         Returns:
-            Tuple of (umap_clustering, umap_visualization) arrays
+            Tuple of (umap_clustering, umap_visualization, pca_residuals, pca_mahalanobis,
+            pca_spectral_entropy) arrays
             - umap_clustering: Shape (n_samples, umap_components) for clustering
             - umap_visualization: Shape (n_samples, umap_viz_components) for visualization
+            - pca_residuals: Shape (n_samples,) PCA reconstruction residual norm per sample
+            - pca_mahalanobis: Shape (n_samples,) Mahalanobis distance in PCA subspace
+            - pca_spectral_entropy: Shape (n_samples,) Shannon entropy of normalized squared PCA coords
         """
         if self.pca is None or self.umap is None or self.umap_viz is None:
             raise ValueError(
                 "Transformer must be fitted before transform. Call fit() first."
             )
 
-        # Apply PCA
-        pca_reduced = self.pca.transform(embeddings)
+        embeddings_normed = self._l2_normalize_rows(embeddings)
+        pca_reduced = self.pca.transform(embeddings_normed)
+        pca_residuals, pca_mahalanobis, pca_spectral_entropy = (
+            self._compute_pca_metrics(embeddings_normed, pca_reduced)
+        )
 
         # Apply UMAP for clustering
         umap_clustering = self.umap.transform(pca_reduced)
@@ -129,9 +196,17 @@ class EmbeddingTransformer:
         # Apply UMAP for visualization
         umap_visualization = self.umap_viz.transform(pca_reduced)
 
-        return umap_clustering, umap_visualization
+        return (
+            umap_clustering,
+            umap_visualization,
+            pca_residuals,
+            pca_mahalanobis,
+            pca_spectral_entropy,
+        )
 
-    def fit_transform(self, embeddings: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    def fit_transform(
+        self, embeddings: np.ndarray
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         """
         Fit the pipeline and transform embeddings in one step.
 
@@ -139,23 +214,19 @@ class EmbeddingTransformer:
             embeddings: Array of shape (n_samples, n_features) containing embeddings
 
         Returns:
-            Tuple of (umap_clustering, umap_visualization) arrays
+            Tuple of (umap_clustering, umap_visualization, pca_residuals, pca_mahalanobis,
+            pca_spectral_entropy) arrays
         """
         return self.fit(embeddings).transform(embeddings)
 
 
-def transform_embeddings(
+def compute_transform_artifacts(
     df: pd.DataFrame,
-    config: Optional[TransformConfig] = None,
+    config: TransformConfig | None = None,
     embed_column: str = "embed",
-) -> pd.DataFrame:
+) -> TransformArtifacts:
     """
     Transform embeddings in a DataFrame using PCA -> UMAP pipeline.
-
-    This function adds columns to the DataFrame:
-    - PCA columns: p_00, p_01, ..., p_{pca_components-1:02d}
-    - UMAP clustering columns: u_00, u_01, ..., u_{umap_components-1:02d}
-    - UMAP visualization columns: uviz_00, uviz_01, ..., uviz_{umap_viz_components-1:02d}
 
     Args:
         df: DataFrame with embeddings in the specified column
@@ -163,7 +234,7 @@ def transform_embeddings(
         embed_column: Name of column containing embeddings (default: "embed")
 
     Returns:
-        DataFrame with added transformation columns
+        Typed transformation artifacts
     """
     if embed_column not in df.columns:
         raise ValueError(f"Column '{embed_column}' not found in DataFrame")
@@ -180,43 +251,20 @@ def transform_embeddings(
 
     # OPTIMIZATION: compute PCA transform once and reuse it for both UMAP outputs
     # and exported PCA columns (avoids duplicate PCA transform pass).
-    pca_reduced = transformer.pca.transform(embedding_vectors)
+    embedding_vectors_normed = transformer._l2_normalize_rows(embedding_vectors)
+    pca_reduced = transformer.pca.transform(embedding_vectors_normed)
+    pca_residuals, pca_mahalanobis, pca_spectral_entropy = (
+        transformer._compute_pca_metrics(embedding_vectors_normed, pca_reduced)
+    )
     umap_clustering = transformer.umap.transform(pca_reduced)
     umap_visualization = transformer.umap_viz.transform(pca_reduced)
 
-    # Create DataFrames for each transformation
-    df_pca = pd.DataFrame(
-        pca_reduced,
-        index=df.index,
-        columns=[f"p_{j:02d}" for j in range(config.pca_components)],
+    return TransformArtifacts(
+        index=df.index.copy(),
+        pca_reduced=pca_reduced,
+        umap_clustering=umap_clustering,
+        umap_visualization=umap_visualization,
+        pca_residuals=pca_residuals,
+        pca_mahalanobis=pca_mahalanobis,
+        pca_spectral_entropy=pca_spectral_entropy,
     )
-
-    df_umap = pd.DataFrame(
-        umap_clustering,
-        index=df.index,
-        columns=[f"u_{j:02d}" for j in range(config.umap_components)],
-    )
-
-    df_umap_viz = pd.DataFrame(
-        umap_visualization,
-        index=df.index,
-        columns=[f"uviz_{j:02d}" for j in range(config.umap_viz_components)],
-    )
-
-    # Concatenate all transformations
-    df_result = pd.concat([df, df_pca, df_umap, df_umap_viz], axis=1)
-
-    return df_result
-
-
-def get_umap_columns(config: TransformConfig) -> list[str]:
-    """
-    Get the list of UMAP column names for clustering from a TransformConfig.
-
-    Args:
-        config: TransformConfig instance
-
-    Returns:
-        List of column names like ["u_00", "u_01", ..., "u_{n-1:02d}"]
-    """
-    return [f"u_{j:02d}" for j in range(config.umap_components)]

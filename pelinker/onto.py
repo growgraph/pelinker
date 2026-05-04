@@ -4,6 +4,7 @@ from enum import Enum
 from dataclass_wizard import JSONWizard
 import torch
 from collections import defaultdict
+from collections.abc import Iterator
 
 MAX_LENGTH = 512
 
@@ -20,8 +21,20 @@ class BaseDataclass(JSONWizard, JSONWizard.Meta):
     skip_defaults = True
 
 
+NEGATIVE_LABEL = "__NEGATIVE__"
+
+
 @dataclasses.dataclass
 class ChunkMapper(BaseDataclass):
+    """Maps encoder chunks back to documents and optional pooled span rows.
+
+    When :func:`pelinker.util.texts_to_vrep` runs multiple ``word_modes``, it calls
+    :func:`pelinker.util.render_elementary_tensor_table` repeatedly on the **same**
+    instance. Fields ``text_word_spans_list``, ``token_word_spans_list``,
+    ``tt_expressions``, and ``mapping_table`` therefore reflect **only the last**
+    grouping pass; read per-mode results from :class:`ReportBatch` instead.
+    """
+
     tensor: torch.Tensor  # n_layers x n_batch x n_len x n_emb - tensor where n_batch dim goes over all chunks
     chunks: list[str]  # flat list of chunks
     token_spans_list: list[
@@ -81,6 +94,8 @@ class SimplifiedToken(BaseDataclass):
     text: str
     lemma: str
     tag: str
+    pos: str | None = None  # spaCy ``token.pos_``; ``None`` only for legacy payloads
+    is_stop: bool | None = None  # spaCy ``token.is_stop``
 
 
 @dataclasses.dataclass
@@ -89,12 +104,27 @@ class Expression(BaseDataclass):
     itext: int | None = None  # index of document
     ichunk: int | None = None  # index of document chunk
     a: int | None = None  # index of the first character
-    b: int | None = None  # index of the last character
+    b: int | None = None  # exclusive end index (Python slice semantics)
 
     def __post_init__(self):
         self.tokens = sorted(self.tokens, key=lambda x: x.ix)
         self.a = self.tokens[0].ix
         self.b = self.tokens[-1].ix_end
+
+
+@dataclasses.dataclass
+class MentionCandidate(BaseDataclass):
+    """Typed mention payload used by :class:`pelinker.model.Linker` predictions."""
+
+    mention: str
+    a: int | None
+    b: int | None
+    a_abs: int | None = None
+    b_abs: int | None = None
+    itext: int | None = None
+    ichunk: int | None = None
+    word_grouping: WordGrouping | None = None
+    lemma: str = ""
 
 
 @dataclasses.dataclass
@@ -111,12 +141,18 @@ class ExpressionHolder(BaseDataclass):
     def filter_on_lemmas(
         self, tokens: list[SimplifiedToken]
     ) -> list[tuple[Expression, torch.Tensor]]:
-        tokens_lemmatized = " ".join([e.lemma for e in tokens])
-        return [
-            (e, t)
-            for e, t in zip(self.expressions, self.tt)
-            if " ".join([t.lemma for t in e.tokens]) == tokens_lemmatized
-        ]
+        return list(self.iter_on_lemmas(tokens))
+
+    def iter_on_lemmas(
+        self, tokens: list[SimplifiedToken]
+    ) -> Iterator[tuple[Expression, torch.Tensor]]:
+        tokens_lemmatized = " ".join(e.lemma for e in tokens)
+        for expression, embedding in zip(self.expressions, self.tt):
+            if (
+                " ".join(token.lemma for token in expression.tokens)
+                == tokens_lemmatized
+            ):
+                yield expression, embedding
 
 
 @dataclasses.dataclass
@@ -127,6 +163,13 @@ class ExpressionHolderBatch(BaseDataclass):
 
 @dataclasses.dataclass
 class ReportBatch(BaseDataclass):
+    """Batch of texts with shared encoder state and one holder list per ``WordGrouping``.
+
+    ``chunk_mapper`` is shared across groupings; its span/pooling fields may match
+    only the **last** mode processed—use ``_data`` / ``__getitem__`` for mode-specific
+    embeddings and expressions.
+    """
+
     _data: list[ExpressionHolderBatch]
     texts: list[str]
     chunk_mapper: ChunkMapper
@@ -151,21 +194,26 @@ class ReportBatch(BaseDataclass):
     def available_groupings(self):
         return [item.word_grouping for item in self._data]
 
-    def get_text_embeddings(self, layers_spec):
+    def get_text_embeddings(self, layers_spec: str | list[int]):
         """
         Extract sentence-level embeddings for each text in the batch.
 
         Args:
-            layers_spec: Layer specification (list of layer indices or "sent")
+            layers_spec: Layer specification (string digits or negative indices); see
+                :func:`pelinker.util.normalize_layers_spec`. Not ``\"sent\"``.
 
         Returns:
             list[torch.Tensor]: List of embeddings, one per text in self.texts
         """
-        from pelinker.util import tt_aggregate_normalize
+        from pelinker.util import normalize_layers_spec, tt_aggregate_normalize
 
+        layers = normalize_layers_spec(
+            layers_spec,
+            n_hidden_states=self.chunk_mapper.tensor.shape[0],
+        )
         # Extract chunk-level embeddings from chunk_mapper.tensor
         # chunk_mapper.tensor has shape: n_layers x n_chunks x n_tokens x n_emb
-        chunk_embeddings = tt_aggregate_normalize(self.chunk_mapper.tensor, layers_spec)
+        chunk_embeddings = tt_aggregate_normalize(self.chunk_mapper.tensor, layers)
 
         # Map chunks back to texts
         # Group chunks by text index

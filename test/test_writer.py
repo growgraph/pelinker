@@ -65,19 +65,19 @@ def sample_data():
     return [
         {
             "pmid": "pmid_0",
-            "property": "property_0",
+            "entity": "entity_0",
             "mention": "mention_0",
             "embed": [0.0, 1.0, 2.0, 3.0, 4.0],
         },
         {
             "pmid": "pmid_1",
-            "property": "property_1",
+            "entity": "entity_1",
             "mention": "mention_1",
             "embed": [1.0, 2.0, 3.0, 4.0, 5.0],
         },
         {
             "pmid": "pmid_2",
-            "property": "property_2",
+            "entity": "entity_2",
             "mention": "mention_2",
             "embed": [2.0, 3.0, 4.0, 5.0, 6.0],
         },
@@ -90,13 +90,13 @@ def varied_embedding_data():
     return [
         {
             "pmid": "pmid_1",
-            "property": "property_1",
+            "entity": "entity_1",
             "mention": "mention_1",
             "embed": [1.0, 2.0, 3.0],  # 3D embedding
         },
         {
             "pmid": "pmid_2",
-            "property": "property_2",
+            "entity": "entity_2",
             "mention": "mention_2",
             "embed": [4.0, 5.0, 6.0, 7.0, 8.0],  # 5D embedding
         },
@@ -113,7 +113,7 @@ def large_embedding_data():
         data.append(
             {
                 "pmid": f"pmid_{i}",
-                "property": f"property_{i % 10}",  # 10 different properties
+                "entity": f"entity_{i % 10}",  # 10 different entities
                 "mention": f"mention_{i}",
                 "embed": embedding,
             }
@@ -144,16 +144,33 @@ def test_basic_write_record_batch(temp_dir, sample_data):
     # Verify content
     table = read_parquet_file(output_path)
     assert table.num_rows == 3
-    assert table.num_columns == 4
+    assert table.num_columns == 10
 
     # Check column names
-    expected_columns = ["pmid", "property", "mention", "embed"]
+    expected_columns = [
+        "pmid",
+        "entity",
+        "mention",
+        "a",
+        "b",
+        "a_abs",
+        "b_abs",
+        "itext",
+        "ichunk",
+        "embed",
+    ]
     assert table.column_names == expected_columns
 
     # Check data types
     assert table.schema.field("pmid").type == pa.string()
-    assert table.schema.field("property").type == pa.string()
+    assert table.schema.field("entity").type == pa.string()
     assert table.schema.field("mention").type == pa.string()
+    assert table.schema.field("a").type == pa.int64()
+    assert table.schema.field("b").type == pa.int64()
+    assert table.schema.field("a_abs").type == pa.int64()
+    assert table.schema.field("b_abs").type == pa.int64()
+    assert table.schema.field("itext").type == pa.int64()
+    assert table.schema.field("ichunk").type == pa.int64()
     assert table.schema.field("embed").type == pa.list_(pa.float64())
 
 
@@ -171,7 +188,7 @@ def test_basic_write_table(temp_dir, sample_data):
     assert output_path.exists()
     table = read_parquet_file(output_path)
     assert table.num_rows == 3
-    assert table.num_columns == 4
+    assert table.num_columns == 10
 
 
 def test_multiple_batches(temp_dir, sample_data):
@@ -210,7 +227,7 @@ def test_empty_batch_handling(temp_dir):
         sample_data = [
             {
                 "pmid": "pmid_1",
-                "property": "property_1",
+                "entity": "entity_1",
                 "mention": "mention_1",
                 "embed": [1.0, 2.0],
             }
@@ -234,7 +251,7 @@ def test_schema_consistency_across_batches(temp_dir):
     batch1 = [
         {
             "pmid": "pmid_1",
-            "property": "property_1",
+            "entity": "entity_1",
             "mention": "mention_1",
             "embed": [1.0, 2.0, 3.0],
         }
@@ -243,7 +260,7 @@ def test_schema_consistency_across_batches(temp_dir):
     batch2 = [
         {
             "pmid": "pmid_2",
-            "property": "property_2",
+            "entity": "entity_2",
             "mention": "mention_2",
             "embed": [4.0, 5.0, 6.0, 7.0],  # Different embedding size
         }
@@ -300,13 +317,13 @@ def test_data_integrity(temp_dir, sample_data):
 
     # Convert to list of dicts for comparison
     pmids = table.column("pmid").to_pylist()
-    properties = table.column("property").to_pylist()
+    entities = table.column("entity").to_pylist()
     mentions = table.column("mention").to_pylist()
     embeds = table.column("embed").to_pylist()
 
     for i, original_row in enumerate(sample_data):
         assert pmids[i] == original_row["pmid"]
-        assert properties[i] == original_row["property"]
+        assert entities[i] == original_row["entity"]
         assert mentions[i] == original_row["mention"]
         assert embeds[i] == original_row["embed"]
 
@@ -319,7 +336,7 @@ def test_error_handling_invalid_data(temp_dir):
     invalid_data = [
         {
             "pmid": 123,  # Should be string
-            "property": "property_1",
+            "entity": "entity_1",
             "mention": "mention_1",
             "embed": [1.0, 2.0],
         }
