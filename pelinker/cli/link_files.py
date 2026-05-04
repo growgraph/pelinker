@@ -239,6 +239,19 @@ def _flatten_inputs(
     help="Include PCA residual / Mahalanobis anomaly metrics in entity outputs.",
 )
 @click.option(
+    "--kb-validation",
+    is_flag=True,
+    help="Include kb matching",
+)
+@click.option(
+    "-o",
+    "--output",
+    "output_path",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Write the entity report JSON (UTF-8) to this path.",
+)
+@click.option(
     "--dump-mention-anomaly",
     "dump_mention_anomaly",
     type=click.Path(path_type=Path),
@@ -268,6 +281,8 @@ def main(
     thr_score: float,
     use_gpu: bool,
     include_anomaly_metrics: bool,
+    kb_validation: bool,
+    output_path: Path | None,
     dump_mention_anomaly: Path | None,
     max_length: int,
 ) -> None:
@@ -302,44 +317,39 @@ def main(
         logger.exception("Model not found (expected .gz next to the given path)")
         raise SystemExit(1)
 
+    want_mention_dump = dump_mention_anomaly is not None
     try:
-        raw = linker.predict(
+        pres = linker.predict(
             texts,
             max_length=max_length,
             threshold=0.0,
             use_gpu=use_gpu,
+            include_mention_anomaly=want_mention_dump,
+            include_prediction_kb_validation=kb_validation,
         )
-        out = Linker.filter_report(raw, thr_score=thr_score)
-        if not include_anomaly_metrics:
-            for entity in out.get("entities", []):
-                entity.pop("pca_residual", None)
-                entity.pop("pca_mahalanobis", None)
-                entity.pop("anomaly_score_max_z", None)
+        filtered = pres.filter_by_score(thr_score)
+        out = filtered.to_dict(
+            include_entity_anomaly_metrics=include_anomaly_metrics,
+        )
     except Exception:
         logger.exception("predict failed")
         raise SystemExit(1)
 
-    if dump_mention_anomaly is not None:
+    if want_mention_dump:
         try:
-            mention_rows = linker.compute_mention_anomaly(
-                texts,
-                max_length=max_length,
-                use_gpu=use_gpu,
-            )
-            _write_mention_anomaly(dump_mention_anomaly, mention_rows)
-            logger.info(
-                "Wrote %s mention anomaly rows to %s",
-                len(mention_rows),
-                dump_mention_anomaly,
-            )
+            rows = list(pres.debug_mentions) if pres.debug_mentions is not None else []
+            _write_mention_anomaly(dump_mention_anomaly, rows)
         except Exception:
-            logger.exception("compute_mention_anomaly / dump failed")
+            logger.exception("mention anomaly dump failed")
             raise SystemExit(1)
 
     if any(g is not None for g in ground_truth_by_doc):
         out["ground_truth"] = ground_truth_by_doc
 
-    click.echo(json.dumps(_sanitize_for_json(out), default=str, indent=2))
+    if output_path is not None:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        payload = json.dumps(_sanitize_for_json(out), ensure_ascii=False)
+        output_path.write_text(payload + "\n", encoding="utf-8")
 
 
 if __name__ == "__main__":

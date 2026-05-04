@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import sys
 import tempfile
-from collections import Counter, defaultdict
+from collections import defaultdict
 from collections.abc import Sequence
 import dataclasses
-from dataclasses import replace
+from dataclasses import dataclass, replace
+from typing import TypedDict, cast
 
 import pandas as pd
 import torch
@@ -43,22 +44,93 @@ from pelinker.embedding_fusion import (
     fused_property_vectors_from_paths,
     property_fused_dataframe_for_linker_order,
 )
+from pelinker.linker_cluster_training import (
+    cluster_composition_from_training_frame,
+    consensus_cluster_names,
+    provisional_cluster_assignments_from_training_frame as _provisional_cluster_assignments_from_training_frame,
+)
+from pelinker.linker_kb_lemma import (
+    build_kb_lemma_index,
+    enrich_entity_predictions_kb_validation,
+    lookup_kb_training_entity_label,
+)
 from pelinker.onto import (
     MAX_LENGTH,
     MentionCandidate,
     WordGrouping,
-    _wg_for_property,
 )
 from pelinker.transform import EmbeddingTransformer
 from pelinker.util import (
     extract_ordered_mention_tensors,
     keep_expression_for_prediction,
     load_models,
-    text_to_tokens,
     texts_to_vrep,
 )
 
 logger = logging.getLogger(__name__)
+
+
+class EntityPredictionRow(TypedDict):
+    """Row shape for ``predict`` ``entities`` entries from clustering (before optional KB fields)."""
+
+    mention: str
+    a: int | None
+    b: int | None
+    a_abs: int | None
+    b_abs: int | None
+    itext: int | None
+    ichunk: int | None
+    word_grouping: WordGrouping | None
+    lemma: str
+    entity_id_predicted: str
+    score: float
+    pca_residual: float
+    pca_mahalanobis: float
+    anomaly_score_max_z: float
+
+
+@dataclass(frozen=True, slots=True)
+class LinkerPredictResult:
+    """Structured return value from :meth:`Linker.predict`.
+
+    ``debug_mentions`` is one row per extracted mention (including screener negatives)
+    when debug was requested; it is not filtered by cluster score.
+    """
+
+    entities: list[dict[str, object]]
+    debug_mentions: list[dict[str, object]] | None = None
+
+    def filter_by_score(self, thr_score: float) -> LinkerPredictResult:
+        filtered: list[dict[str, object]] = [
+            r for r in self.entities if float(r.get("score", 0.0)) >= thr_score
+        ]
+        return LinkerPredictResult(
+            entities=filtered,
+            debug_mentions=self.debug_mentions,
+        )
+
+    def to_dict(
+        self,
+        *,
+        include_debug: bool = False,
+        include_entity_anomaly_metrics: bool = True,
+        strip_mention_source_index: bool = True,
+    ) -> dict[str, object]:
+        """Serialize for JSON APIs. Debug rows use the legacy key ``mention_anomaly``."""
+        entities_out: list[dict[str, object]] = []
+        for r in self.entities:
+            e = dict(r)
+            if strip_mention_source_index:
+                e.pop("mention_source_index", None)
+            if not include_entity_anomaly_metrics:
+                e.pop("pca_residual", None)
+                e.pop("pca_mahalanobis", None)
+                e.pop("anomaly_score_max_z", None)
+            entities_out.append(e)
+        payload: dict[str, object] = {"entities": entities_out}
+        if include_debug and self.debug_mentions is not None:
+            payload["mention_anomaly"] = [dict(row) for row in self.debug_mentions]
+        return payload
 
 
 def _linker_artifact_gz_path(file_spec: str | pathlib.Path) -> pathlib.Path:
@@ -79,170 +151,6 @@ def _parquet_read_config_from_fit(
         n_embedding_batches=fit_cfg.n_embedding_batches,
         negative_screener=fit_cfg.negative_screener,
     )
-
-
-def _modal_cluster_deterministic(clusters: list[int]) -> int | None:
-    """Most frequent cluster among ``clusters``, excluding HDBSCAN noise (-1); ties → smallest id."""
-    vals = [int(c) for c in clusters if int(c) != -1]
-    if not vals:
-        return None
-    cnt = Counter(vals)
-    best_n = max(cnt.values())
-    candidates = sorted(k for k, v in cnt.items() if v == best_n)
-    return candidates[0]
-
-
-def cluster_composition_from_training_frame(
-    training: pd.DataFrame,
-) -> ClusterCompositionSnapshot:
-    """
-    Aggregate mention counts per ``entity`` and per ``cluster`` from a fitted training frame.
-
-    Rows are weighted equally (each row is one mention). Proportions in
-    :attr:`ClusterCompositionSnapshot.cluster_within_fraction` are relative to each cluster’s
-    total mass; :attr:`ClusterCompositionSnapshot.cluster_fraction_of_property_mass` is
-    relative to each entity's global mass in this frame.
-    """
-    if "entity" not in training.columns or "cluster" not in training.columns:
-        raise ValueError("training frame must contain 'entity' and 'cluster' columns")
-    work = training[["entity", "cluster"]].copy()
-    work["entity"] = work["entity"].astype(str)
-    global_vc = work["entity"].value_counts()
-    global_property_mass = {str(k): int(v) for k, v in global_vc.items()}
-    cluster_within: dict[int, dict[str, float]] = {}
-    cluster_capture: dict[int, dict[str, float]] = {}
-    for cid, grp in work.groupby("cluster", sort=True):
-        c = int(cid)
-        counts = grp["entity"].value_counts()
-        total = int(counts.sum())
-        if total == 0:
-            continue
-        cluster_within[c] = {
-            str(p): float(counts[p]) / float(total) for p in counts.index
-        }
-        cap: dict[str, float] = {}
-        for p, cnt in counts.items():
-            gp = global_property_mass[str(p)]
-            if gp > 0:
-                cap[str(p)] = float(int(cnt)) / float(gp)
-        cluster_capture[c] = cap
-    return ClusterCompositionSnapshot(
-        global_property_mass=global_property_mass,
-        cluster_within_fraction=cluster_within,
-        cluster_fraction_of_property_mass=cluster_capture,
-    )
-
-
-def _is_near_uniform_mixture(mass_frac: dict[str, float], *, width_tol: float) -> bool:
-    """Several properties with similar shares (flat admixture), not a single dominant."""
-    if len(mass_frac) <= 1:
-        return False
-    vals = list(mass_frac.values())
-    return (max(vals) - min(vals)) <= width_tol
-
-
-def _singular_dominant_property(
-    mass_frac: dict[str, float],
-    *,
-    min_share: float,
-    min_gap: float,
-) -> str | None:
-    """Return the dominant entity label if one clearly leads, else ``None``."""
-    if len(mass_frac) == 1:
-        return next(iter(mass_frac))
-    items = sorted(mass_frac.items(), key=lambda x: (-x[1], x[0]))
-    top_p, top_v = items[0]
-    second_v = items[1][1] if len(items) > 1 else 0.0
-    if top_v >= min_share and (top_v - second_v) >= min_gap:
-        return top_p
-    return None
-
-
-def _hyphen_join_properties(mass_frac: dict[str, float]) -> str:
-    return "-".join(sorted(mass_frac.keys()))
-
-
-def consensus_cluster_names(
-    composition: ClusterCompositionSnapshot,
-    *,
-    uniform_width_tol: float = 0.15,
-    dominance_min_share: float = 0.52,
-    dominance_min_gap: float = 0.12,
-    noise_cluster_label: str = "noise",
-) -> dict[int, str]:
-    """
-    Derive a short human-readable name per cluster from within-cluster entity mixtures.
-
-    * Single-property clusters use that property name.
-    * Flat / near-uniform admixture uses hyphenated sorted property names.
-    * Clear single dominant property uses that name; duplicate dominant names across clusters
-      get ``_A``, ``_B``, … suffixes (stable order by cluster id).
-    * Remaining mixed cases use hyphenated sorted names; collisions are disambiguated the same way.
-    * Cluster ``-1`` (HDBSCAN noise) is named ``noise_cluster_label`` unless overridden by callers.
-    """
-    raw: dict[int, str] = {}
-    for cid, mass_frac in composition.cluster_within_fraction.items():
-        if cid == -1:
-            raw[cid] = noise_cluster_label
-            continue
-        if not mass_frac:
-            raw[cid] = str(cid)
-            continue
-        k = len(mass_frac)
-        width_tol = min(uniform_width_tol, 0.5 / float(max(k, 1)))
-        if k == 1:
-            base = next(iter(mass_frac))
-        elif _is_near_uniform_mixture(mass_frac, width_tol=width_tol):
-            base = _hyphen_join_properties(mass_frac)
-        else:
-            dom = _singular_dominant_property(
-                mass_frac,
-                min_share=dominance_min_share,
-                min_gap=dominance_min_gap,
-            )
-            base = dom if dom is not None else _hyphen_join_properties(mass_frac)
-        raw[cid] = base
-    return _disambiguate_consensus_names(raw)
-
-
-def _disambiguate_consensus_names(names: dict[int, str]) -> dict[int, str]:
-    buckets: dict[str, list[int]] = defaultdict(list)
-    for cid in sorted(names.keys()):
-        buckets[names[cid]].append(cid)
-    out: dict[int, str] = {}
-    for name, cids in buckets.items():
-        if len(cids) == 1:
-            out[cids[0]] = name
-            continue
-        for i, cid in enumerate(sorted(cids)):
-            suffix = chr(ord("A") + i)
-            out[cid] = f"{name}_{suffix}"
-    return out
-
-
-def _provisional_cluster_assignments_from_training_frame(
-    labels_map: dict[str, str],
-    training: pd.DataFrame,
-) -> dict[str, int]:
-    """
-    Map each ``entity_id`` to a single cluster id for ``predict`` compatibility.
-
-    Heuristic: modal training cluster among rows whose ``entity`` equals
-    ``labels_map[entity_id]``, ignoring -1. Interpretation of clusters is otherwise
-    left to downstream analysis (see ``Linker.training_cluster_frame``).
-    """
-    out: dict[str, int] = {}
-    if "entity" not in training.columns or "cluster" not in training.columns:
-        return out
-    for entity_id, label in labels_map.items():
-        rows = training.loc[training["entity"] == label, "cluster"]
-        if len(rows) == 0:
-            continue
-        mode = _modal_cluster_deterministic(rows.astype(int).tolist())
-        if mode is None:
-            continue
-        out[str(entity_id)] = int(mode)
-    return out
 
 
 class Linker:
@@ -282,10 +190,53 @@ class Linker:
         self._nlp: object | None = None
         self._fit_clustering_report: ClusteringReport | None = None
 
+    @staticmethod
+    def filter_entities(
+        entities: list[dict[str, object]], thr_score: float
+    ) -> list[dict[str, object]]:
+        return [r for r in entities if float(r.get("score", 0.0)) >= thr_score]
+
     @classmethod
-    def filter_report(cls, report, thr_score):
-        report["entities"] = [r for r in report["entities"] if r["score"] >= thr_score]
-        return report
+    def filter_report(
+        cls, report: dict[str, object], thr_score: float
+    ) -> dict[str, object]:
+        """Return a shallow copy with ``entities`` filtered by score (does not mutate ``report``)."""
+        raw_entities = report.get("entities", [])
+        entities = raw_entities if isinstance(raw_entities, list) else []
+        filtered = cls.filter_entities(
+            cast(list[dict[str, object]], entities), thr_score
+        )
+        return {**report, "entities": filtered}
+
+    @staticmethod
+    def _merge_prediction_fields_into_debug_mentions(
+        debug_rows: list[dict[str, object]],
+        predictions: list[dict[str, object]],
+        *,
+        include_kb_validation_fields: bool,
+    ) -> None:
+        keys_always: tuple[str, ...] = (
+            "entity_id_predicted",
+            "score",
+            "kb_training_entity",
+        )
+        keys_when_validation: tuple[str, ...] = (
+            "kb_training_entity_from_lemma",
+            "kb_training_entity_for_prediction",
+            "lemma_kb_matches_predicted_entity",
+        )
+        for row in predictions:
+            mi = row.get("mention_source_index")
+            if not isinstance(mi, int) or mi < 0 or mi >= len(debug_rows):
+                continue
+            target = debug_rows[mi]
+            for k in keys_always:
+                if k in row:
+                    target[k] = row[k]
+            if include_kb_validation_fields:
+                for k in keys_when_validation:
+                    if k in row:
+                        target[k] = row[k]
 
     def dump(self, file_spec: str | pathlib.Path) -> None:
         self._fit_clustering_report = None
@@ -442,7 +393,6 @@ class Linker:
         min_cluster_size: int,
         *,
         fit_config: LinkerFitConfig | None = None,
-        kb_labels: set[str] | None = None,
         embedding_training: EmbeddingTrainingConfig | None = None,
         embedding_metadata: EmbeddingModelMetadata | None = None,
         kb_config: KBConfig | None = None,
@@ -465,7 +415,6 @@ class Linker:
                 ``run/analysis/clustering_quality.py`` / ``estimate_model_clustering``).
             fit_config: Parquet read batching, mention-per-entity filter, and screener settings.
                 Defaults to :class:`LinkerFitConfig()`.
-            kb_labels: Restrict training rows to these ``entity`` labels (optional).
             embedding_training: Corpus paths and embedding runtime. Required when embeddings=None.
             embedding_metadata: If provided, overrides or sets ``self.embedding_metadata`` for
                 this fit (required when embeddings=None unless already set on the linker).
@@ -804,9 +753,29 @@ class Linker:
         return len(str(row.get("mention", "")))
 
     @staticmethod
+    def _entity_prediction_row(
+        item: MentionCandidate,
+        *,
+        entity_id_predicted: str,
+        cluster_membership_prob: float,
+        pca_residual: float,
+        pca_mahalanobis: float,
+        anomaly_score_max_z: float,
+    ) -> EntityPredictionRow:
+        """Merge mention span fields with clustering outputs; ``score`` is cluster soft membership."""
+        base = dataclasses.asdict(item)
+        out = cast(EntityPredictionRow, dict(base))
+        out["entity_id_predicted"] = entity_id_predicted
+        out["score"] = cluster_membership_prob
+        out["pca_residual"] = pca_residual
+        out["pca_mahalanobis"] = pca_mahalanobis
+        out["anomaly_score_max_z"] = anomaly_score_max_z
+        return out
+
+    @staticmethod
     def _dedupe_overlapping_prediction_rows(
-        rows: list[dict[str, object]],
-    ) -> list[dict[str, object]]:
+        rows: list[EntityPredictionRow],
+    ) -> list[EntityPredictionRow]:
         """Drop redundant W1/W2/W3 windows that cover the same text region.
 
         Rows without a usable ``(itext, …)`` interval are never merged with others.
@@ -849,21 +818,21 @@ class Linker:
         for i in range(n):
             comp_members[find(i)].append(i)
 
-        chosen: list[dict[str, object]] = []
+        chosen: list[EntityPredictionRow] = []
         for members in comp_members.values():
 
             def rank_key(idx: int) -> tuple[float, int, str]:
                 r = rows[idx]
                 return (
-                    -float(r.get("score", 0.0)),
+                    -float(r["score"]),
                     Linker._span_extent_chars(r),
-                    str(r.get("mention", "")),
+                    str(r["mention"]),
                 )
 
             best = min(members, key=rank_key)
             chosen.append(rows[best])
 
-        def sort_key(r: dict[str, object]) -> tuple[int, int]:
+        def sort_key(r: EntityPredictionRow) -> tuple[int, int]:
             it = r.get("itext")
             it_i = int(it) if it is not None else -1
             aa = r.get("a_abs")
@@ -908,10 +877,10 @@ class Linker:
         *,
         use_gpu: bool,
     ) -> tuple[torch.Tensor | None, list[MentionCandidate], object]:
-        """Run encoders + spaCy and build the fused mention tensor and vocabulary rows.
+        """Run encoders + spaCy and build the fused mention tensor and mention rows.
 
-        Returns ``(fused_tensor, vocabulary, primary_report_batch)``. ``fused_tensor`` is
-        ``None`` when no mentions were extracted. Each vocabulary row carries
+        Returns ``(fused_tensor, mentions, primary_report_batch)``. ``fused_tensor`` is
+        ``None`` when no mentions were extracted. Each mention row carries
         chunk-local bounds ``a``/``b``, absolute bounds ``a_abs``/``b_abs``, ``itext``,
         ``ichunk``, ``word_grouping`` and ``lemma`` (space-joined token lemmas, used for
         KB-match lookups).
@@ -950,7 +919,7 @@ class Linker:
         ]
         self._mention_tensor_lists_aligned(tt_lists)
 
-        vocabulary: list[MentionCandidate] = []
+        mentions: list[MentionCandidate] = []
         for wg in word_groupings:
             if wg not in primary.available_groupings():
                 continue
@@ -976,7 +945,7 @@ class Linker:
                         else:
                             mention_text = text[expr.a : expr.b]
                     lemma = " ".join(t.lemma for t in expr.tokens)
-                    vocabulary.append(
+                    mentions.append(
                         MentionCandidate(
                             mention=mention_text,
                             a=expr.a,
@@ -999,7 +968,7 @@ class Linker:
                     )
 
         if not tt_lists[0]:
-            return None, vocabulary, primary
+            return None, mentions, primary
 
         fused_rows: list[torch.Tensor] = []
         for i in range(len(tt_lists[0])):
@@ -1007,7 +976,7 @@ class Linker:
                 torch.cat([tts[i] for tts in tt_lists], dim=-1),
             )
         tt = torch.stack(fused_rows, dim=0)
-        return tt, vocabulary, primary
+        return tt, mentions, primary
 
     def predict(
         self,
@@ -1016,7 +985,10 @@ class Linker:
         threshold: float = 0.0,
         *,
         use_gpu: bool = False,
-    ):
+        include_mention_anomaly: bool = False,
+        include_debug_mentions: bool = False,
+        include_prediction_kb_validation: bool = False,
+    ) -> LinkerPredictResult:
         """
         Predict entities for input texts.
 
@@ -1028,67 +1000,210 @@ class Linker:
         Tokenization uses the spaCy pipeline named by ``nlp_model_name`` (set from
         ``EmbeddingTrainingConfig.nlp_model`` during corpus embedding, else default
         ``en_core_web_trf``).
+
+        Each ``entities`` row includes ``score``: HDBSCAN approximate cluster
+        membership probability from ``approximate_predict`` on UMAP coordinates.
+        The ``threshold`` argument drops rows whose ``score`` is below that minimum.
+
+        When ``include_mention_anomaly`` or ``include_debug_mentions`` is true,
+        :attr:`LinkerPredictResult.debug_mentions` lists one diagnostic row per extracted
+        mention (same single encode and PCA→UMAP pass as predictions). Use
+        :meth:`LinkerPredictResult.to_dict` with ``include_debug=True`` to emit the legacy
+        ``mention_anomaly`` key for JSON consumers.
+
+        When ``include_prediction_kb_validation`` is true, each row in ``entities`` gains
+        validation-only fields comparing mention lemmas to KB training ``entity`` labels
+        (same index as training-time matching): ``kb_training_entity_from_lemma``,
+        ``kb_training_entity_for_prediction``, ``lemma_kb_matches_predicted_entity``.
+        When debug rows are also returned, those fields are copied onto the matching
+        mention row via ``mention_source_index``.
         """
-        word_groupings = [WordGrouping.W1, WordGrouping.W2, WordGrouping.W3]
-        tt, vocabulary, primary = self._encode_mentions(
+        want_debug = include_mention_anomaly or include_debug_mentions
+        tt, mentions, primary = self._encode_mentions(
             texts, max_length, use_gpu=use_gpu
         )
 
         if tt is None:
-            return {"entities": [], "word_groupings": {}}
+            return LinkerPredictResult(
+                entities=[],
+                debug_mentions=[] if want_debug else None,
+            )
 
-        kb_items = self._predict_with_clustering(
+        kb_lemma_by_wg: dict[WordGrouping, dict[str, str]] | None = None
+        if want_debug or include_prediction_kb_validation:
+            nlp = self._ensure_nlp()
+            kb_lemma_by_wg = self._kb_lemma_index_by_wg(nlp)
+
+        predictions, mention_anomaly = self._predict_with_clustering(
             tt,
-            vocabulary,
+            mentions,
             threshold=threshold,
+            mention_anomaly_rows=want_debug,
+            kb_lemma_by_wg=kb_lemma_by_wg,
         )
 
-        for item in kb_items:
+        if include_prediction_kb_validation:
+            if kb_lemma_by_wg is None:
+                raise ValueError(
+                    "kb_lemma_by_wg missing for include_prediction_kb_validation "
+                    "(internal error: index should have been built)"
+                )
+            enrich_entity_predictions_kb_validation(
+                cast(list[dict[str, object]], predictions),
+                kb_lemma_by_wg,
+                self.labels_map,
+            )
+
+        preds_obj = cast(list[dict[str, object]], predictions)
+        for row in preds_obj:
+            eid = row.get("entity_id_predicted")
+            row["kb_training_entity"] = (
+                self.labels_map.get(str(eid)) if eid is not None else None
+            )
+
+        if mention_anomaly is not None:
+            self._merge_prediction_fields_into_debug_mentions(
+                mention_anomaly,
+                preds_obj,
+                include_kb_validation_fields=include_prediction_kb_validation,
+            )
+
+        for item in preds_obj:
             item.pop("lemma", None)
 
-        return {
-            "entities": kb_items,
-            "word_groupings": {
-                wg: primary[wg]
-                for wg in word_groupings
-                if wg in primary.available_groupings()
-            },
-        }
+        return LinkerPredictResult(
+            entities=preds_obj,
+            debug_mentions=mention_anomaly,
+        )
+
+    def _build_mention_anomaly_rows(
+        self,
+        mentions: list[MentionCandidate],
+        screener_neg: np.ndarray,
+        screener_margin: np.ndarray,
+        residuals: np.ndarray,
+        mahalanobis: np.ndarray,
+        combined: np.ndarray,
+        kb_lemma_by_wg: dict[WordGrouping, dict[str, str]],
+    ) -> list[dict[str, object]]:
+        rows: list[dict[str, object]] = []
+        for i, item in enumerate(mentions):
+            wg = item.word_grouping
+            lemma = item.lemma
+            kb_property = lookup_kb_training_entity_label(
+                wg if isinstance(wg, WordGrouping) else None,
+                str(lemma),
+                kb_lemma_by_wg,
+            )
+            rows.append(
+                {
+                    "mention": item.mention,
+                    "a": item.a,
+                    "b": item.b,
+                    "a_abs": item.a_abs,
+                    "b_abs": item.b_abs,
+                    "itext": item.itext,
+                    "ichunk": item.ichunk,
+                    "word_grouping": wg.name if isinstance(wg, WordGrouping) else None,
+                    "lemma": lemma,
+                    "is_kb_match": kb_property is not None,
+                    "kb_property_match": kb_property,
+                    "pca_residual": float(residuals[i]),
+                    "pca_mahalanobis": float(mahalanobis[i]),
+                    "anomaly_score_max_z": float(combined[i]),
+                    "screener_is_negative": bool(screener_neg[i]),
+                    "screener_decision": float(screener_margin[i]),
+                }
+            )
+        return rows
+
+    def _mention_anomaly_from_full_vectors(
+        self,
+        mentions: list[MentionCandidate],
+        screener_neg: np.ndarray,
+        screener_margin: np.ndarray,
+        residuals: np.ndarray,
+        mahalanobis: np.ndarray,
+        combined: np.ndarray,
+        kb_lemma_by_wg: dict[WordGrouping, dict[str, str]],
+    ) -> list[dict[str, object]]:
+        return self._build_mention_anomaly_rows(
+            mentions,
+            screener_neg,
+            screener_margin,
+            residuals,
+            mahalanobis,
+            combined,
+            kb_lemma_by_wg,
+        )
 
     def _predict_with_clustering(
         self,
         embeddings: torch.Tensor,
-        vocabulary: list[MentionCandidate],
+        mentions: list[MentionCandidate],
         threshold: float = 0.0,
-    ) -> list[dict[str, object]]:
+        *,
+        mention_anomaly_rows: bool = False,
+        kb_lemma_by_wg: dict[WordGrouping, dict[str, str]] | None = None,
+    ) -> tuple[list[EntityPredictionRow], list[dict[str, object]] | None]:
         """
         Predict entities using clustering approach.
 
         Mentions classified as negative by the screener are dropped immediately: no
         PCA/UMAP, no HDBSCAN ``approximate_predict``, and no anomaly metrics for them.
 
+        Each entity row includes ``score``: HDBSCAN soft cluster membership from
+        ``approximate_predict`` on UMAP coordinates (same scale as ``threshold``).
+
         Args:
             embeddings: Tensor of shape (n_mentions, embedding_dim)
-            vocabulary: List of mention texts
+            mentions: Extracted mention candidates in row order with ``embeddings``.
             threshold: Minimum cluster membership probability required to return
-                a prediction
+                a prediction (compared to each row's ``score``).
 
         Returns:
-            List of entity predictions
+            ``(entity_predictions, mention_anomaly_rows_or_none)``. Anomaly rows are
+            returned only when ``mention_anomaly_rows`` is true (requires
+            ``kb_lemma_by_wg``).
         """
         if self.transformer is None or self.clusterer is None or self.screener is None:
             raise ValueError(
                 "Screener, Transformer and Clusterer must be fitted before prediction"
             )
+        if mention_anomaly_rows and kb_lemma_by_wg is None:
+            raise ValueError(
+                "kb_lemma_by_wg is required when mention_anomaly_rows is true"
+            )
 
         # Convert to numpy
         embeddings_np = embeddings.detach().cpu().numpy()
 
-        idx_keep = np.flatnonzero(~self.screener.predict_is_negative(embeddings_np))
+        screener_neg = self.screener.predict_is_negative(embeddings_np)
+        idx_keep = np.flatnonzero(~screener_neg)
+        screener_margin: np.ndarray | None
+        if mention_anomaly_rows:
+            screener_margin = self.screener.decision_function(embeddings_np)
+        else:
+            screener_margin = None
 
-        kb_items: list[dict[str, object]] = []
+        candidates: list[EntityPredictionRow] = []
+        n_mentions = len(mentions)
+
         if len(idx_keep) == 0:
-            return kb_items
+            if mention_anomaly_rows:
+                assert screener_margin is not None
+                assert kb_lemma_by_wg is not None
+                nan_vec = np.full(n_mentions, np.nan, dtype=np.float64)
+                return [], self._mention_anomaly_from_full_vectors(
+                    mentions,
+                    screener_neg,
+                    screener_margin,
+                    nan_vec,
+                    nan_vec,
+                    nan_vec,
+                    kb_lemma_by_wg,
+                )
+            return [], None
 
         emb_k = embeddings_np[idx_keep]
         _umap_k, _, res_k, mah_k = self.transformer.transform(emb_k)
@@ -1098,7 +1213,7 @@ class Linker:
         combined_k = np.maximum(self._zscore(res_k), self._zscore(mah_k))
 
         for j, mention_i in enumerate(idx_keep):
-            item = vocabulary[int(mention_i)]
+            item = mentions[int(mention_i)]
             cluster_id = int(cl_arr[j])
             cluster_prob = float(cp_arr[j])
             # Skip HDBSCAN outliers and low-confidence assignments.
@@ -1118,42 +1233,41 @@ class Linker:
 
             # For now, return the first entity in the cluster
             predicted_entity = cluster_entities[0]
-            # HDBSCAN soft membership from ``approximate_predict`` on UMAP coords (not a
-            # per-token margin). Nested windows can map to nearly the same point after
-            # PCA→UMAP, so ``cluster_prob`` may tie even when raw span means differ.
-            score = cluster_prob
+            row = self._entity_prediction_row(
+                item,
+                entity_id_predicted=predicted_entity,
+                cluster_membership_prob=cluster_prob,
+                pca_residual=float(res_k[j]),
+                pca_mahalanobis=float(mah_k[j]),
+                anomaly_score_max_z=float(combined_k[j]),
+            )
+            cast(dict[str, object], row)["mention_source_index"] = int(mention_i)
+            candidates.append(row)
 
-            kb_item = {
-                **dataclasses.asdict(item),
-                **{
-                    "entity_id_predicted": predicted_entity,
-                    "score": score,
-                    "pca_residual": float(res_k[j]),
-                    "pca_mahalanobis": float(mah_k[j]),
-                    "anomaly_score_max_z": float(combined_k[j]),
-                },
-            }
-            kb_items.append(kb_item)
-
-        return self._dedupe_overlapping_prediction_rows(kb_items)
+        deduped = self._dedupe_overlapping_prediction_rows(candidates)
+        if mention_anomaly_rows:
+            assert screener_margin is not None
+            assert kb_lemma_by_wg is not None
+            residuals = np.full(n_mentions, np.nan, dtype=np.float64)
+            mahalanobis = np.full(n_mentions, np.nan, dtype=np.float64)
+            combined_full = np.full(n_mentions, np.nan, dtype=np.float64)
+            residuals[idx_keep] = res_k
+            mahalanobis[idx_keep] = mah_k
+            combined_full[idx_keep] = combined_k
+            return deduped, self._mention_anomaly_from_full_vectors(
+                mentions,
+                screener_neg,
+                screener_margin,
+                residuals,
+                mahalanobis,
+                combined_full,
+                kb_lemma_by_wg,
+            )
+        return deduped, None
 
     def _kb_lemma_index_by_wg(self, nlp: object) -> dict[WordGrouping, dict[str, str]]:
-        """Build ``{word_grouping: {lemma_string: kb_property_label}}`` from ``labels_map``.
-
-        Mirrors the per-property lemma matching used at training time in
-        :func:`pelinker.util.extract_and_embed_mentions` (``_wg_for_property`` to pick the
-        word-grouping bucket, ``filter_on_lemmas`` to compare lemma strings), inverted to
-        an O(1) lookup keyed by mention lemma.
-        """
-        index: dict[WordGrouping, dict[str, str]] = {}
-        for prop in set(self.labels_map.values()):
-            wg = _wg_for_property(prop)
-            if wg is None:
-                continue
-            tokens = text_to_tokens(nlp, prop)
-            lemma = " ".join(t.lemma for t in tokens)
-            index.setdefault(wg, {})[lemma] = prop
-        return index
+        """Build lemma→KB training-entity index; see :func:`pelinker.linker_kb_lemma.build_kb_lemma_index`."""
+        return build_kb_lemma_index(self.labels_map, nlp)
 
     def compute_mention_anomaly(
         self,
@@ -1164,76 +1278,19 @@ class Linker:
     ) -> list[dict[str, object]]:
         """Per-mention PCA residual / Mahalanobis with KB-match and screener fields.
 
-        Same encoder + spaCy + fused-mention pipeline as :meth:`predict`. The screener
-        runs on every mention; **PCA→UMAP** (``EmbeddingTransformer.transform``) runs only
-        on mentions classified as non-negative. Screened-negative rows use NaN for PCA
-        metrics. Each row includes ``screener_is_negative``, ``screener_decision``, plus
-        ``is_kb_match`` / ``kb_property_match`` (lemma vs KB under :class:`WordGrouping`).
+        Delegates to :meth:`predict` with ``include_mention_anomaly=True`` so encoding,
+        screening, and ``EmbeddingTransformer.transform`` run once (no duplicate pass).
+
+        Screened-negative rows use NaN for PCA metrics. Each row includes
+        ``screener_is_negative``, ``screener_decision``, plus ``is_kb_match`` /
+        ``kb_property_match`` (lemma vs KB under :class:`WordGrouping`).
         """
-        if self.transformer is None:
-            raise ValueError(
-                "Transformer must be fitted before compute_mention_anomaly()"
-            )
-        if self.screener is None:
-            raise ValueError(
-                "Linker.screener is required for compute_mention_anomaly(); refit the model."
-            )
-
-        tt, vocabulary, _primary = self._encode_mentions(
-            texts, max_length, use_gpu=use_gpu
+        out = self.predict(
+            texts,
+            max_length=max_length,
+            threshold=0.0,
+            use_gpu=use_gpu,
+            include_mention_anomaly=True,
         )
-        if tt is None:
-            return []
-
-        nlp = self._ensure_nlp()
-        kb_lemma_by_wg = self._kb_lemma_index_by_wg(nlp)
-
-        embeddings_np = tt.detach().cpu().numpy()
-        screener_neg = self.screener.predict_is_negative(embeddings_np)
-        screener_margin = self.screener.decision_function(embeddings_np)
-
-        n_mentions = int(embeddings_np.shape[0])
-        idx_keep = np.flatnonzero(~screener_neg)
-        residuals = np.full(n_mentions, np.nan, dtype=np.float64)
-        mahalanobis = np.full(n_mentions, np.nan, dtype=np.float64)
-        combined = np.full(n_mentions, np.nan, dtype=np.float64)
-        if len(idx_keep) > 0:
-            emb_k = embeddings_np[idx_keep]
-            _u, _v, res_k, mah_k = self.transformer.transform(emb_k)
-            residuals[idx_keep] = res_k
-            mahalanobis[idx_keep] = mah_k
-            combined[idx_keep] = np.maximum(
-                self._zscore(res_k),
-                self._zscore(mah_k),
-            )
-
-        rows: list[dict[str, object]] = []
-        for i, (item, residual, mahal, combo) in enumerate(
-            zip(vocabulary, residuals, mahalanobis, combined)
-        ):
-            wg = item.word_grouping
-            lemma = item.lemma
-            wg_index = (
-                kb_lemma_by_wg.get(wg, {}) if isinstance(wg, WordGrouping) else {}
-            )
-            kb_property = wg_index.get(str(lemma))
-            row_out: dict[str, object] = {
-                "mention": item.mention,
-                "a": item.a,
-                "b": item.b,
-                "a_abs": item.a_abs,
-                "b_abs": item.b_abs,
-                "itext": item.itext,
-                "ichunk": item.ichunk,
-                "word_grouping": wg.name if isinstance(wg, WordGrouping) else None,
-                "lemma": lemma,
-                "is_kb_match": kb_property is not None,
-                "kb_property_match": kb_property,
-                "pca_residual": float(residual),
-                "pca_mahalanobis": float(mahal),
-                "anomaly_score_max_z": float(combo),
-                "screener_is_negative": bool(screener_neg[i]),
-                "screener_decision": float(screener_margin[i]),
-            }
-            rows.append(row_out)
-        return rows
+        rows = out.debug_mentions
+        return list(rows) if rows is not None else []

@@ -458,7 +458,6 @@ def fit(cfg: FitCliConfig) -> None:
         transform_config=transform_config,
         min_cluster_size=cfg.min_cluster_size,
         fit_config=linker_fit_cfg,
-        kb_labels=kb_labels,
         embedding_training=None,
         kb_config=kb_config,
     )

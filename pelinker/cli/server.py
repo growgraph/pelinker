@@ -197,13 +197,13 @@ def create_app(cfg: ServerCliConfig) -> FastAPI:
         thr_s = body.thr_score if body.thr_score is not None else state.cfg.thr_score
         use_gpu = body.use_gpu if body.use_gpu is not None else state.cfg.use_gpu
         try:
-            r = state.linker.predict(
+            pres = state.linker.predict(
                 body.texts,
                 MAX_LENGTH,
                 threshold=0.0,
                 use_gpu=use_gpu,
             )
-            r = Linker.filter_report(r, thr_score=thr_s)
+            r = pres.filter_by_score(thr_s).to_dict()
         except Exception as exc:
             logger.exception("link failed")
             raise HTTPException(status_code=500, detail=str(exc)) from exc

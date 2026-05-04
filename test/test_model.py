@@ -29,4 +29,4 @@ def test_load(text):
     model = Linker.load(file_path)
 
     r = model.predict([text], max_length=MAX_LENGTH, threshold=1.0)
-    assert r["entities"][-1]["mention"] == "decreased"
+    assert r.entities[-1]["mention"] == "decreased"

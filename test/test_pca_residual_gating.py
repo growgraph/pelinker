@@ -6,7 +6,7 @@ import torch
 from click.testing import CliRunner
 
 from pelinker.cli import link_files
-from pelinker.model import Linker
+from pelinker.model import Linker, LinkerPredictResult
 from pelinker.negative_screener import NegativeClassScreener
 from pelinker.onto import MentionCandidate, NEGATIVE_LABEL, WordGrouping
 from pelinker.transform import (
@@ -153,7 +153,7 @@ def test_predict_with_clustering_adds_anomaly_metrics(monkeypatch) -> None:
     ]
     embeddings = torch.zeros((2, 4), dtype=torch.float32)
 
-    out = linker._predict_with_clustering(
+    out, _anomaly = linker._predict_with_clustering(
         embeddings,
         vocabulary,
         threshold=0.0,
@@ -162,6 +162,9 @@ def test_predict_with_clustering_adds_anomaly_metrics(monkeypatch) -> None:
     assert len(out) == 1
     assert out[0]["mention"] == "m1"
     assert out[0]["entity_id_predicted"] == "e1"
+    assert "score" in out[0]
+    assert isinstance(out[0]["score"], float)
+    assert out[0]["score"] == 0.9
     assert "pca_residual" in out[0]
     assert "pca_mahalanobis" in out[0]
     assert "anomaly_score_max_z" in out[0]
@@ -188,7 +191,7 @@ def test_predict_with_clustering_respects_cluster_probability_threshold(
     ]
     embeddings = torch.zeros((2, 4), dtype=torch.float32)
 
-    out = linker._predict_with_clustering(
+    out, _anomaly = linker._predict_with_clustering(
         embeddings,
         vocabulary,
         threshold=0.95,
@@ -216,7 +219,7 @@ def test_predict_with_clustering_keeps_disjoint_spans(monkeypatch) -> None:
     ]
     embeddings = torch.zeros((2, 4), dtype=torch.float32)
 
-    out = linker._predict_with_clustering(
+    out, _anomaly = linker._predict_with_clustering(
         embeddings,
         vocabulary,
         threshold=0.0,
@@ -248,7 +251,7 @@ def test_predict_with_clustering_overlap_prefers_shorter_span_on_score_tie(
     ]
     embeddings = torch.zeros((2, 4), dtype=torch.float32)
 
-    out = linker._predict_with_clustering(
+    out, _anomaly = linker._predict_with_clustering(
         embeddings,
         vocabulary,
         threshold=0.0,
@@ -256,6 +259,60 @@ def test_predict_with_clustering_overlap_prefers_shorter_span_on_score_tie(
 
     assert len(out) == 1
     assert out[0]["mention"] == "short"
+    assert "score" in out[0]
+    assert isinstance(out[0]["score"], float)
+    assert out[0]["score"] == 0.9
+
+
+def test_predict_with_clustering_overlap_prefers_higher_score_over_shorter_span(
+    monkeypatch,
+) -> None:
+    linker = Linker()
+    linker.transformer = _DummyTransformer()
+    linker.clusterer = object()
+    linker.cluster_assignments = {"e1": 0}
+    linker.screener = NegativeClassScreener(
+        kind="lda", negative_label=NEGATIVE_LABEL, _estimator=None
+    )
+
+    def _mock_approximate_predict(_clusterer, _umap_clustering):
+        return np.array([0, 0]), np.array([0.95, 0.5])
+
+    monkeypatch.setattr("pelinker.model.approximate_predict", _mock_approximate_predict)
+    vocabulary = [
+        MentionCandidate(mention="longwin", a=0, b=20, itext=0, a_abs=0, b_abs=20),
+        MentionCandidate(mention="short", a=0, b=8, itext=0, a_abs=6, b_abs=14),
+    ]
+    embeddings = torch.zeros((2, 4), dtype=torch.float32)
+
+    out, _anomaly = linker._predict_with_clustering(
+        embeddings,
+        vocabulary,
+        threshold=0.0,
+    )
+
+    assert len(out) == 1
+    assert out[0]["mention"] == "longwin"
+    assert out[0]["score"] == 0.95
+
+
+def test_filter_report_keeps_entities_by_score_threshold() -> None:
+    report: dict[str, object] = {
+        "entities": [
+            {"mention": "hi", "score": 0.8, "entity_id_predicted": "e1"},
+            {"mention": "lo", "score": 0.2, "entity_id_predicted": "e2"},
+        ],
+        "word_groupings": {},
+    }
+    out = Linker.filter_report(report, thr_score=0.5)
+    raw_entities = report["entities"]
+    assert isinstance(raw_entities, list)
+    assert len(raw_entities) == 2
+    entities = out["entities"]
+    assert isinstance(entities, list)
+    assert len(entities) == 1
+    assert entities[0]["mention"] == "hi"
+    assert entities[0]["score"] == 0.8
 
 
 def test_link_files_cli_include_anomaly_metrics(monkeypatch, tmp_path) -> None:
@@ -267,38 +324,48 @@ def test_link_files_cli_include_anomaly_metrics(monkeypatch, tmp_path) -> None:
             threshold=0.0,
             *,
             use_gpu=False,
+            include_mention_anomaly=False,
+            include_prediction_kb_validation=False,
+            **kwargs: object,
         ):
-            return {
-                "entities": [
-                    {
-                        "mention": "x",
-                        "score": 1.0,
-                        "pca_residual": 0.2,
-                        "pca_mahalanobis": 1.3,
-                        "anomaly_score_max_z": 0.7,
-                    }
-                ],
-                "word_groupings": {},
-            }
+            entities = [
+                {
+                    "mention": "x",
+                    "score": 1.0,
+                    "pca_residual": 0.2,
+                    "pca_mahalanobis": 1.3,
+                    "anomaly_score_max_z": 0.7,
+                }
+            ]
+            debug = (
+                [{"mention": "x", "screener_is_negative": False}]
+                if include_mention_anomaly
+                else None
+            )
+            return LinkerPredictResult(entities=entities, debug_mentions=debug)
 
     fake_linker = _FakeLinker()
     monkeypatch.setattr(link_files.Linker, "load", lambda _p: fake_linker)
 
     input_path = tmp_path / "input.txt"
     input_path.write_text("simple text", encoding="utf-8")
+    report_path = tmp_path / "report.json"
     runner = CliRunner()
     result = runner.invoke(
         link_files.main,
         [
             "-m",
             "dummy-model",
+            "-o",
+            str(report_path),
             "--include-anomaly-metrics",
             str(input_path),
         ],
     )
 
     assert result.exit_code == 0, result.output
-    assert "pca_residual" in result.output
+    written = report_path.read_text(encoding="utf-8")
+    assert "pca_residual" in written
 
 
 def test_link_files_cli_excludes_anomaly_metrics_by_default(
@@ -312,34 +379,40 @@ def test_link_files_cli_excludes_anomaly_metrics_by_default(
             threshold=0.0,
             *,
             use_gpu=False,
+            include_mention_anomaly=False,
+            include_prediction_kb_validation=False,
+            **kwargs: object,
         ):
-            return {
-                "entities": [
-                    {
-                        "mention": "x",
-                        "score": 1.0,
-                        "pca_residual": 0.2,
-                        "pca_mahalanobis": 1.3,
-                        "anomaly_score_max_z": 0.7,
-                    }
-                ],
-                "word_groupings": {},
-            }
+            entities = [
+                {
+                    "mention": "x",
+                    "score": 1.0,
+                    "pca_residual": 0.2,
+                    "pca_mahalanobis": 1.3,
+                    "anomaly_score_max_z": 0.7,
+                }
+            ]
+            debug = [] if include_mention_anomaly else None
+            return LinkerPredictResult(entities=entities, debug_mentions=debug)
 
     fake_linker = _FakeLinker()
     monkeypatch.setattr(link_files.Linker, "load", lambda _p: fake_linker)
 
     input_path = tmp_path / "input.txt"
     input_path.write_text("simple text", encoding="utf-8")
+    report_path = tmp_path / "report.json"
     runner = CliRunner()
     result = runner.invoke(
         link_files.main,
         [
             "-m",
             "dummy-model",
+            "-o",
+            str(report_path),
             str(input_path),
         ],
     )
 
     assert result.exit_code == 0, result.output
-    assert "pca_residual" not in result.output
+    written = report_path.read_text(encoding="utf-8")
+    assert "pca_residual" not in written
