@@ -8,18 +8,18 @@ import pandas as pd
 from pelinker.onto import NEGATIVE_LABEL
 from pelinker.reporting import (
     ClusteringHyperparameters,
-    ClusteringReport,
+    ModelSelectionReport,
     entity_negative_label_mask_01,
 )
-from run.analysis.clustering_quality import _fine_clustering_metadata_df
+from run.analysis.model_selection import _fine_clustering_metadata_df
 
 
-def _report_with_assignments(assignments: pd.DataFrame) -> ClusteringReport:
+def _report_with_assignments(assignments: pd.DataFrame) -> ModelSelectionReport:
     res = np.array([0.1], dtype=np.float64)
     mah = np.array([0.2], dtype=np.float64)
     ent = np.array([0.15], dtype=np.float64)
     y_neg = entity_negative_label_mask_01(assignments["entity"], NEGATIVE_LABEL)
-    return ClusteringReport(
+    return ModelSelectionReport(
         hyperparameters=ClusteringHyperparameters(min_cluster_size=10),
         best_score=0.5,
         number_properties=2,
@@ -99,7 +99,7 @@ def test_fine_metadata_skips_pca_when_length_mismatch() -> None:
     mah = np.array([0.2], dtype=np.float64)
     ent = np.array([0.15], dtype=np.float64)
     y_short = np.array([0], dtype=np.int64)
-    report = ClusteringReport(
+    report = ModelSelectionReport(
         hyperparameters=report.hyperparameters,
         best_score=report.best_score,
         number_properties=report.number_properties,

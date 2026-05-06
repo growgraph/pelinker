@@ -54,7 +54,7 @@ class FitCliConfig:
     pca_components: int = 100
     umap_dim: int = 8
     min_class_size: int = 20
-    # Stage-B HDBSCAN ``min_cluster_size`` (choose upstream, e.g. ``run/analysis/clustering_quality.py``).
+    # Stage-B HDBSCAN ``min_cluster_size`` (choose upstream, e.g. ``run/analysis/model_selection.py``).
     min_cluster_size: int = 20
     # Filesystem base path for ``Linker.dump`` (``.gz`` added by the linker).
     model_path: str | None = None

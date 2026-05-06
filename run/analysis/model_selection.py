@@ -26,10 +26,10 @@ from pelinker.clustering_fusion_ranking import (
     singleton_items_by_dbcv_score,
     top_k_fusion_candidates_by_dbcv_proxy,
 )
-from pelinker.clustering_quality_checkpoint import (
-    ClusteringQualityCheckpoint,
+from pelinker.model_selection_checkpoint import (
     DEFAULT_CHECKPOINT_NAME,
     FailureRecord,
+    ModelSelectionCheckpoint,
     RunMode,
     combination_key_from_members,
     compute_run_fingerprint,
@@ -56,13 +56,16 @@ from pelinker.plotting import (
     plot_umap_viz,
 )
 from pelinker.reporting import (
+    MODEL_SELECTION_RUN_REPORT_BASENAME,
     CLUSTERING_SEARCH_FINE_METADATA_BASENAME,
     CLUSTERING_SEARCH_GRID_PER_SAMPLE_CSV_BASENAME,
-    CLUSTERING_SEARCH_RESULTS_CSV_BASENAME,
-    ClusteringReport,
+    ModelSelectionRunReport,
+    ModelSelectionReport,
     ClusteringSearchSummaryRow,
+    model_selection_run_report_path,
     clustering_search_summary_row_from_flat_dict,
     summarize_clustering_reports_for_search,
+    write_model_selection_run_report_json,
 )
 from pelinker.transform import TransformConfig
 
@@ -166,7 +169,7 @@ def _materialize_best_report(
     transform_config: TransformConfig,
     optimization_config: ClusteringOptimizationConfig,
     selected_labels: set[str] | None,
-) -> ClusteringReport | None:
+) -> ModelSelectionReport | None:
     if top.model.startswith("fusion"):
         members = _parse_fusion_members(top.layer)
         try:
@@ -196,7 +199,7 @@ def _materialize_best_report(
 
 
 def _fine_clustering_metadata_df(
-    report: ClusteringReport,
+    report: ModelSelectionReport,
     *,
     model: str,
     layer: str,
@@ -343,7 +346,7 @@ def _merge_new_frames_into_fine_metadata_pickle(
 
 
 def _mark_combination_done(
-    ckpt: ClusteringQualityCheckpoint,
+    ckpt: ModelSelectionCheckpoint,
     ckpt_path: pathlib.Path,
     *,
     combination_key: str,
@@ -360,7 +363,7 @@ def _mark_combination_done(
 
 
 def _record_failure(
-    ckpt: ClusteringQualityCheckpoint,
+    ckpt: ModelSelectionCheckpoint,
     ckpt_path: pathlib.Path,
     *,
     combination_key: str,
@@ -373,7 +376,7 @@ def _record_failure(
 
 
 def _singleton_score_by_model_layer_from_checkpoint(
-    ckpt: ClusteringQualityCheckpoint,
+    ckpt: ModelSelectionCheckpoint,
 ) -> dict[tuple[str, str], float]:
     """Mean DBCV per (model, layer) for fusion proxy (singletons only)."""
     out = score_by_model_layer_from_checkpoint(ckpt.singleton_scores_by_key)
@@ -390,12 +393,22 @@ def _singleton_score_by_model_layer_from_checkpoint(
 
 
 def _results_from_checkpoint(
-    ckpt: ClusteringQualityCheckpoint,
+    ckpt: ModelSelectionCheckpoint,
 ) -> list[ClusteringSearchSummaryRow]:
     return [
         clustering_search_summary_row_from_flat_dict(dict(row))
         for _k, row in sorted(ckpt.summaries_by_key.items(), key=lambda item: item[0])
     ]
+
+
+def _json_ready_flat_row(row: ClusteringSearchSummaryRow) -> dict[str, object]:
+    out: dict[str, object] = {}
+    for k, v in row.to_flat_dict().items():
+        if isinstance(v, np.generic):
+            out[k] = v.item()
+        else:
+            out[k] = v
+    return out
 
 
 @click.command()
@@ -409,7 +422,10 @@ def _results_from_checkpoint(
     "--report-path",
     type=click.Path(path_type=pathlib.Path),
     required=True,
-    help="Directory for all run outputs (CSV, plots, checkpoint, …).",
+    help=(
+        "Directory for all run outputs. Canonical artifact: "
+        f"{MODEL_SELECTION_RUN_REPORT_BASENAME}."
+    ),
 )
 @click.option(
     "--umap-dim",
@@ -623,9 +639,9 @@ def main(
 
     report_path = report_path.expanduser()
     report_path.mkdir(parents=True, exist_ok=True)
-    results_csv_path = report_path / CLUSTERING_SEARCH_RESULTS_CSV_BASENAME
     detail_path = report_path / CLUSTERING_SEARCH_GRID_PER_SAMPLE_CSV_BASENAME
     fine_metadata_path = report_path / CLUSTERING_SEARCH_FINE_METADATA_BASENAME
+    run_report_json_path = model_selection_run_report_path(report_path)
     if not resume:
         for artifact in (detail_path, fine_metadata_path):
             try:
@@ -660,7 +676,8 @@ def main(
         else report_path / DEFAULT_CHECKPOINT_NAME
     )
 
-    if resume and ckpt_path.exists():
+    resumed_from_checkpoint = bool(resume and ckpt_path.exists())
+    if resumed_from_checkpoint:
         ckpt = load_checkpoint(ckpt_path)
         if ckpt.run_fingerprint != run_fingerprint:
             console.print(
@@ -735,7 +752,7 @@ def main(
 
     path_by_ml = _path_by_model_layer(valid_files)
     metrics_by_file: dict[tuple[str, str], list[pd.DataFrame]] = {}
-    best_report: ClusteringReport | None = None
+    best_report: ModelSelectionReport | None = None
     detailed_grid_frames: list[pd.DataFrame] = []
     fine_metadata_frames: list[pd.DataFrame] = []
 
@@ -798,7 +815,7 @@ def main(
                     continue
 
                 file_metrics: list[pd.DataFrame] = []
-                file_reports: list[ClusteringReport] = []
+                file_reports: list[ModelSelectionReport] = []
                 all_metrics_dfs: list[pd.DataFrame] = []
                 grid_batch: list[pd.DataFrame] = []
 
@@ -1029,7 +1046,7 @@ def main(
                         continue
 
                     fusion_metrics: list[pd.DataFrame] = []
-                    fusion_reports: list[ClusteringReport] = []
+                    fusion_reports: list[ModelSelectionReport] = []
                     fusion_all_metrics_dfs: list[pd.DataFrame] = []
                     fusion_grid_batch: list[pd.DataFrame] = []
 
@@ -1173,7 +1190,6 @@ def main(
 
     df_results = pd.DataFrame([r.to_flat_dict() for r in results])
     df_results = df_results.sort_values(["model", "layer"])
-    df_results.to_csv(results_csv_path, index=False)
 
     df_grid_detail = _read_optional_csv(detail_path)
     if df_grid_detail is not None and not df_grid_detail.empty:
@@ -1249,9 +1265,6 @@ def main(
         )
 
     console.print(table)
-    console.print(
-        f"\n[green]✓[/green] Results saved to: [cyan]{results_csv_path}[/cyan]"
-    )
     if df_grid_detail is not None and not df_grid_detail.empty:
         console.print(
             f"[green]✓[/green] Per-sample grid (all min_cluster_size values) saved to: "
@@ -1336,6 +1349,56 @@ def main(
         console.print(
             f"[green]✓[/green] UMAP visualization saved to: [cyan]{umap_viz_path}[/cyan]"
         )
+
+    checkpoint_payload = {
+        "path": str(ckpt_path),
+        "stages": dict(ckpt.stages),
+        "completed_combinations_count": len(ckpt.completed_combinations),
+        "failure_count": len(ckpt.failures),
+        "resumed": resumed_from_checkpoint,
+    }
+    best_overall_payload: dict[str, object] | None = None
+    if best_overall_score is not None:
+        best_overall_payload = {
+            "model": best_overall_model,
+            "layer": best_overall_layer,
+            "best_score": float(best_overall_score),
+        }
+
+    run_report = ModelSelectionRunReport(
+        schema="pelinker.model_selection.run_report.v1",
+        generated_at=utc_now_iso(),
+        run_fingerprint=run_fingerprint,
+        run_config=fp_payload,
+        checkpoint=checkpoint_payload,
+        combinations=[
+            {
+                "combination_key": combination_key_from_members(
+                    _parse_fusion_members(r.layer)
+                    if r.model.startswith("fusion")
+                    else [(r.model, r.layer)]
+                ),
+                "model": r.model,
+                "layer": r.layer,
+                "summary": _json_ready_flat_row(r),
+            }
+            for r in results
+        ],
+        failures=[
+            {
+                "combination_key": f.combination_key,
+                "error": f.error,
+                "at": f.at,
+            }
+            for f in ckpt.failures
+        ],
+        best_overall=best_overall_payload,
+        best_per_model={k: float(v) for k, v in sorted(best_per_model.items())},
+    )
+    write_model_selection_run_report_json(run_report_json_path, run_report)
+    console.print(
+        f"\n[green]✓[/green] Standardized run report saved to: [cyan]{run_report_json_path}[/cyan]"
+    )
 
 
 if __name__ == "__main__":

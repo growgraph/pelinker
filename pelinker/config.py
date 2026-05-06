@@ -266,6 +266,10 @@ class ClusteringOptimizationConfig:
         default_factory=NegativeScreenerConfig
     )
     """Negative-class screening before PCA→UMAP (see :class:`NegativeScreenerConfig`)."""
+    manifold_oov_screener: ManifoldOovScreenerConfig = field(
+        default_factory=ManifoldOovScreenerConfig
+    )
+    """Validation config for manifold OOV model selection (analysis reporting only)."""
 
     def resolved_min_scale(self) -> int:
         """Inclusive start of the ``min_cluster_size`` grid (HDBSCAN hyperparameter)."""

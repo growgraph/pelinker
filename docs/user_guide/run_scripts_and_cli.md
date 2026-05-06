@@ -39,7 +39,7 @@ Plain text files are one document per file; JSON inputs support `text` plus opti
 
 ### OOV and anomaly figures
 
-1. Fit a model and retain the clustering report from training (see fit reporting / `clustering_quality` checkpoints in code).
+1. Fit a model and retain the clustering report from training (see fit reporting / `model_selection` checkpoints in code).
 2. Run **`pelinker-link-files`** with **`--dump-mention-anomaly`** to produce an OOV-oriented mention table.
 3. Run **`run/analysis/oov_analysis.py`** with `--fit-report`, `--oov-csv`, and `--out-dir` to generate PDF figures (marginals, ROC/PR, decision boundary sweeps, alignment with the negative screener). The script docstring lists the full argument set.
 
@@ -49,7 +49,7 @@ Plain text files are one document per file; JSON inputs support `text` plus opti
 |------|-----------|
 | **Root** | `embed_kb_corpus.py`, `test_server.py`, `loop.embed.kb.corpus.sh`, `loop.fit.sh` |
 | **`preprocessing/`** | GO / RO property extraction and merge → synthesis KB CSVs |
-| **`analysis/`** | `clustering_quality.py` (embedding grid + metrics), `select_diverse_entities.py`, **`oov_analysis.py`** (fit report + OOV dump → figures), **`replot_dbcv_ari_scatter.py`** (PNG from an existing `results_grid_per_sample.csv`) |
+| **`analysis/`** | `model_selection.py` (embedding grid + metrics; canonical run report `model_selection.run_report.json.gz`), `select_diverse_entities.py`, **`oov_analysis.py`** (fit report + OOV dump → figures), **`replot_dbcv_ari_scatter.py`** (PNG from an existing `results_grid_per_sample.csv`) |
 | **`obsolete/`** | Deprecated experiments (not maintained) |
 
 Always invoke scripts with **`uv run python …`** (see project rules) so the locked environment is used.

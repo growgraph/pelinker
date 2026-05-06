@@ -43,7 +43,7 @@ from pelinker.analysis import (
 from pelinker.reporting import (
     ClusteringFitMetrics,
     ClusteringHyperparameters,
-    ClusteringReport,
+    ModelSelectionReport,
     NegativeScreenerInSampleMetrics,
     entity_negative_label_mask_01,
 )
@@ -233,7 +233,7 @@ class Linker:
         self._hf_models_by_type: dict[str, tuple[object, object]] = {}
         self.nlp_model_name: str = kwargs.pop("nlp_model_name", "en_core_web_trf")
         self._nlp: object | None = None
-        self._fit_clustering_report: ClusteringReport | None = None
+        self._fit_clustering_report: ModelSelectionReport | None = None
 
     @staticmethod
     def filter_entities(
@@ -333,7 +333,7 @@ class Linker:
             pe_model._fit_clustering_report = None
         return pe_model
 
-    def take_fit_clustering_report(self) -> ClusteringReport | None:
+    def take_fit_clustering_report(self) -> ModelSelectionReport | None:
         """
         Consume the :class:`~pelinker.reporting.ClusteringReport` produced by the last :meth:`fit`.
 
@@ -358,7 +358,7 @@ class Linker:
         self.training_pca_reduced = None
         self._manifold_oov_cv_payload = None
 
-    def build_clustering_report(self) -> ClusteringReport | None:
+    def build_clustering_report(self) -> ModelSelectionReport | None:
         """
         Build a :class:`~pelinker.reporting.ClusteringReport` when full training rows exist.
 
@@ -424,7 +424,7 @@ class Linker:
         )
         y_neg = entity_negative_label_mask_01(tcf["entity"], neg_lbl)
 
-        return ClusteringReport(
+        return ModelSelectionReport(
             hyperparameters=ClusteringHyperparameters(
                 min_cluster_size=m.min_cluster_size
             ),
@@ -487,7 +487,7 @@ class Linker:
                         If None, ``embed_kb_corpus`` is run (one output file per source).
             transform_config: TransformConfig instance
             min_cluster_size: HDBSCAN ``min_cluster_size`` (choose upstream, e.g. via
-                ``run/analysis/clustering_quality.py`` / ``estimate_model_clustering``).
+                ``run/analysis/model_selection.py`` / ``estimate_model_clustering``).
             fit_config: Parquet read batching, mention-per-entity filter, and screener settings.
                 Defaults to :class:`LinkerFitConfig()`.
             embedding_training: Corpus paths and embedding runtime. Required when embeddings=None.

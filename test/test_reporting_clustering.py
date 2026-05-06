@@ -11,7 +11,7 @@ import pytest
 from pelinker.onto import NEGATIVE_LABEL
 from pelinker.reporting import (
     ClusteringHyperparameters,
-    ClusteringReport,
+    ModelSelectionReport,
     ClusteringSearchSummaryRow,
     entity_negative_label_mask_01,
     summarize_clustering_reports_for_search,
@@ -27,7 +27,7 @@ def _minimal_report(
     ari: float | None = None,
     entity: str = "p1",
     negative_label: str = NEGATIVE_LABEL,
-) -> ClusteringReport:
+) -> ModelSelectionReport:
     metrics_df = pd.DataFrame(
         {"min_cluster_size": [min_cluster_size], "dbcv": [best_score]}
     )
@@ -36,7 +36,7 @@ def _minimal_report(
     mah = np.array([0.2], dtype=np.float64)
     ent = np.array([0.3], dtype=np.float64)
     y_neg = entity_negative_label_mask_01(assignments["entity"], negative_label)
-    return ClusteringReport(
+    return ModelSelectionReport(
         hyperparameters=ClusteringHyperparameters(min_cluster_size=min_cluster_size),
         best_score=best_score,
         number_properties=5,
@@ -106,7 +106,7 @@ def test_summarize_with_pooled_min_cluster_size_uses_consensus_and_per_sample_db
     r1_ent = np.array([0.3], dtype=np.float64)
     r1_ent_df = pd.DataFrame({"entity": ["p1"], "cluster": [0]})
     r1_y = entity_negative_label_mask_01(r1_ent_df["entity"], NEGATIVE_LABEL)
-    r1 = ClusteringReport(
+    r1 = ModelSelectionReport(
         hyperparameters=ClusteringHyperparameters(min_cluster_size=10),
         best_score=0.5,
         number_properties=5,
@@ -134,7 +134,7 @@ def test_summarize_with_pooled_min_cluster_size_uses_consensus_and_per_sample_db
     r2_ent = np.array([0.3], dtype=np.float64)
     r2_ent_df = pd.DataFrame({"entity": ["p2"], "cluster": [1]})
     r2_y = entity_negative_label_mask_01(r2_ent_df["entity"], NEGATIVE_LABEL)
-    r2 = ClusteringReport(
+    r2 = ModelSelectionReport(
         hyperparameters=ClusteringHyperparameters(min_cluster_size=15),
         best_score=0.6,
         number_properties=5,

@@ -1,4 +1,4 @@
-"""Structured checkpoint I/O for ``run/analysis/clustering_quality.py`` runs."""
+"""Structured checkpoint I/O for ``run/analysis/model_selection.py`` runs."""
 
 from __future__ import annotations
 
@@ -12,10 +12,10 @@ from typing import Any, Literal
 
 from pelinker.io.json_files import is_gzip_file_path, load_json_path
 from pelinker.onto import NEGATIVE_LABEL
-from pelinker.reporting import CLUSTERING_QUALITY_CHECKPOINT_BASENAME
+from pelinker.reporting import MODEL_SELECTION_CHECKPOINT_BASENAME
 
 CHECKPOINT_VERSION = 1
-DEFAULT_CHECKPOINT_NAME = CLUSTERING_QUALITY_CHECKPOINT_BASENAME
+DEFAULT_CHECKPOINT_NAME = MODEL_SELECTION_CHECKPOINT_BASENAME
 
 StageState = Literal["pending", "in_progress", "complete", "skipped"]
 RunMode = Literal["single", "fusion2", "fusion3", "all"]
@@ -31,8 +31,8 @@ class FailureRecord:
 
 
 @dataclass
-class ClusteringQualityCheckpoint:
-    """On-disk checkpoint for resumable clustering quality runs."""
+class ModelSelectionCheckpoint:
+    """On-disk checkpoint for resumable model selection runs."""
 
     version: int = CHECKPOINT_VERSION
     run_fingerprint: str = ""
@@ -45,8 +45,6 @@ class ClusteringQualityCheckpoint:
     singleton_scores_by_key: dict[str, float] = field(default_factory=dict)
     stages: dict[str, StageState] = field(default_factory=dict)
     failures: list[FailureRecord] = field(default_factory=list)
-    # Last --fusion-pairs / --fusion-triples reflected in fusion summaries; if CLI
-    # differs, arity-2/3 checkpoint rows are dropped (singletons keep the same fp).
     checkpoint_fusion_pairs: int | None = None
     checkpoint_fusion_triples: int | None = None
 
@@ -73,7 +71,7 @@ class ClusteringQualityCheckpoint:
         }
 
     @staticmethod
-    def from_json_dict(data: dict[str, Any]) -> ClusteringQualityCheckpoint:
+    def from_json_dict(data: dict[str, Any]) -> ModelSelectionCheckpoint:
         if int(data.get("version", -1)) != CHECKPOINT_VERSION:
             raise ValueError(
                 f"Unsupported checkpoint version: {data.get('version')!r}; "
@@ -90,7 +88,7 @@ class ClusteringQualityCheckpoint:
         ]
         cfp = data.get("checkpoint_fusion_pairs")
         cft = data.get("checkpoint_fusion_triples")
-        return ClusteringQualityCheckpoint(
+        return ModelSelectionCheckpoint(
             version=int(data["version"]),
             run_fingerprint=str(data["run_fingerprint"]),
             created_at=str(data.get("created_at", "")),
@@ -113,11 +111,6 @@ def utc_now_iso() -> str:
 
 
 def combination_key_from_members(members: list[tuple[str, str]]) -> str:
-    """
-    Canonical key for a combination of (model, layer) embeddings.
-
-    Members are sorted lexicographically by (model, layer). Arity is ``len(members)``.
-    """
     if not members:
         raise ValueError("members must be non-empty")
     arity = len(members)
@@ -127,7 +120,6 @@ def combination_key_from_members(members: list[tuple[str, str]]) -> str:
 
 
 def compute_run_fingerprint(config: dict[str, Any]) -> str:
-    """Stable SHA256 over a JSON-serializable config (sorted keys)."""
     blob = json.dumps(config, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return sha256(blob).hexdigest()
 
@@ -151,15 +143,6 @@ def fingerprint_config_from_cli(
     negative_label: str = NEGATIVE_LABEL,
     screener_kind: str = "lda",
 ) -> dict[str, Any]:
-    """Parameters that must match between checkpoint and resume.
-
-    ``--fusion-pairs`` / ``--fusion-triples`` are excluded: they only affect which
-    fusion jobs run; changing them invalidates fusion rows via
-    :func:`reconcile_fusion_checkpoint_params` instead of the run fingerprint.
-
-    ``--mode`` is excluded so you can resume with a different mode (e.g. singletons
-    under ``all``, then ``--mode fusion2``) on the same data fingerprint.
-    """
     kb = None
     if selected_labels_kb_path is not None:
         kb = str(selected_labels_kb_path.expanduser().resolve())
@@ -198,28 +181,19 @@ def _is_fusion_combination_key(key: str) -> bool:
 
 
 def reconcile_fusion_checkpoint_params(
-    ckpt: ClusteringQualityCheckpoint,
+    ckpt: ModelSelectionCheckpoint,
     *,
     fusion_pairs: int,
     fusion_triples: int,
 ) -> int:
-    """
-    If fusion CLI counts changed, drop arity >= 2 checkpoint state so fusion is
-    recomputed while singletons stay cacheable.
-
-    Returns how many distinct fusion combination keys were removed from completed /
-    summaries (0 if fusion params already matched this run).
-    """
     if (
         ckpt.checkpoint_fusion_pairs == fusion_pairs
         and ckpt.checkpoint_fusion_triples == fusion_triples
     ):
         return 0
-
     removed_keys = {
         k for k in ckpt.completed_combinations if _is_fusion_combination_key(k)
     } | {k for k in ckpt.summaries_by_key if _is_fusion_combination_key(k)}
-
     ckpt.completed_combinations = [
         k for k in ckpt.completed_combinations if not _is_fusion_combination_key(k)
     ]
@@ -238,15 +212,15 @@ def reconcile_fusion_checkpoint_params(
     return len(removed_keys)
 
 
-def load_checkpoint(path: pathlib.Path) -> ClusteringQualityCheckpoint:
+def load_checkpoint(path: pathlib.Path) -> ModelSelectionCheckpoint:
     data = load_json_path(path)
     if not isinstance(data, dict):
         raise ValueError("checkpoint must be a JSON object")
-    return ClusteringQualityCheckpoint.from_json_dict(data)
+    return ModelSelectionCheckpoint.from_json_dict(data)
 
 
 def save_checkpoint_atomic(
-    path: pathlib.Path, checkpoint: ClusteringQualityCheckpoint
+    path: pathlib.Path, checkpoint: ModelSelectionCheckpoint
 ) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     checkpoint.updated_at = utc_now_iso()
@@ -263,23 +237,18 @@ def save_checkpoint_atomic(
     tmp.replace(path)
 
 
-def new_checkpoint(fingerprint: str) -> ClusteringQualityCheckpoint:
+def new_checkpoint(fingerprint: str) -> ModelSelectionCheckpoint:
     now = utc_now_iso()
-    return ClusteringQualityCheckpoint(
+    return ModelSelectionCheckpoint(
         version=CHECKPOINT_VERSION,
         run_fingerprint=fingerprint,
         created_at=now,
         updated_at=now,
-        stages={
-            "single": "pending",
-            "fusion2": "pending",
-            "fusion3": "pending",
-        },
+        stages={"single": "pending", "fusion2": "pending", "fusion3": "pending"},
     )
 
 
 def model_layer_from_singleton_key(key: str) -> tuple[str, str]:
-    """Parse ``1:model/layer`` into (model, layer)."""
     if ":" not in key:
         raise ValueError(f"invalid combination key: {key!r}")
     arity_str, body = key.split(":", 1)
@@ -295,9 +264,8 @@ def score_by_model_layer_from_checkpoint(
     singleton_scores_by_key: dict[str, float],
 ) -> dict[tuple[str, str], float]:
     out: dict[tuple[str, str], float] = {}
-    for k, score in singleton_scores_by_key.items():
-        if not k.startswith("1:"):
+    for key, score in singleton_scores_by_key.items():
+        if not key.startswith("1:"):
             continue
-        ml = model_layer_from_singleton_key(k)
-        out[ml] = float(score)
+        out[model_layer_from_singleton_key(key)] = float(score)
     return out

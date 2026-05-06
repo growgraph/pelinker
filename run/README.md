@@ -20,7 +20,7 @@ run/
 │   ├── extract_properties_ro.py    # Extract from Relations Ontology
 │   └── merge_properties.py         # Merge properties from all sources
 ├── analysis/                    # Embedding quality & OOV diagnostics
-│   ├── clustering_quality.py       # Measure clustering quality of embeddings
+│   ├── model_selection.py          # Model selection over embedding combinations
 │   ├── oov_analysis.py             # Fit report + OOV mention dump → PDF figures
 │   ├── replot_dbcv_ari_scatter.py  # DBCV vs ARI scatter from existing grid CSV
 │   └── select_diverse_entities.py  # Select diverse entity subsets
@@ -116,7 +116,7 @@ Embeds a knowledge base corpus using the same pipeline as **stage (A)** of `peli
 Module: **`pelinker.cli.fit`**. It runs the linker training pipeline in **two conceptual stages**:
 
 1. **Stage (A)** — `embed_kb_corpus(...)` (same function as `run/embed_kb_corpus.py`) when **`input_text_table_path`** is set: **`kb_path`** + text table → **`embeddings_parquet`**.
-2. **Stage (B)** — `Linker.fit(...)` on that Parquet: fusion / negative screener / PCA / UMAP / HDBSCAN at a fixed `min_cluster_size` → fitted linker; serialized via `Linker.dump` (joblib at **`{output_path}.gz`**; the `.gz` suffix is appended automatically). Choose `min_cluster_size` upstream (e.g. `run/analysis/clustering_quality.py`); this CLI does not run a grid search during fit.
+2. **Stage (B)** — `Linker.fit(...)` on that Parquet: fusion / negative screener / PCA / UMAP / HDBSCAN at a fixed `min_cluster_size` → fitted linker; serialized via `Linker.dump` (joblib at **`{output_path}.gz`**; the `.gz` suffix is appended automatically). Choose `min_cluster_size` upstream (e.g. `run/analysis/model_selection.py`); this CLI does not run a grid search during fit.
 
 If you omit **`input_text_table_path`**, only **stage (B)** runs (you must already have **`embeddings_parquet`** on disk, e.g. from a prior `embed_kb_corpus.py` run).
 
@@ -158,10 +158,10 @@ Hydra’s **`hydra.output_subdir`** defaults to **`null`** here (no `.hydra` fol
 | `use_gpu` | `false` | GPU for transformer encoding when embedding the corpus. |
 | `input_buffer_rows` | `1000` | Stage (A): rows per pandas read pass over the text table (I/O buffer; does **not** control GPU memory). |
 | `encoder_batch_size` | `200` | Stage (A): table rows per encoder forward pass—**lower this if the GPU runs out of memory**. |
-| `batch_size` | `1000` | Stage (B): rows per batch when **reading large embedding parquet files**; same role as `clustering_quality.py --batch-size`. |
+| `batch_size` | `1000` | Stage (B): rows per batch when **reading large embedding parquet files**; same role as `model_selection.py --batch-size`. |
 | `nlp_model` | `en_core_web_trf` | spaCy pipeline for mention extraction (`uv run spacy download en_core_web_trf`). |
 | `max_input_buffers` | *(unset)* | Stage (A): stop after this many text-table read passes (each up to `input_buffer_rows` rows); unrelated to `encoder_batch_size`. |
-| `n_embedding_batches` | *(unset)* | Stage B only: max parquet read batches per file (see `pelinker.analysis` / `clustering_quality.py --n-embedding-batches`). |
+| `n_embedding_batches` | *(unset)* | Stage B only: max parquet read batches per file (see `pelinker.analysis` / `model_selection.py --n-embedding-batches`). |
 | **`kb_name`** | stem of `kb_path` | Display name stored in `KBConfig`. |
 | **`kb_version`** | `0.1.0` | KB version string stored on the model. |
 | **`kb_created_at`** | today | ISO date string (`YYYY-MM-DD`); defaults to **today** if omitted. |
@@ -249,14 +249,14 @@ Use **`--host`** / **`--port`** so they match the running server (defaults: `loc
 
 Scripts in the `analysis/` directory evaluate embedding quality and select diverse entities.
 
-### `clustering_quality.py`
+### `model_selection.py`
 
 Measures the quality of embeddings obtained from `embed_kb_corpus.py` by evaluating clustering performance.
 
 - **Purpose**: Evaluates how well embeddings cluster semantically similar properties together
 - **Input**: Directory containing parquet files (pattern: `res_<model>_<layer>.parquet`)
 - **Outputs**:
-  - `results.csv` - Summary table with metrics for each model/layer combination
+  - `model_selection.run_report.json.gz` - Standardized run-level model-selection report
   - `model.perf.heatmap.png` - Heatmap of best scores across models
   - `model.ari.heatmap.png` - Heatmap of ARI clustering quality (if available)
   - `{model}_{layer}.png` - Metrics plots for each model/layer
@@ -295,7 +295,7 @@ Publication-style **figures** for pre-classifier anomaly space: compares trainin
 
 ### `replot_dbcv_ari_scatter.py`
 
-Rebuilds the **DBCV vs ARI** scatter PNG from an existing **`results_grid_per_sample.csv`** produced by `clustering_quality.py` (no re-embedding).
+Rebuilds the **DBCV vs ARI** scatter PNG from an existing **`results_grid_per_sample.csv`** produced by `model_selection.py` (no re-embedding).
 
 ```bash
 uv run python run/analysis/replot_dbcv_ari_scatter.py path/to/results_grid_per_sample.csv

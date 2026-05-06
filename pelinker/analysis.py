@@ -23,7 +23,7 @@ from pelinker.embedding_fusion import concat_mention_level_embedding_sources
 from pelinker.reporting import (
     ClusteringFitMetrics,
     ClusteringHyperparameters,
-    ClusteringReport,
+    ModelSelectionReport,
     NegativeScreenerCvSummary,
     NegativeScreenerInSampleMetrics,
     entity_negative_label_mask_01,
@@ -37,11 +37,15 @@ from pelinker.config import (
     NegativeScreenerConfig,
     TransformConfig,
 )
+from pelinker.manifold_oov_screener import (
+    build_manifold_oov_training_arrays,
+    evaluate_manifold_oov_cv,
+)
 from pelinker.negative_screener import (
     NegativeClassScreener,
     evaluate_negative_screener_models,
 )
-from pelinker.transform import compute_transform_artifacts
+from pelinker.transform import EmbeddingTransformer, compute_transform_artifacts
 
 
 def get_word_frequencies_from_library(
@@ -208,7 +212,7 @@ def pooled_min_cluster_size_from_metrics_dfs(
 
 
 def metrics_df_with_grid_sample_columns(
-    report: ClusteringReport,
+    report: ModelSelectionReport,
     *,
     model: str,
     layer: str,
@@ -357,7 +361,7 @@ def estimate_clustering_from_frame(
     selected_labels: set[str] | None = None,
     all_metrics_dfs: list[pd.DataFrame] | None = None,
     aggregation_level: Literal["mention", "entity"] = "mention",
-) -> ClusteringReport | None:
+) -> ModelSelectionReport | None:
     """
     Run clustering grid search and optional **accumulation** of per-sample grid tables.
 
@@ -401,6 +405,10 @@ def estimate_clustering_from_frame(
 
     number_properties = int(dfr_manifold["entity"].nunique())
 
+    embeddings_manifold = np.stack(dfr_manifold["embed"].values).astype(
+        np.float32, copy=False
+    )
+    transformer = EmbeddingTransformer(transform_config).fit(embeddings_manifold)
     artifacts = compute_transform_artifacts(
         dfr_manifold,
         config=transform_config,
@@ -448,7 +456,38 @@ def estimate_clustering_from_frame(
     mah_a = artifacts.pca_mahalanobis
     ent_a = artifacts.pca_spectral_entropy
     y_neg = entity_negative_label_mask_01(dfr_manifold["entity"], neg_label)
-    return ClusteringReport(
+    manifold_oov_cfg = config.manifold_oov_screener
+    manifold_oov_cv: dict[str, object] | None = None
+    built_xy = build_manifold_oov_training_arrays(
+        dfr,
+        dfr_manifold,
+        transformer,
+        negative_label=neg_label,
+    )
+    if built_xy is None:
+        manifold_oov_cv = {
+            "cv_skipped": True,
+            "reason": "insufficient_negative_or_manifold_rows",
+        }
+    else:
+        X_mo, y_mo = built_xy
+        cv_eval = evaluate_manifold_oov_cv(X_mo, y_mo, manifold_oov_cfg)
+        if cv_eval is None:
+            manifold_oov_cv = {
+                "cv_skipped": True,
+                "reason": "insufficient_samples_per_class_for_stratified_cv",
+                "n_kb": int(np.sum(y_mo == 0)),
+                "n_neg": int(np.sum(y_mo == 1)),
+            }
+        else:
+            cv_payload, winner_kind, winner_dt = cv_eval
+            manifold_oov_cv = dict(cv_payload)
+            manifold_oov_cv["winner_kind"] = winner_kind
+            if winner_dt is not None:
+                manifold_oov_cv["winner_dt_max_depth"] = winner_dt[0]
+                manifold_oov_cv["winner_dt_min_samples_leaf"] = winner_dt[1]
+
+    return ModelSelectionReport(
         hyperparameters=ClusteringHyperparameters(min_cluster_size=best_size),
         best_score=best_score,
         number_properties=number_properties,
@@ -465,7 +504,7 @@ def estimate_clustering_from_frame(
         umap_visualization=artifacts.umap_visualization,
         pca_reduced=artifacts.pca_reduced,
         negative_screener_cv=negative_screener_cv,
-        manifold_oov_cv=None,
+        manifold_oov_cv=manifold_oov_cv,
         ari=fit_metrics.ari,
     )
 

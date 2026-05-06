@@ -14,7 +14,7 @@ from matplotlib.lines import Line2D
 from matplotlib.patches import Ellipse, Patch, Polygon, Rectangle, RegularPolygon, Wedge
 from plotly import express as px, graph_objects as go
 
-# Columns appended in ``run/analysis/clustering_quality.py`` grid export (per-sample summaries).
+# Columns appended in ``run/analysis/model_selection.py`` grid export (per-sample summaries).
 GRID_COL_CHOSEN_MIN_CLUSTER_SIZE = "chosen_min_cluster_size"
 GRID_COL_SAMPLE_BEST_DBCV = "sample_best_dbcv"
 GRID_COL_SAMPLE_ARI = "sample_ari"

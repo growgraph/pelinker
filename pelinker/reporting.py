@@ -6,7 +6,7 @@ from dataclasses import dataclass
 import json
 import math
 import pathlib
-from typing import Any
+from typing import Any, cast
 import numpy as np
 import pandas as pd
 
@@ -182,7 +182,7 @@ class HyperparameterSearchStats:
 
 
 @dataclass
-class ClusteringReport:
+class ModelSelectionReport:
     """Report containing clustering analysis results for one sample."""
 
     hyperparameters: ClusteringHyperparameters
@@ -247,10 +247,11 @@ def _ndarray_to_jsonable_nested(arr: np.ndarray) -> Any:
 
 # Basenames for artifacts under one report directory (``pelinker-fit`` / clustering search).
 LINKER_FIT_CLUSTERING_REPORT_BASENAME = "linker_fit.clustering_report.json.gz"
+MODEL_SELECTION_RUN_REPORT_BASENAME = "model_selection.run_report.json.gz"
 CLUSTERING_SEARCH_RESULTS_CSV_BASENAME = "results.csv"
 CLUSTERING_SEARCH_GRID_PER_SAMPLE_CSV_BASENAME = "results_grid_per_sample.csv"
 CLUSTERING_SEARCH_FINE_METADATA_BASENAME = "fine_clustering_metadata.pkl.gz"
-CLUSTERING_QUALITY_CHECKPOINT_BASENAME = "clustering_quality.state.json.gz"
+MODEL_SELECTION_CHECKPOINT_BASENAME = "model_selection.state.json.gz"
 
 
 def linker_fit_clustering_report_path(report_dir: str | pathlib.Path) -> pathlib.Path:
@@ -258,7 +259,12 @@ def linker_fit_clustering_report_path(report_dir: str | pathlib.Path) -> pathlib
     return pathlib.Path(report_dir).expanduser() / LINKER_FIT_CLUSTERING_REPORT_BASENAME
 
 
-def clustering_report_to_jsonable_dict(report: ClusteringReport) -> dict[str, Any]:
+def model_selection_run_report_path(report_dir: str | pathlib.Path) -> pathlib.Path:
+    """Filesystem path for the standardized model-selection aggregate report."""
+    return pathlib.Path(report_dir).expanduser() / MODEL_SELECTION_RUN_REPORT_BASENAME
+
+
+def clustering_report_to_jsonable_dict(report: ModelSelectionReport) -> dict[str, Any]:
     """
     Flatten a :class:`ClusteringReport` into JSON-serializable built-ins (no DataFrames/ndarrays).
 
@@ -316,7 +322,7 @@ def clustering_report_to_jsonable_dict(report: ClusteringReport) -> dict[str, An
 
 
 def write_clustering_report_json(
-    path: str | pathlib.Path, report: ClusteringReport, *, indent: int = 2
+    path: str | pathlib.Path, report: ModelSelectionReport, *, indent: int = 2
 ) -> None:
     """
     Serialize ``report`` with :func:`clustering_report_to_jsonable_dict` to UTF-8 JSON.
@@ -329,6 +335,80 @@ def write_clustering_report_json(
 
     with gzip.open(p, mode="wt", encoding="utf-8", compresslevel=9) as f:
         json.dump(payload, f, indent=indent)
+
+
+def _normalized_manifold_oov_cv_payload(
+    payload: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    if payload is None:
+        return None
+    out: dict[str, Any] = {
+        "winner_kind": payload.get("winner_kind"),
+        "winner_f1_mean": payload.get("winner_f1_mean"),
+        "winner_dt_max_depth": payload.get("winner_dt_max_depth"),
+        "winner_dt_min_samples_leaf": payload.get("winner_dt_min_samples_leaf"),
+        "cv_skipped": bool(payload.get("cv_skipped", False)),
+    }
+    for key in ("svm", "lda", "dt_cells", "reason", "n_kb", "n_neg"):
+        if key in payload:
+            out[key] = payload[key]
+    return cast(dict[str, Any], _json_normalize(out))
+
+
+def _pool_manifold_oov_cv_payloads(
+    payloads: Sequence[dict[str, Any]],
+) -> dict[str, Any] | None:
+    if not payloads:
+        return None
+    normalized = [
+        _normalized_manifold_oov_cv_payload(p)
+        for p in payloads
+        if _normalized_manifold_oov_cv_payload(p) is not None
+    ]
+    normalized = [p for p in normalized if p is not None]
+    if not normalized:
+        return None
+
+    winner_counts: dict[str, int] = {}
+    reason_counts: dict[str, int] = {}
+    winner_f1_vals: list[float] = []
+    cv_skipped = 0
+    for item in normalized:
+        winner = item.get("winner_kind")
+        if isinstance(winner, str) and winner:
+            winner_counts[winner] = winner_counts.get(winner, 0) + 1
+        reason = item.get("reason")
+        if isinstance(reason, str) and reason:
+            reason_counts[reason] = reason_counts.get(reason, 0) + 1
+        if bool(item.get("cv_skipped", False)):
+            cv_skipped += 1
+        f1 = item.get("winner_f1_mean")
+        if isinstance(f1, (float, int)):
+            f1f = float(f1)
+            if math.isfinite(f1f):
+                winner_f1_vals.append(f1f)
+
+    f1_summary: dict[str, float] | None = None
+    if winner_f1_vals:
+        arr = np.array(winner_f1_vals, dtype=np.float64)
+        f1_summary = {
+            "mean": float(np.mean(arr)),
+            "std": float(np.std(arr, ddof=1)) if len(arr) > 1 else 0.0,
+        }
+
+    return cast(
+        dict[str, Any],
+        _json_normalize(
+            {
+                "samples_evaluated": len(normalized),
+                "cv_skipped_samples": cv_skipped,
+                "winner_kind_counts": winner_counts,
+                "winner_f1_mean_summary": f1_summary,
+                "skip_reasons": reason_counts or None,
+                "samples": normalized,
+            }
+        ),
+    )
 
 
 @dataclass(frozen=True)
@@ -347,6 +427,7 @@ class ClusteringSearchSummaryRow:
     dbcv: MeanWithUncertainty
     ari: MeanWithUncertainty | None
     negative_screener_cv: NegativeScreenerCvSummary | None = None
+    manifold_oov_cv: dict[str, Any] | None = None
 
     def to_flat_dict(self) -> dict[str, str | float | None]:
         """Keys aligned with historical ``results.csv`` and ``plot_heatmap`` expectations."""
@@ -386,6 +467,11 @@ class ClusteringSearchSummaryRow:
 
             _flat("screener_lda", ns.lda)
             _flat("screener_svm", ns.svm)
+        row["manifold_oov_cv"] = (
+            None
+            if self.manifold_oov_cv is None
+            else json.dumps(_normalized_manifold_oov_cv_payload(self.manifold_oov_cv))
+        )
         return row
 
 
@@ -456,11 +542,16 @@ def clustering_search_summary_row_from_flat_dict(
         ),
         ari=ari_block,
         negative_screener_cv=_negative_screener_cv_summary_from_flat_row(row),
+        manifold_oov_cv=(
+            None
+            if row.get("manifold_oov_cv") in (None, "")
+            else cast(dict[str, Any], json.loads(str(row["manifold_oov_cv"])))
+        ),
     )
 
 
 def summarize_clustering_reports_for_search(
-    reports: Sequence[ClusteringReport],
+    reports: Sequence[ModelSelectionReport],
     *,
     model: str,
     layer: str,
@@ -532,6 +623,10 @@ def summarize_clustering_reports_for_search(
     ns_pooled: NegativeScreenerCvSummary | None = None
     if ns_reports:
         ns_pooled = _pool_negative_screener_cv_summaries(ns_reports)
+    mo_reports = [r.manifold_oov_cv for r in reports if r.manifold_oov_cv is not None]
+    mo_pooled = _pool_manifold_oov_cv_payloads(
+        [cast(dict[str, Any], x) for x in mo_reports]
+    )
 
     return ClusteringSearchSummaryRow(
         model=model,
@@ -556,4 +651,54 @@ def summarize_clustering_reports_for_search(
         ),
         ari=ari_block,
         negative_screener_cv=ns_pooled,
+        manifold_oov_cv=mo_pooled,
     )
+
+
+@dataclass(frozen=True)
+class ModelSelectionRunReport:
+    """Standardized aggregate report for one model-selection run."""
+
+    schema: str
+    generated_at: str
+    run_fingerprint: str
+    run_config: dict[str, Any]
+    checkpoint: dict[str, Any]
+    combinations: list[dict[str, Any]]
+    failures: list[dict[str, Any]]
+    best_overall: dict[str, Any] | None
+    best_per_model: dict[str, float]
+
+
+def model_selection_run_report_to_jsonable_dict(
+    report: ModelSelectionRunReport,
+) -> dict[str, Any]:
+    return cast(
+        dict[str, Any],
+        _json_normalize(
+            {
+                "schema": report.schema,
+                "generated_at": report.generated_at,
+                "run_fingerprint": report.run_fingerprint,
+                "run_config": report.run_config,
+                "checkpoint": report.checkpoint,
+                "combinations": report.combinations,
+                "failures": report.failures,
+                "best_overall": report.best_overall,
+                "best_per_model": report.best_per_model,
+            }
+        ),
+    )
+
+
+def write_model_selection_run_report_json(
+    path: str | pathlib.Path,
+    report: ModelSelectionRunReport,
+    *,
+    indent: int = 2,
+) -> None:
+    p = pathlib.Path(path).expanduser()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    payload = model_selection_run_report_to_jsonable_dict(report)
+    with gzip.open(p, mode="wt", encoding="utf-8", compresslevel=9) as f:
+        json.dump(payload, f, indent=indent)
