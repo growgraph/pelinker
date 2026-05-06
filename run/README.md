@@ -298,7 +298,7 @@ Publication-style **figures** for pre-classifier anomaly space: compares trainin
 Rebuilds the **DBCV vs ARI** scatter PNG from an existing **`results_grid_per_sample.csv`** produced by `model_selection.py` (no re-embedding).
 
 ```bash
-uv run python run/analysis/replot_dbcv_ari_scatter.py path/to/results_grid_per_sample.csv
+uv run python run/analysis/replot.py path/to/results_grid_per_sample.csv
 ```
 
 Optional **`-o` / `--output`** overrides the default path next to the CSV (`model.dbcv_vs_ari.png`).

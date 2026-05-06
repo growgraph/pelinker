@@ -604,23 +604,31 @@ def plot_heatmap(
     output_path: pathlib.Path,
     metric: str = "best_score",
     metric_label: str | None = None,
+    *,
+    secondary_metric: str | None = "best_size",
 ):
     """
     Create a heatmap with model (rows) and layer (columns).
-    Color represents the specified metric, text shows best_size and metric name.
+    Color represents the specified metric; text overlays ``secondary_metric`` and metric value.
 
     Args:
-        df_results: DataFrame with columns: model, layer, best_size, and the metric column
+        df_results: DataFrame with columns: model, layer, …
         output_path: Path to save the heatmap figure
         metric: Column name for the metric to display as color (default: "best_score")
         metric_label: Label for the metric (default: uses metric column name)
+        secondary_metric: Column for text annotation besides the metric cell (default:
+            ``"best_size"``); use ``None`` to annotate metric value only.
     """
     if metric_label is None:
         metric_label = metric.replace("_", " ").title()
 
     # Create pivot tables
     score_pivot = df_results.pivot(index="model", columns="layer", values=metric)
-    size_pivot = df_results.pivot(index="model", columns="layer", values="best_size")
+    size_pivot: pd.DataFrame | None = None
+    if secondary_metric is not None and secondary_metric in df_results.columns:
+        size_pivot = df_results.pivot(
+            index="model", columns="layer", values=secondary_metric
+        )
 
     # Create figure
     fig, ax = plt.subplots(
@@ -653,38 +661,233 @@ def plot_heatmap(
     for i in range(len(score_pivot.index)):
         for j in range(len(score_pivot.columns)):
             score_val = score_pivot.iloc[i, j]
-            size_val = size_pivot.iloc[i, j]
-
-            if not pd.isna(score_val) and not pd.isna(size_val):
-                # Use white text for darker cells (lower scores), black for lighter cells
-                text_color = "white" if score_val < mean_score else "black"
-                # Format metric value based on its magnitude
-                if abs(score_val) < 0.01:
-                    metric_str = f"{score_val:.2e}"
-                elif abs(score_val) < 1:
-                    metric_str = f"{score_val:.3f}"
+            if pd.isna(score_val):
+                continue
+            secondary_ok = True
+            size_val: float | None = None
+            if size_pivot is not None:
+                sv = size_pivot.iloc[i, j]
+                if pd.isna(sv):
+                    secondary_ok = False
                 else:
-                    metric_str = f"{score_val:.2f}"
-                # Add text annotation with best_size and metric value
-                ax.text(
-                    j + 0.5,
-                    i + 0.5,
-                    f"{int(size_val)}\n{metric_str}",
-                    ha="center",
-                    va="center",
-                    color=text_color,
-                    fontweight="bold",
-                    fontsize=8,
-                    linespacing=1.2,
-                )
+                    size_val = float(sv)
 
-    ax.set_title(f"Clustering Results: {metric_label} (color) and Best Size (text)")
+            if not secondary_ok and size_pivot is not None:
+                continue
+
+            text_color = "white" if score_val < mean_score else "black"
+            if abs(score_val) < 0.01:
+                metric_str = f"{score_val:.2e}"
+            elif abs(score_val) < 1:
+                metric_str = f"{score_val:.3f}"
+            else:
+                metric_str = f"{score_val:.2f}"
+
+            if size_val is None:
+                anno = metric_str
+            else:
+                size_display = (
+                    str(int(round(size_val)))
+                    if secondary_metric == "best_size"
+                    else f"{size_val:.2f}"
+                )
+                anno = f"{size_display}\n{metric_str}"
+
+            ax.text(
+                j + 0.5,
+                i + 0.5,
+                anno,
+                ha="center",
+                va="center",
+                color=text_color,
+                fontweight="bold",
+                fontsize=8,
+                linespacing=1.2,
+            )
+
+    sub_label = secondary_metric.replace("_", " ").title() if secondary_metric else None
+    if sub_label:
+        ax.set_title(f"Results: {metric_label} (color) and {sub_label} + value (text)")
+    else:
+        ax.set_title(f"Results: {metric_label} (color)")
     ax.set_xlabel("Layer")
     ax.set_ylabel("Model")
 
     plt.tight_layout()
     plt.savefig(output_path, dpi=300, bbox_inches="tight")
     plt.close()
+
+
+def plot_screener_oov_bar(
+    summary_df: pd.DataFrame,
+    output_path: pathlib.Path,
+) -> bool:
+    """
+    Grouped bar chart per (model, layer): mean AUC for screener / OOV / combined.
+
+    Requires ``screener_auc_mean``, ``oov_auc_mean``, ``combined_auc_mean``.
+    Single-embedding rows only (excludes fusion* model labels).
+    """
+    required = ("screener_auc_mean", "oov_auc_mean", "combined_auc_mean")
+    if not all(c in summary_df.columns for c in required):
+        return False
+    df = (
+        summary_df[~summary_df["model"].astype(str).str.startswith("fusion")]
+        .dropna(subset=list(required))
+        .copy()
+    )
+    if df.empty:
+        return False
+    df["_label"] = (
+        df["model"].astype(str) + " / " + df["layer"].astype(str).str.slice(0, 24)
+    )
+    df = df.sort_values("combined_auc_mean", ascending=False)
+    df = df.reset_index(drop=True)
+    labels = df["_label"].tolist()
+    n = len(labels)
+    x = np.arange(n)
+    w = 0.25
+
+    ys = df["screener_auc_mean"].to_numpy()
+    yo = df["oov_auc_mean"].to_numpy()
+    yc = df["combined_auc_mean"].to_numpy()
+
+    errs = []
+    for col_std in ("screener_auc_std", "oov_auc_std", "combined_auc_std"):
+        if col_std in df.columns:
+            errs.append(df[col_std].fillna(0.0).to_numpy())
+        else:
+            errs.append(np.zeros(n))
+
+    colors = ["#4C72B0", "#55A868", "#C44E52"]
+
+    all_vals = np.concatenate([ys, yo, yc])
+    all_errs = np.concatenate([errs[0], errs[1], errs[2]])
+    data_min = max(0.0, (all_vals - all_errs).min())
+    data_max = min(1.0, (all_vals + all_errs).max())
+    margin = max(0.02, (data_max - data_min) * 0.15)
+    y_lo = max(0.0, data_min - margin)
+    y_hi = min(1.0, data_max + margin)
+
+    fig, ax = plt.subplots(figsize=(max(10, n * 0.55), 6))
+    ax.bar(
+        x - w,
+        ys,
+        width=w,
+        yerr=errs[0],
+        capsize=3,
+        label="Screener AUC",
+        color=colors[0],
+        edgecolor="white",
+        linewidth=0.5,
+        error_kw={"elinewidth": 1.0, "ecolor": "dimgray", "capthick": 1.0},
+    )
+    ax.bar(
+        x,
+        yo,
+        width=w,
+        yerr=errs[1],
+        capsize=3,
+        label="OOV AUC",
+        color=colors[1],
+        edgecolor="white",
+        linewidth=0.5,
+        error_kw={"elinewidth": 1.0, "ecolor": "dimgray", "capthick": 1.0},
+    )
+    ax.bar(
+        x + w,
+        yc,
+        width=w,
+        yerr=errs[2],
+        capsize=3,
+        label="Combined AUC",
+        color=colors[2],
+        edgecolor="white",
+        linewidth=0.5,
+        error_kw={"elinewidth": 1.0, "ecolor": "dimgray", "capthick": 1.0},
+    )
+    ax.set_xticks(x)
+    ax.set_xticklabels(labels, rotation=65, ha="right", fontsize=7)
+    ax.set_ylim(y_lo, y_hi)
+    ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: f"{v:.3f}"))
+    ax.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.6, color="gray")
+    ax.set_axisbelow(True)
+    ax.legend(loc="upper right", framealpha=0.9)
+    ax.set_ylabel("AUC")
+    ax.set_title("Mean AUC: screener / OOV / combined (± std)")
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=300, bbox_inches="tight")
+    plt.close()
+    return True
+
+
+def plot_roc_comparison(
+    scores_df: pd.DataFrame,
+    output_path: pathlib.Path,
+    *,
+    combo_keys: list[str],
+) -> bool:
+    """
+    ROC curves for ``screener_best_score``, ``oov_score``, and ``combined_score``
+    pooled over samples per ``combo_key``.
+    """
+    if scores_df.empty or not combo_keys:
+        return False
+    from sklearn.metrics import auc as sk_auc, roc_curve
+
+    avail = scores_df.loc[scores_df["combo_key"].isin(combo_keys)]
+    usable = avail["combo_key"].unique().tolist()
+    if not usable:
+        return False
+
+    cols = {"y_true", "screener_best_score", "oov_score", "combined_score"}
+    if not cols.issubset(scores_df.columns):
+        return False
+
+    n_p = len(usable)
+    ncols = min(3, n_p)
+    nrows = int(np.ceil(n_p / ncols)) if n_p else 1
+    # ncells = max(1, nrows * ncols)
+    fig, axes = plt.subplots(nrows, ncols, figsize=(5 * ncols, 4.5 * nrows))
+    axes_flat = np.atleast_1d(axes).ravel()
+
+    for ix, ck in enumerate(usable):
+        if ix >= axes_flat.shape[0]:
+            break
+        ax = axes_flat[ix]
+        sub = scores_df.loc[scores_df["combo_key"] == ck].copy()
+        y = np.asarray(sub["y_true"], dtype=np.int64)
+        if np.unique(y).size < 2:
+            ax.set_visible(False)
+            continue
+        for name, serie, ls in (
+            ("Screener", sub["screener_best_score"], "-"),
+            ("OOV", sub["oov_score"], "--"),
+            ("Combined", sub["combined_score"], "-."),
+        ):
+            s = np.asarray(serie, dtype=np.float64)
+            try:
+                fpr, tpr, _ = roc_curve(y, s)
+                a = float(sk_auc(fpr, tpr))
+            except ValueError:
+                continue
+            ax.plot(fpr, tpr, ls=ls, lw=2, label=f"{name} (AUC={a:.3f})")
+
+        ax.plot([0, 1], [0, 1], "k:", lw=1, alpha=0.35)
+        ax.set_xlim(0.0, 1.0)
+        ax.set_ylim(0.0, 1.05)
+        ax.set_xlabel("FPR")
+        ax.set_ylabel("TPR")
+        ax.legend(fontsize=7, loc="lower right")
+        ax.set_title(str(ck)[:60], fontsize=9)
+
+    for k in range(n_p, len(axes_flat)):
+        axes_flat[k].set_visible(False)
+
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=300, bbox_inches="tight")
+    plt.close()
+    return True
 
 
 def _sorted_class_labels_natural(class_series: pd.Series) -> list[str]:

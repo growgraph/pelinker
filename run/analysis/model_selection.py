@@ -1,7 +1,9 @@
 import click
 import gc
+import math
 import pathlib
 import sys
+from dataclasses import dataclass
 from typing import Literal
 
 import numpy as np
@@ -53,17 +55,22 @@ from pelinker.plotting import (
     plot_heatmap,
     plot_metrics,
     plot_metrics_with_error_bars,
+    plot_roc_comparison,
+    plot_screener_oov_bar,
     plot_umap_viz,
 )
 from pelinker.reporting import (
     MODEL_SELECTION_RUN_REPORT_BASENAME,
+    MODEL_SELECTION_RUN_REPORT_SCHEMA,
     CLUSTERING_SEARCH_FINE_METADATA_BASENAME,
+    FINE_SCREENER_EVAL_BASENAME,
     CLUSTERING_SEARCH_GRID_PER_SAMPLE_CSV_BASENAME,
     ModelSelectionRunReport,
     ModelSelectionReport,
     ClusteringSearchSummaryRow,
     model_selection_run_report_path,
     clustering_search_summary_row_from_flat_dict,
+    PerDatapointScores,
     summarize_clustering_reports_for_search,
     write_model_selection_run_report_json,
 )
@@ -321,7 +328,20 @@ def _dedupe_fine_metadata_df(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def _merge_new_frames_into_fine_metadata_pickle(
+def _read_optional_jsonl_gzip(path: pathlib.Path) -> pd.DataFrame | None:
+    """Load gzipped JSON Lines (pandas); return None if missing or unreadable."""
+    if not path.exists():
+        return None
+    try:
+        df = pd.read_json(path, lines=True, compression="gzip")
+        if df.empty:
+            return None
+        return df
+    except Exception:
+        return None
+
+
+def _merge_new_frames_into_fine_metadata_jsonl(
     fine_metadata_path: pathlib.Path,
     new_frames: list[pd.DataFrame],
 ) -> None:
@@ -330,19 +350,92 @@ def _merge_new_frames_into_fine_metadata_pickle(
     new_df = pd.concat(new_frames, ignore_index=True)
     if new_df.empty:
         return
-    prior_frames: list[pd.DataFrame] = []
-    if fine_metadata_path.exists():
-        try:
-            prior = pd.read_pickle(fine_metadata_path, compression="gzip")
-            if prior is not None and not prior.empty:
-                prior_frames.append(prior)
-        except Exception:
-            pass
-    merged = pd.concat(prior_frames + [new_df], ignore_index=True)
+    prior = _read_optional_jsonl_gzip(fine_metadata_path)
+    merged = (
+        pd.concat([prior, new_df], ignore_index=True)
+        if prior is not None
+        else new_df.copy()
+    )
     merged = _dedupe_fine_metadata_df(merged)
     tmp = fine_metadata_path.with_name(fine_metadata_path.name + ".tmp")
-    merged.to_pickle(tmp, compression="gzip")
+    merged.to_json(
+        tmp,
+        orient="records",
+        lines=True,
+        compression={"method": "gzip", "compresslevel": 9},
+    )
     tmp.replace(fine_metadata_path)
+
+
+def _dedupe_fine_screener_eval_df(df: pd.DataFrame) -> pd.DataFrame:
+    dup_subset = ["combo_key", "sample_idx", "orig_idx"]
+    have = [c for c in dup_subset if c in df.columns]
+    if len(have) >= 3:
+        return df.drop_duplicates(subset=have, keep="last")
+    return df
+
+
+def _merge_new_frames_into_screener_eval_jsonl(
+    path: pathlib.Path,
+    new_frames: list[pd.DataFrame],
+) -> None:
+    if not new_frames:
+        return
+    new_df = pd.concat(new_frames, ignore_index=True)
+    if new_df.empty:
+        return
+    prior = _read_optional_jsonl_gzip(path)
+    merged = (
+        pd.concat([prior, new_df], ignore_index=True)
+        if prior is not None
+        else new_df.copy()
+    )
+    merged = _dedupe_fine_screener_eval_df(merged)
+    tmp = path.with_name(path.name + ".tmp")
+    merged.to_json(
+        tmp,
+        orient="records",
+        lines=True,
+        compression={"method": "gzip", "compresslevel": 9},
+    )
+    tmp.replace(path)
+
+
+def _per_datapoint_scores_df(
+    scores: PerDatapointScores,
+    *,
+    combo_key: str,
+    model: str,
+    layer: str,
+    sample_idx: int,
+) -> pd.DataFrame:
+    n = len(scores.orig_idx)
+    if n == 0:
+        return pd.DataFrame()
+    return pd.DataFrame(
+        {
+            "combo_key": [combo_key] * n,
+            "model": [model] * n,
+            "layer": [layer] * n,
+            "sample_idx": [sample_idx] * n,
+            "orig_idx": list(scores.orig_idx),
+            "entity": list(scores.entity),
+            "y_true": list(scores.y_true),
+            "screener_lda_score": list(scores.screener_lda_score),
+            "screener_svm_score": list(scores.screener_svm_score),
+            "screener_best_score": list(scores.screener_best_score),
+            "oov_score": list(scores.oov_score),
+            "combined_score": list(scores.combined_score),
+        }
+    )
+
+
+def _combo_key_for_results_row(series: pd.Series) -> str:
+    m_str = str(series["model"])
+    ly_str = str(series["layer"])
+    if m_str.startswith("fusion"):
+        return combination_key_from_members(_parse_fusion_members(ly_str))
+    return combination_key_from_members([(m_str, ly_str)])
 
 
 def _mark_combination_done(
@@ -399,6 +492,207 @@ def _results_from_checkpoint(
         clustering_search_summary_row_from_flat_dict(dict(row))
         for _k, row in sorted(ckpt.summaries_by_key.items(), key=lambda item: item[0])
     ]
+
+
+@dataclass(frozen=True)
+class SummaryFigureRenderResult:
+    """Outputs from :func:`render_model_selection_summary_figures`."""
+
+    written_paths: tuple[pathlib.Path, ...]
+    skipped_messages: tuple[str, ...]
+
+
+def render_model_selection_summary_figures(
+    report_path: pathlib.Path,
+    *,
+    checkpoint_path: pathlib.Path | None = None,
+    grid_csv_path: pathlib.Path | None = None,
+    fine_screener_eval_path: pathlib.Path | None = None,
+) -> SummaryFigureRenderResult:
+    """
+    Regenerate aggregate model-selection PNGs from on-disk artifacts (no parquet re-load).
+
+    Uses the checkpoint summaries for score heatmaps and AUC panels, the optional
+    per-sample grid CSV for the DBCV vs ARI scatter, and gzipped JSON Lines
+    ``fine_screener_eval.jsonl.gz`` for ROC comparison when present.
+
+    Writes the same filenames as ``model_selection`` end-of-run: ``model.perf.heatmap.png``,
+    ``model.*.heatmap.png`` (scores, ARI, screener LDA/SVM/best, OOV, combined),
+    ``model.screener_oov_auc.png``, ``model.roc_curves.png``, ``model.dbcv_vs_ari.png``.
+    """
+    report_path = report_path.expanduser()
+    ckpt_file = (
+        checkpoint_path.expanduser()
+        if checkpoint_path
+        else report_path / DEFAULT_CHECKPOINT_NAME
+    )
+    detail_path = (
+        grid_csv_path.expanduser()
+        if grid_csv_path
+        else report_path / CLUSTERING_SEARCH_GRID_PER_SAMPLE_CSV_BASENAME
+    )
+    screener_path = (
+        fine_screener_eval_path.expanduser()
+        if fine_screener_eval_path
+        else report_path / FINE_SCREENER_EVAL_BASENAME
+    )
+
+    written: list[pathlib.Path] = []
+    skipped: list[str] = []
+
+    df_grid_detail = _read_optional_csv(detail_path)
+    if df_grid_detail is not None and not df_grid_detail.empty:
+        df_grid_detail = _dedupe_per_sample_grid(df_grid_detail)
+        scatter_path = report_path / "model.dbcv_vs_ari.png"
+        if plot_dbcv_vs_ari_from_grid(df_grid_detail, scatter_path):
+            written.append(scatter_path)
+        else:
+            skipped.append(
+                "DBCV vs ARI scatter: insufficient grid columns or no ARI data"
+            )
+    else:
+        skipped.append(f"Grid CSV missing or empty: {detail_path}")
+
+    if not ckpt_file.exists():
+        skipped.append(f"Checkpoint missing (heatmaps/bar/ROC need it): {ckpt_file}")
+        return SummaryFigureRenderResult(
+            written_paths=tuple(written),
+            skipped_messages=tuple(skipped),
+        )
+
+    try:
+        ckpt = load_checkpoint(ckpt_file)
+    except (OSError, ValueError) as e:
+        skipped.append(f"Checkpoint unreadable ({ckpt_file}): {e}")
+        return SummaryFigureRenderResult(
+            written_paths=tuple(written),
+            skipped_messages=tuple(skipped),
+        )
+
+    results = _results_from_checkpoint(ckpt)
+    if not results:
+        skipped.append("Checkpoint has no summaries_by_key rows")
+        return SummaryFigureRenderResult(
+            written_paths=tuple(written),
+            skipped_messages=tuple(skipped),
+        )
+
+    df_results = pd.DataFrame([r.to_flat_dict() for r in results])
+    df_results.insert(
+        0,
+        "combo_key",
+        [_combo_key_for_results_row(row) for _, row in df_results.iterrows()],
+    )
+    df_results = df_results.sort_values(["model", "layer"])
+    df_heatmap = df_results[~df_results["model"].isin(["fusion2", "fusion3"])].copy()
+
+    if len(df_heatmap) > 0:
+        heatmap_path = report_path / "model.perf.heatmap.png"
+        plot_heatmap(
+            df_heatmap, heatmap_path, metric="best_score", metric_label="Best Score"
+        )
+        written.append(heatmap_path)
+    else:
+        skipped.append("Score heatmap: no singleton (non-fusion2/3) rows")
+
+    if len(df_heatmap) > 0:
+        if "ari" in df_heatmap.columns and df_heatmap["ari"].notna().any():
+            ari_heatmap_path = report_path / "model.ari.heatmap.png"
+            plot_heatmap(
+                df_heatmap,
+                ari_heatmap_path,
+                metric="ari",
+                metric_label="ARI",
+            )
+            written.append(ari_heatmap_path)
+        else:
+            skipped.append("ARI heatmap: missing or all-NaN ARI column")
+
+    auc_heat_specs: list[tuple[str, str, pathlib.Path]] = [
+        (
+            "screener_lda_auc_mean",
+            "Screener LDA AUC",
+            pathlib.Path("model.screener_lda_auc.heatmap.png"),
+        ),
+        (
+            "screener_svm_auc_mean",
+            "Screener SVM AUC",
+            pathlib.Path("model.screener_svm_auc.heatmap.png"),
+        ),
+        (
+            "screener_auc_mean",
+            "Screener AUC (best)",
+            pathlib.Path("model.screener_auc.heatmap.png"),
+        ),
+        ("oov_auc_mean", "OOV AUC", pathlib.Path("model.oov_auc.heatmap.png")),
+        (
+            "combined_auc_mean",
+            "Combined AUC",
+            pathlib.Path("model.combined_auc.heatmap.png"),
+        ),
+    ]
+    if len(df_heatmap) > 0:
+        for col_auc, label_auc, fn_auc in auc_heat_specs:
+            if col_auc not in df_heatmap.columns:
+                skipped.append(
+                    f"{label_auc} heatmap: column {col_auc!r} not in summaries (older checkpoint?)"
+                )
+                continue
+            if not df_heatmap[col_auc].notna().any():
+                skipped.append(f"{label_auc} heatmap: all NaN")
+                continue
+            out_p = report_path / fn_auc
+            plot_heatmap(
+                df_heatmap,
+                out_p,
+                metric=col_auc,
+                metric_label=label_auc,
+                secondary_metric=None,
+            )
+            written.append(out_p)
+    else:
+        skipped.append(
+            "Screener LDA/SVM/best, OOV, combined AUC heatmaps: no singleton rows"
+        )
+
+    bar_path = report_path / "model.screener_oov_auc.png"
+    if plot_screener_oov_bar(df_heatmap, bar_path):
+        written.append(bar_path)
+    else:
+        skipped.append(
+            "Screener/OOV/combined bar: missing metrics or empty after fusion filter"
+        )
+
+    if screener_path.exists():
+        roc_df = _read_optional_jsonl_gzip(screener_path)
+        if (
+            roc_df is not None
+            and not roc_df.empty
+            and "combined_auc_mean" in df_results.columns
+        ):
+            top_df = df_results.dropna(subset=["combined_auc_mean"]).nlargest(
+                5,
+                "combined_auc_mean",
+            )
+            top_keys_top = top_df["combo_key"].astype(str).drop_duplicates().tolist()
+            roc_out = report_path / "model.roc_curves.png"
+            if plot_roc_comparison(roc_df, roc_out, combo_keys=top_keys_top):
+                written.append(roc_out)
+            else:
+                skipped.append(
+                    "ROC curves: plot_roc_comparison returned False (columns or data)"
+                )
+        else:
+            skipped.append(
+                "ROC curves: empty screener eval or no combined_auc_mean in summaries"
+            )
+    else:
+        skipped.append(f"ROC curves: file missing {screener_path}")
+
+    return SummaryFigureRenderResult(
+        written_paths=tuple(written),
+        skipped_messages=tuple(skipped),
+    )
 
 
 def _json_ready_flat_row(row: ClusteringSearchSummaryRow) -> dict[str, object]:
@@ -641,9 +935,10 @@ def main(
     report_path.mkdir(parents=True, exist_ok=True)
     detail_path = report_path / CLUSTERING_SEARCH_GRID_PER_SAMPLE_CSV_BASENAME
     fine_metadata_path = report_path / CLUSTERING_SEARCH_FINE_METADATA_BASENAME
+    fine_screener_eval_path = report_path / FINE_SCREENER_EVAL_BASENAME
     run_report_json_path = model_selection_run_report_path(report_path)
     if not resume:
-        for artifact in (detail_path, fine_metadata_path):
+        for artifact in (detail_path, fine_metadata_path, fine_screener_eval_path):
             try:
                 if artifact.exists():
                     artifact.unlink()
@@ -818,6 +1113,7 @@ def main(
                 file_reports: list[ModelSelectionReport] = []
                 all_metrics_dfs: list[pd.DataFrame] = []
                 grid_batch: list[pd.DataFrame] = []
+                combo_screener_frames: list[pd.DataFrame] = []
 
                 optimization_config = _clustering_optimization_config_for_run(
                     min_class_size=min_class_size,
@@ -888,6 +1184,16 @@ def main(
                                 sample_idx=sample_idx,
                             )
                         )
+                        if report.screener_oos_datapoints is not None:
+                            combo_screener_frames.append(
+                                _per_datapoint_scores_df(
+                                    report.screener_oos_datapoints,
+                                    combo_key=comb_key,
+                                    model=model,
+                                    layer=layer,
+                                    sample_idx=sample_idx,
+                                )
+                            )
                         if (
                             best_report is None
                             or report.best_score > best_report.best_score
@@ -937,10 +1243,15 @@ def main(
                         detail_path,
                         grid_batch,
                     )
-                    _merge_new_frames_into_fine_metadata_pickle(
+                    _merge_new_frames_into_fine_metadata_jsonl(
                         fine_metadata_path,
                         fine_metadata_frames[-n_new:],
                     )
+                    if combo_screener_frames:
+                        _merge_new_frames_into_screener_eval_jsonl(
+                            fine_screener_eval_path,
+                            combo_screener_frames,
+                        )
                     completed.add(comb_key)
                     results = _results_from_checkpoint(ckpt)
                     (
@@ -1049,6 +1360,7 @@ def main(
                     fusion_reports: list[ModelSelectionReport] = []
                     fusion_all_metrics_dfs: list[pd.DataFrame] = []
                     fusion_grid_batch: list[pd.DataFrame] = []
+                    fusion_combo_screener_frames: list[pd.DataFrame] = []
 
                     optimization_config = _clustering_optimization_config_for_run(
                         min_class_size=min_class_size,
@@ -1110,6 +1422,16 @@ def main(
                                     sample_idx=sample_idx,
                                 )
                             )
+                            if report.screener_oos_datapoints is not None:
+                                fusion_combo_screener_frames.append(
+                                    _per_datapoint_scores_df(
+                                        report.screener_oos_datapoints,
+                                        combo_key=comb_key,
+                                        model=model_label,
+                                        layer=layer_label,
+                                        sample_idx=sample_idx,
+                                    )
+                                )
                             if (
                                 best_report is None
                                 or report.best_score > best_report.best_score
@@ -1158,10 +1480,15 @@ def main(
                             detail_path,
                             fusion_grid_batch,
                         )
-                        _merge_new_frames_into_fine_metadata_pickle(
+                        _merge_new_frames_into_fine_metadata_jsonl(
                             fine_metadata_path,
                             fine_metadata_frames[-n_new:],
                         )
+                        if fusion_combo_screener_frames:
+                            _merge_new_frames_into_screener_eval_jsonl(
+                                fine_screener_eval_path,
+                                fusion_combo_screener_frames,
+                            )
                         completed.add(comb_key)
                         results = _results_from_checkpoint(ckpt)
                     else:
@@ -1189,6 +1516,11 @@ def main(
         return
 
     df_results = pd.DataFrame([r.to_flat_dict() for r in results])
+    df_results.insert(
+        0,
+        "combo_key",
+        [_combo_key_for_results_row(row) for _, row in df_results.iterrows()],
+    )
     df_results = df_results.sort_values(["model", "layer"])
 
     df_grid_detail = _read_optional_csv(detail_path)
@@ -1197,37 +1529,19 @@ def main(
         tmp_grid = detail_path.with_suffix(detail_path.suffix + ".tmp")
         df_grid_detail.to_csv(tmp_grid, index=False)
         tmp_grid.replace(detail_path)
-        scatter_path = report_path / "model.dbcv_vs_ari.png"
-        if plot_dbcv_vs_ari_from_grid(df_grid_detail, scatter_path):
-            console.print(
-                f"[green]✓[/green] DBCV vs ARI scatter saved to: "
-                f"[cyan]{scatter_path}[/cyan]"
-            )
 
-    df_heatmap = df_results[~df_results["model"].isin(["fusion2", "fusion3"])].copy()
-
-    heatmap_path = report_path / "model.perf.heatmap.png"
-    if len(df_heatmap) > 0:
-        plot_heatmap(
-            df_heatmap, heatmap_path, metric="best_score", metric_label="Best Score"
-        )
-    else:
+    summary_figures = render_model_selection_summary_figures(
+        report_path,
+        checkpoint_path=ckpt_path,
+        grid_csv_path=detail_path,
+        fine_screener_eval_path=fine_screener_eval_path,
+    )
+    for fig_path in summary_figures.written_paths:
         console.print(
-            "[yellow]Skipping score heatmap: no single-embedding rows[/yellow]"
+            f"[green]✓[/green] Summary figure saved to: [cyan]{fig_path}[/cyan]"
         )
-
-    if (
-        len(df_heatmap) > 0
-        and "ari" in df_heatmap.columns
-        and df_heatmap["ari"].notna().any()
-    ):
-        ari_heatmap_path = report_path / "model.ari.heatmap.png"
-        plot_heatmap(
-            df_heatmap,
-            ari_heatmap_path,
-            metric="ari",
-            metric_label="ARI",
-        )
+    for note in summary_figures.skipped_messages:
+        console.print(f"[yellow]{note}[/yellow]")
 
     console.print("\n[bold green]Results Summary[/bold green]")
     table = Table(show_header=True, header_style="bold magenta")
@@ -1237,6 +1551,8 @@ def main(
     table.add_column("Clusters", justify="right", style="bright_blue")
     table.add_column("Properties", justify="right", style="magenta")
     table.add_column("Best Score", justify="right", style="blue")
+    table.add_column("Scr AUC", justify="right", style="white")
+    table.add_column("Comb AUC", justify="right", style="white")
 
     for _, row in df_results.iterrows():
         if n_sample > 1:
@@ -1249,11 +1565,35 @@ def main(
                 f"{int(row['number_properties'])} ± {row['number_properties_std']:.1f}"
             )
             best_score_str = f"{row['best_score']:.3f} ± {row['best_score_std']:.3f}"
+            sa = row.get("screener_auc_mean")
+            ca = row.get("combined_auc_mean")
+            scr_auc_str = (
+                f"{float(sa):.3f} ± {float(row.get('screener_auc_std') or 0):.3f}"
+                if sa is not None and not (isinstance(sa, float) and math.isnan(sa))
+                else "—"
+            )
+            comb_auc_str = (
+                f"{float(ca):.3f} ± {float(row.get('combined_auc_std') or 0):.3f}"
+                if ca is not None and not (isinstance(ca, float) and math.isnan(ca))
+                else "—"
+            )
         else:
             best_size_str = str(int(row["best_size"]))
             clusters_str = str(int(round(row["n_clusters_emergent"])))
             properties_str = str(int(row["number_properties"]))
             best_score_str = f"{row['best_score']:.3f}"
+            sa = row.get("screener_auc_mean")
+            ca = row.get("combined_auc_mean")
+            scr_auc_str = (
+                f"{float(sa):.3f}"
+                if sa is not None and not (isinstance(sa, float) and math.isnan(sa))
+                else "—"
+            )
+            comb_auc_str = (
+                f"{float(ca):.3f}"
+                if ca is not None and not (isinstance(ca, float) and math.isnan(ca))
+                else "—"
+            )
 
         table.add_row(
             str(row["model"]),
@@ -1262,6 +1602,8 @@ def main(
             clusters_str,
             properties_str,
             best_score_str,
+            scr_auc_str,
+            comb_auc_str,
         )
 
     console.print(table)
@@ -1271,17 +1613,19 @@ def main(
             f"[cyan]{detail_path}[/cyan]"
         )
     if fine_metadata_path.exists():
-        try:
-            fm = pd.read_pickle(fine_metadata_path, compression="gzip")
-        except Exception:
-            fm = None
-        if fm is not None and not fm.empty:
+        fm = _read_optional_jsonl_gzip(fine_metadata_path)
+        if fm is not None:
             console.print(
-                f"[green]✓[/green] Fine clustering metadata (gzipped pickle) saved to: "
+                "[green]✓[/green] Fine clustering metadata (gzip JSON Lines) saved to: "
                 f"[cyan]{fine_metadata_path}[/cyan]"
             )
-    if len(df_heatmap) > 0:
-        console.print(f"[green]✓[/green] Heatmap saved to: [cyan]{heatmap_path}[/cyan]")
+    if fine_screener_eval_path.exists():
+        se = _read_optional_jsonl_gzip(fine_screener_eval_path)
+        if se is not None:
+            console.print(
+                "[green]✓[/green] Fine screener eval datapoints saved to: "
+                f"[cyan]{fine_screener_eval_path}[/cyan]"
+            )
 
     top_idx = df_results["best_score"].idxmax()
     top_row = df_results.loc[top_idx]
@@ -1364,9 +1708,39 @@ def main(
             "layer": best_overall_layer,
             "best_score": float(best_overall_score),
         }
+        br_sel = df_results.loc[
+            (df_results["model"].astype(str) == str(best_overall_model))
+            & (df_results["layer"].astype(str) == str(best_overall_layer))
+        ]
+        bk = (
+            br_sel.iloc[0]
+            if len(br_sel) > 0
+            else df_results.loc[df_results["best_score"].idxmax()]
+        )
+        sbk_mean = bk.get("screener_auc_mean")
+        cb_mean = bk.get("combined_auc_mean")
+        ob_mean = bk.get("oov_auc_mean")
+        if sbk_mean is not None and not (
+            isinstance(sbk_mean, float) and math.isnan(sbk_mean)
+        ):
+            best_overall_payload["screener_auc"] = float(sbk_mean)
+        if cb_mean is not None and not (
+            isinstance(cb_mean, float) and math.isnan(cb_mean)
+        ):
+            best_overall_payload["combined_auc"] = float(cb_mean)
+        if ob_mean is not None and not (
+            isinstance(ob_mean, float) and math.isnan(ob_mean)
+        ):
+            best_overall_payload["oov_auc"] = float(ob_mean)
+        s_kind = bk.get("screener_best_kind")
+        if isinstance(s_kind, str) and s_kind:
+            best_overall_payload["screener_best_kind"] = s_kind
+        o_kind = bk.get("oov_winner_kind")
+        if isinstance(o_kind, str) and o_kind:
+            best_overall_payload["oov_winner_kind"] = o_kind
 
     run_report = ModelSelectionRunReport(
-        schema="pelinker.model_selection.run_report.v1",
+        schema=MODEL_SELECTION_RUN_REPORT_SCHEMA,
         generated_at=utc_now_iso(),
         run_fingerprint=run_fingerprint,
         run_config=fp_payload,

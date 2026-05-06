@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import gzip
+from collections import Counter
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 import json
@@ -12,7 +13,8 @@ import pandas as pd
 
 from pelinker.config import ScreenerKind
 
-_JSON_CLUSTERING_REPORT_SCHEMA = "pelinker.clustering_report.v5"
+_JSON_CLUSTERING_REPORT_SCHEMA = "pelinker.clustering_report.v6"
+MODEL_SELECTION_RUN_REPORT_SCHEMA = "pelinker.model_selection.run_report.v2"
 
 
 def entity_negative_label_mask_01(
@@ -49,45 +51,40 @@ class MetricMeanStd:
 
 
 @dataclass(frozen=True)
-class ScreenerModelCvBlock:
-    """Precision / recall / F1 for detecting the negative class (label 1) on held-out folds."""
+class BinaryClassifierMetrics:
+    """Precision / recall / F1 / AUC vs negative class (label 1); spread is fold-wise."""
 
     precision: MetricMeanStd
     recall: MetricMeanStd
     f1: MetricMeanStd
+    auc: MetricMeanStd
 
 
 @dataclass(frozen=True)
-class NegativeScreenerCvSummary:
-    """Cross-validated LDA vs linear SVM on the same binary negative-detection task."""
+class AllScreenerCvResult:
+    """Unified stratified CV: embedding screener (LDA vs SVM), manifold OOV, and stacked score."""
 
-    lda: ScreenerModelCvBlock
-    svm: ScreenerModelCvBlock
+    screener_lda: BinaryClassifierMetrics
+    screener_svm: BinaryClassifierMetrics
+    screener_best_kind: str
+    screener_best: BinaryClassifierMetrics
+    oov_winner_kind: str
+    oov: BinaryClassifierMetrics
+    combined: BinaryClassifierMetrics
 
 
-def negative_screener_cv_summary_from_eval_dict(
-    raw: dict[str, dict[str, dict[str, float]]],
-) -> NegativeScreenerCvSummary:
-    """Build a typed summary from :func:`pelinker.negative_screener.evaluate_negative_screener_models` output."""
+@dataclass(frozen=True)
+class PerDatapointScores:
+    """Out-of-sample scores per stratified-fold test datapoint."""
 
-    def _block(name: str) -> ScreenerModelCvBlock:
-        b = raw[name]
-        return ScreenerModelCvBlock(
-            precision=MetricMeanStd(
-                mean=float(b["precision"]["mean"]),
-                std=float(b["precision"]["std"]),
-            ),
-            recall=MetricMeanStd(
-                mean=float(b["recall"]["mean"]),
-                std=float(b["recall"]["std"]),
-            ),
-            f1=MetricMeanStd(
-                mean=float(b["f1"]["mean"]),
-                std=float(b["f1"]["std"]),
-            ),
-        )
-
-    return NegativeScreenerCvSummary(lda=_block("lda"), svm=_block("svm"))
+    orig_idx: list[int]
+    entity: list[str]
+    y_true: list[int]
+    screener_lda_score: list[float]
+    screener_svm_score: list[float]
+    screener_best_score: list[float]
+    oov_score: list[float]
+    combined_score: list[float]
 
 
 @dataclass(frozen=True)
@@ -117,50 +114,81 @@ class ClusteringFitMetrics:
     n_samples: int
 
 
-def _screener_cv_block_to_jsonable(
-    block: ScreenerModelCvBlock,
+def _binary_metrics_to_jsonable(
+    m: BinaryClassifierMetrics,
 ) -> dict[str, dict[str, float]]:
     return {
-        "precision": {"mean": block.precision.mean, "std": block.precision.std},
-        "recall": {"mean": block.recall.mean, "std": block.recall.std},
-        "f1": {"mean": block.f1.mean, "std": block.f1.std},
+        "precision": {"mean": m.precision.mean, "std": m.precision.std},
+        "recall": {"mean": m.recall.mean, "std": m.recall.std},
+        "f1": {"mean": m.f1.mean, "std": m.f1.std},
+        "auc": {"mean": m.auc.mean, "std": m.auc.std},
     }
 
 
-def _negative_screener_cv_summary_to_jsonable(
-    summary: NegativeScreenerCvSummary,
-) -> dict[str, dict[str, dict[str, float]]]:
+def _all_screener_cv_to_jsonable(result: AllScreenerCvResult) -> dict[str, object]:
     return {
-        "lda": _screener_cv_block_to_jsonable(summary.lda),
-        "svm": _screener_cv_block_to_jsonable(summary.svm),
+        "screener_lda": _binary_metrics_to_jsonable(result.screener_lda),
+        "screener_svm": _binary_metrics_to_jsonable(result.screener_svm),
+        "screener_best_kind": result.screener_best_kind,
+        "screener_best": _binary_metrics_to_jsonable(result.screener_best),
+        "oov_winner_kind": result.oov_winner_kind,
+        "oov": _binary_metrics_to_jsonable(result.oov),
+        "combined": _binary_metrics_to_jsonable(result.combined),
     }
 
 
-def _pool_negative_screener_cv_summaries(
-    summaries: Sequence[NegativeScreenerCvSummary],
-) -> NegativeScreenerCvSummary:
-    """Mean/std across repeated clustering reports of the per-report CV ``mean`` fields."""
-
-    def _collect(
-        getter: Callable[[NegativeScreenerCvSummary], MetricMeanStd],
-    ) -> MetricMeanStd:
-        means = np.array([getter(s).mean for s in summaries], dtype=np.float64)
+def _pool_binary_classifier_metrics_branch(
+    summaries: Sequence[AllScreenerCvResult],
+    branch: Callable[[AllScreenerCvResult], BinaryClassifierMetrics],
+) -> BinaryClassifierMetrics:
+    def _collect(field: str) -> MetricMeanStd:
+        vals = np.array(
+            [getattr(branch(s), field).mean for s in summaries],
+            dtype=np.float64,
+        )
         return MetricMeanStd(
-            mean=float(np.mean(means)),
-            std=float(np.std(means, ddof=1)) if len(means) > 1 else 0.0,
+            mean=float(np.mean(vals)),
+            std=float(np.std(vals, ddof=1)) if len(vals) > 1 else 0.0,
         )
 
-    lda = ScreenerModelCvBlock(
-        precision=_collect(lambda s: s.lda.precision),
-        recall=_collect(lambda s: s.lda.recall),
-        f1=_collect(lambda s: s.lda.f1),
+    return BinaryClassifierMetrics(
+        precision=_collect("precision"),
+        recall=_collect("recall"),
+        f1=_collect("f1"),
+        auc=_collect("auc"),
     )
-    svm = ScreenerModelCvBlock(
-        precision=_collect(lambda s: s.svm.precision),
-        recall=_collect(lambda s: s.svm.recall),
-        f1=_collect(lambda s: s.svm.f1),
+
+
+def _pool_all_screener_cv_results(
+    summaries: Sequence[AllScreenerCvResult],
+) -> AllScreenerCvResult:
+    """Pool mean±std across bootstrap samples from each report's CV ``mean`` fields."""
+    if not summaries:
+        raise ValueError("summaries must be non-empty")
+
+    def _mode_str(values: list[str]) -> str:
+        c = Counter(values)
+        return str(c.most_common(1)[0][0])
+
+    kinds_s = [s.screener_best_kind for s in summaries]
+    kinds_o = [s.oov_winner_kind for s in summaries]
+    return AllScreenerCvResult(
+        screener_lda=_pool_binary_classifier_metrics_branch(
+            summaries, lambda r: r.screener_lda
+        ),
+        screener_svm=_pool_binary_classifier_metrics_branch(
+            summaries, lambda r: r.screener_svm
+        ),
+        screener_best_kind=_mode_str(kinds_s),
+        screener_best=_pool_binary_classifier_metrics_branch(
+            summaries, lambda r: r.screener_best
+        ),
+        oov_winner_kind=_mode_str(kinds_o),
+        oov=_pool_binary_classifier_metrics_branch(summaries, lambda r: r.oov),
+        combined=_pool_binary_classifier_metrics_branch(
+            summaries, lambda r: r.combined
+        ),
     )
-    return NegativeScreenerCvSummary(lda=lda, svm=svm)
 
 
 @dataclass(frozen=True)
@@ -209,10 +237,10 @@ class ModelSelectionReport:
     umap_clustering: np.ndarray
     umap_visualization: np.ndarray
     pca_reduced: np.ndarray
-    negative_screener_cv: NegativeScreenerCvSummary | None = None
-    """Stratified CV metrics for LDA and linear SVM (negative vs KB); ``None`` when screening is off or infeasible."""
-    manifold_oov_cv: dict[str, Any] | None = None
-    """CV F1 summary for 3D manifold OOV model selection; ``None`` when disabled or infeasible."""
+    all_screener_cv: AllScreenerCvResult | None = None
+    """Unified stratified CV for embedding screener, manifold OOV, and stacked score."""
+    screener_oos_datapoints: PerDatapointScores | None = None
+    """Per-datapoint OOS scores (not serialized in JSON clustering report)."""
     ari: float | None = None
 
 
@@ -248,9 +276,9 @@ def _ndarray_to_jsonable_nested(arr: np.ndarray) -> Any:
 # Basenames for artifacts under one report directory (``pelinker-fit`` / clustering search).
 LINKER_FIT_CLUSTERING_REPORT_BASENAME = "linker_fit.clustering_report.json.gz"
 MODEL_SELECTION_RUN_REPORT_BASENAME = "model_selection.run_report.json.gz"
-CLUSTERING_SEARCH_RESULTS_CSV_BASENAME = "results.csv"
 CLUSTERING_SEARCH_GRID_PER_SAMPLE_CSV_BASENAME = "results_grid_per_sample.csv"
-CLUSTERING_SEARCH_FINE_METADATA_BASENAME = "fine_clustering_metadata.pkl.gz"
+CLUSTERING_SEARCH_FINE_METADATA_BASENAME = "fine_clustering_metadata.jsonl.gz"
+FINE_SCREENER_EVAL_BASENAME = "fine_screener_eval.jsonl.gz"
 MODEL_SELECTION_CHECKPOINT_BASENAME = "model_selection.state.json.gz"
 
 
@@ -306,17 +334,10 @@ def clustering_report_to_jsonable_dict(report: ModelSelectionReport) -> dict[str
         "umap_visualization": _ndarray_to_jsonable_nested(report.umap_visualization),
         "pca_reduced": _ndarray_to_jsonable_nested(report.pca_reduced),
         "ari": ari_out,
-        "negative_screener_cv": (
+        "all_screener_cv": (
             None
-            if report.negative_screener_cv is None
-            else _json_normalize(
-                _negative_screener_cv_summary_to_jsonable(report.negative_screener_cv)
-            )
-        ),
-        "manifold_oov_cv": (
-            None
-            if report.manifold_oov_cv is None
-            else _json_normalize(report.manifold_oov_cv)
+            if report.all_screener_cv is None
+            else _json_normalize(_all_screener_cv_to_jsonable(report.all_screener_cv))
         ),
     }
 
@@ -337,77 +358,65 @@ def write_clustering_report_json(
         json.dump(payload, f, indent=indent)
 
 
-def _normalized_manifold_oov_cv_payload(
-    payload: dict[str, Any] | None,
-) -> dict[str, Any] | None:
-    if payload is None:
+def _binary_metrics_into_row(
+    row: dict[str, str | float | None],
+    metrics: BinaryClassifierMetrics,
+    prefix: str,
+) -> None:
+    row[f"{prefix}_precision_mean"] = metrics.precision.mean
+    row[f"{prefix}_precision_std"] = metrics.precision.std
+    row[f"{prefix}_recall_mean"] = metrics.recall.mean
+    row[f"{prefix}_recall_std"] = metrics.recall.std
+    row[f"{prefix}_f1_mean"] = metrics.f1.mean
+    row[f"{prefix}_f1_std"] = metrics.f1.std
+    row[f"{prefix}_auc_mean"] = metrics.auc.mean
+    row[f"{prefix}_auc_std"] = metrics.auc.std
+
+
+def _binary_metrics_from_flat_row(
+    row: dict[str, str | float | None],
+    prefix: str,
+) -> BinaryClassifierMetrics:
+    def _m(field: str) -> MetricMeanStd:
+        mk = f"{prefix}_{field}_mean"
+        sk = f"{prefix}_{field}_std"
+        return MetricMeanStd(
+            mean=float(row[mk]),
+            std=float(row.get(sk) or 0.0),
+        )
+
+    return BinaryClassifierMetrics(
+        precision=_m("precision"),
+        recall=_m("recall"),
+        f1=_m("f1"),
+        auc=_m("auc"),
+    )
+
+
+def _all_screener_cv_from_flat_row(
+    row: dict[str, str | float | None],
+) -> AllScreenerCvResult | None:
+    """Reconstruct unified CV summary from flat CSV/checkpoint rows."""
+    if "screener_lda_precision_mean" not in row or "screener_precision_mean" not in row:
         return None
-    out: dict[str, Any] = {
-        "winner_kind": payload.get("winner_kind"),
-        "winner_f1_mean": payload.get("winner_f1_mean"),
-        "winner_dt_max_depth": payload.get("winner_dt_max_depth"),
-        "winner_dt_min_samples_leaf": payload.get("winner_dt_min_samples_leaf"),
-        "cv_skipped": bool(payload.get("cv_skipped", False)),
-    }
-    for key in ("svm", "lda", "dt_cells", "reason", "n_kb", "n_neg"):
-        if key in payload:
-            out[key] = payload[key]
-    return cast(dict[str, Any], _json_normalize(out))
-
-
-def _pool_manifold_oov_cv_payloads(
-    payloads: Sequence[dict[str, Any]],
-) -> dict[str, Any] | None:
-    if not payloads:
+    sb = row.get("screener_best_kind")
+    ow = row.get("oov_winner_kind")
+    if (
+        not isinstance(sb, str)
+        or not sb
+        or not isinstance(ow, str)
+        or not ow
+        or "combined_precision_mean" not in row
+    ):
         return None
-    normalized = [
-        _normalized_manifold_oov_cv_payload(p)
-        for p in payloads
-        if _normalized_manifold_oov_cv_payload(p) is not None
-    ]
-    normalized = [p for p in normalized if p is not None]
-    if not normalized:
-        return None
-
-    winner_counts: dict[str, int] = {}
-    reason_counts: dict[str, int] = {}
-    winner_f1_vals: list[float] = []
-    cv_skipped = 0
-    for item in normalized:
-        winner = item.get("winner_kind")
-        if isinstance(winner, str) and winner:
-            winner_counts[winner] = winner_counts.get(winner, 0) + 1
-        reason = item.get("reason")
-        if isinstance(reason, str) and reason:
-            reason_counts[reason] = reason_counts.get(reason, 0) + 1
-        if bool(item.get("cv_skipped", False)):
-            cv_skipped += 1
-        f1 = item.get("winner_f1_mean")
-        if isinstance(f1, (float, int)):
-            f1f = float(f1)
-            if math.isfinite(f1f):
-                winner_f1_vals.append(f1f)
-
-    f1_summary: dict[str, float] | None = None
-    if winner_f1_vals:
-        arr = np.array(winner_f1_vals, dtype=np.float64)
-        f1_summary = {
-            "mean": float(np.mean(arr)),
-            "std": float(np.std(arr, ddof=1)) if len(arr) > 1 else 0.0,
-        }
-
-    return cast(
-        dict[str, Any],
-        _json_normalize(
-            {
-                "samples_evaluated": len(normalized),
-                "cv_skipped_samples": cv_skipped,
-                "winner_kind_counts": winner_counts,
-                "winner_f1_mean_summary": f1_summary,
-                "skip_reasons": reason_counts or None,
-                "samples": normalized,
-            }
-        ),
+    return AllScreenerCvResult(
+        screener_lda=_binary_metrics_from_flat_row(row, "screener_lda"),
+        screener_svm=_binary_metrics_from_flat_row(row, "screener_svm"),
+        screener_best_kind=sb,
+        screener_best=_binary_metrics_from_flat_row(row, "screener"),
+        oov_winner_kind=ow,
+        oov=_binary_metrics_from_flat_row(row, "oov"),
+        combined=_binary_metrics_from_flat_row(row, "combined"),
     )
 
 
@@ -426,11 +435,10 @@ class ClusteringSearchSummaryRow:
     n_clusters_emergent: MeanWithUncertainty
     dbcv: MeanWithUncertainty
     ari: MeanWithUncertainty | None
-    negative_screener_cv: NegativeScreenerCvSummary | None = None
-    manifold_oov_cv: dict[str, Any] | None = None
+    all_screener_cv: AllScreenerCvResult | None = None
 
     def to_flat_dict(self) -> dict[str, str | float | None]:
-        """Keys aligned with historical ``results.csv`` and ``plot_heatmap`` expectations."""
+        """Keys aligned with grid CSV / checkpoint / ``plot_heatmap`` expectations."""
         h = self.hyperparameters.min_cluster_size
         p = self.number_properties
         k = self.n_clusters_emergent
@@ -454,56 +462,16 @@ class ClusteringSearchSummaryRow:
             ari = self.ari
             row["ari"] = ari.mean
             row["ari_std"] = ari.std
-        ns = self.negative_screener_cv
-        if ns is not None:
-
-            def _flat(prefix: str, block: ScreenerModelCvBlock) -> None:
-                row[f"{prefix}_precision_mean"] = block.precision.mean
-                row[f"{prefix}_precision_std"] = block.precision.std
-                row[f"{prefix}_recall_mean"] = block.recall.mean
-                row[f"{prefix}_recall_std"] = block.recall.std
-                row[f"{prefix}_f1_mean"] = block.f1.mean
-                row[f"{prefix}_f1_std"] = block.f1.std
-
-            _flat("screener_lda", ns.lda)
-            _flat("screener_svm", ns.svm)
-        row["manifold_oov_cv"] = (
-            None
-            if self.manifold_oov_cv is None
-            else json.dumps(_normalized_manifold_oov_cv_payload(self.manifold_oov_cv))
-        )
+        acv = self.all_screener_cv
+        if acv is not None:
+            row["screener_best_kind"] = acv.screener_best_kind
+            _binary_metrics_into_row(row, acv.screener_best, "screener")
+            row["oov_winner_kind"] = acv.oov_winner_kind
+            _binary_metrics_into_row(row, acv.oov, "oov")
+            _binary_metrics_into_row(row, acv.combined, "combined")
+            _binary_metrics_into_row(row, acv.screener_lda, "screener_lda")
+            _binary_metrics_into_row(row, acv.screener_svm, "screener_svm")
         return row
-
-
-def _screener_cv_block_from_flat(
-    row: dict[str, str | float | None], prefix: str
-) -> ScreenerModelCvBlock:
-    mean_key = f"{prefix}_precision_mean"
-    return ScreenerModelCvBlock(
-        precision=MetricMeanStd(
-            mean=float(row[mean_key]),
-            std=float(row.get(f"{prefix}_precision_std") or 0.0),
-        ),
-        recall=MetricMeanStd(
-            mean=float(row[f"{prefix}_recall_mean"]),
-            std=float(row.get(f"{prefix}_recall_std") or 0.0),
-        ),
-        f1=MetricMeanStd(
-            mean=float(row[f"{prefix}_f1_mean"]),
-            std=float(row.get(f"{prefix}_f1_std") or 0.0),
-        ),
-    )
-
-
-def _negative_screener_cv_summary_from_flat_row(
-    row: dict[str, str | float | None],
-) -> NegativeScreenerCvSummary | None:
-    if "screener_lda_precision_mean" not in row:
-        return None
-    return NegativeScreenerCvSummary(
-        lda=_screener_cv_block_from_flat(row, "screener_lda"),
-        svm=_screener_cv_block_from_flat(row, "screener_svm"),
-    )
 
 
 def clustering_search_summary_row_from_flat_dict(
@@ -541,12 +509,7 @@ def clustering_search_summary_row_from_flat_dict(
             std=float(row["best_score_std"] or 0.0),
         ),
         ari=ari_block,
-        negative_screener_cv=_negative_screener_cv_summary_from_flat_row(row),
-        manifold_oov_cv=(
-            None
-            if row.get("manifold_oov_cv") in (None, "")
-            else cast(dict[str, Any], json.loads(str(row["manifold_oov_cv"])))
-        ),
+        all_screener_cv=_all_screener_cv_from_flat_row(row),
     )
 
 
@@ -617,16 +580,8 @@ def summarize_clustering_reports_for_search(
     else:
         ari_block = None
 
-    ns_reports = [
-        r.negative_screener_cv for r in reports if r.negative_screener_cv is not None
-    ]
-    ns_pooled: NegativeScreenerCvSummary | None = None
-    if ns_reports:
-        ns_pooled = _pool_negative_screener_cv_summaries(ns_reports)
-    mo_reports = [r.manifold_oov_cv for r in reports if r.manifold_oov_cv is not None]
-    mo_pooled = _pool_manifold_oov_cv_payloads(
-        [cast(dict[str, Any], x) for x in mo_reports]
-    )
+    acv_reports = [r.all_screener_cv for r in reports if r.all_screener_cv is not None]
+    pooled_acv = _pool_all_screener_cv_results(acv_reports) if acv_reports else None
 
     return ClusteringSearchSummaryRow(
         model=model,
@@ -650,8 +605,7 @@ def summarize_clustering_reports_for_search(
             std=dbcv_std,
         ),
         ari=ari_block,
-        negative_screener_cv=ns_pooled,
-        manifold_oov_cv=mo_pooled,
+        all_screener_cv=pooled_acv,
     )
 
 

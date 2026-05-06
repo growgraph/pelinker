@@ -6,7 +6,7 @@ from collections import defaultdict
 from collections.abc import Sequence
 import dataclasses
 from dataclasses import dataclass, replace
-from typing import Any, TypedDict, cast
+from typing import TypedDict, cast
 
 import pandas as pd
 import torch
@@ -444,12 +444,8 @@ class Linker:
                 self.training_umap_visualization, dtype=np.float64
             ),
             pca_reduced=np.asarray(self.training_pca_reduced, dtype=np.float64),
-            negative_screener_cv=None,
-            manifold_oov_cv=(
-                cast(dict[str, Any], self._manifold_oov_cv_payload)
-                if self._manifold_oov_cv_payload is not None
-                else None
-            ),
+            all_screener_cv=None,
+            screener_oos_datapoints=None,
             ari=m.ari,
         )
 

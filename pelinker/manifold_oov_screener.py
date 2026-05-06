@@ -30,6 +30,11 @@ def _oob_scores(estimator: object, X: np.ndarray) -> np.ndarray:
     raise TypeError(f"Unsupported estimator: {type(estimator)!r}")
 
 
+def oov_estimator_scores(estimator: object, X: np.ndarray) -> np.ndarray:
+    """Public wrapper for OOV decision scores (higher => more like class 1)."""
+    return _oob_scores(estimator, X)
+
+
 @dataclass
 class ManifoldOovScoreModel:
     """Fitted winner; :meth:`score` is used at predict time (higher => more OOV-like)."""

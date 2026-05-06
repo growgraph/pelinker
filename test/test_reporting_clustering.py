@@ -175,14 +175,14 @@ def test_write_clustering_report_json_includes_pca_arrays(tmp_path: Path) -> Non
     write_clustering_report_json(out, r)
     with gzip.open(out, mode="rt", encoding="utf-8") as fh:
         raw = json.load(fh)
-    assert raw["schema"] == "pelinker.clustering_report.v5"
+    assert raw["schema"] == "pelinker.clustering_report.v6"
     assert raw["pca_residuals"] == [0.1]
     assert raw["pca_mahalanobis"] == [0.2]
     assert raw["pca_spectral_entropy"] == [0.3]
     assert raw["pca_residual_label_01"] == [0]
     assert raw["pca_mahalanobis_label_01"] == [0]
     assert raw["pca_spectral_entropy_label_01"] == [0]
-    assert raw["manifold_oov_cv"] is None
+    assert raw["all_screener_cv"] is None
 
 
 def test_entity_negative_label_mask_01() -> None:

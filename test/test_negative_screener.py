@@ -15,12 +15,12 @@ from pelinker.config import ClusteringOptimizationConfig, NegativeScreenerConfig
 from pelinker.negative_screener import NegativeClassScreener
 from pelinker.onto import NEGATIVE_LABEL
 from pelinker.reporting import (
+    AllScreenerCvResult,
+    BinaryClassifierMetrics,
     ClusteringSearchSummaryRow,
     HyperparameterSearchStats,
     MeanWithUncertainty,
     MetricMeanStd,
-    NegativeScreenerCvSummary,
-    ScreenerModelCvBlock,
     clustering_search_summary_row_from_flat_dict,
 )
 from pelinker.transform import TransformConfig
@@ -52,6 +52,24 @@ def _tiny_frame(*, dim: int = 8, n_pos: int = 40, n_neg: int = 15) -> pd.DataFra
     return pd.DataFrame(rows)
 
 
+def _bmc(
+    pm: float,
+    ps: float,
+    rm: float,
+    rs: float,
+    fm: float,
+    fs: float,
+    am: float,
+    ais: float,
+) -> BinaryClassifierMetrics:
+    return BinaryClassifierMetrics(
+        precision=MetricMeanStd(pm, ps),
+        recall=MetricMeanStd(rm, rs),
+        f1=MetricMeanStd(fm, fs),
+        auc=MetricMeanStd(am, ais),
+    )
+
+
 def test_estimate_clustering_negative_screener_cv_and_manifold_only_positives() -> None:
     dfr = _tiny_frame()
     opt = ClusteringOptimizationConfig(
@@ -73,8 +91,8 @@ def test_estimate_clustering_negative_screener_cv_and_manifold_only_positives() 
         aggregation_level="mention",
     )
     assert report is not None
-    assert report.negative_screener_cv is not None
-    assert report.negative_screener_cv.lda.f1.mean >= 0.0
+    assert report.all_screener_cv is not None
+    assert report.all_screener_cv.screener_lda.f1.mean >= 0.0
     assert len(report.assignments) == len(dfr[dfr["entity"] != NEGATIVE_LABEL])
     assert report.number_properties == 2
     assert NEGATIVE_LABEL not in set(report.assignments["entity"].astype(str))
@@ -131,17 +149,19 @@ def test_negative_class_screener_fit_predict() -> None:
 
 
 def test_clustering_search_summary_screener_flat_round_trip() -> None:
-    ns = NegativeScreenerCvSummary(
-        lda=ScreenerModelCvBlock(
-            precision=MetricMeanStd(0.7, 0.1),
-            recall=MetricMeanStd(0.6, 0.05),
-            f1=MetricMeanStd(0.65, 0.08),
-        ),
-        svm=ScreenerModelCvBlock(
-            precision=MetricMeanStd(0.72, 0.09),
-            recall=MetricMeanStd(0.61, 0.04),
-            f1=MetricMeanStd(0.66, 0.07),
-        ),
+    lda = _bmc(0.7, 0.1, 0.6, 0.05, 0.65, 0.08, 0.74, 0.02)
+    svm = _bmc(0.72, 0.09, 0.61, 0.04, 0.66, 0.07, 0.76, 0.02)
+    sb = _bmc(0.71, 0.08, 0.62, 0.03, 0.66, 0.06, 0.77, 0.02)
+    oov = _bmc(0.69, 0.02, 0.68, 0.02, 0.67, 0.02, 0.75, 0.02)
+    cb = _bmc(0.72, 0.02, 0.7, 0.02, 0.7, 0.02, 0.78, 0.02)
+    ac = AllScreenerCvResult(
+        screener_lda=lda,
+        screener_svm=svm,
+        screener_best_kind="svm",
+        screener_best=sb,
+        oov_winner_kind="dt",
+        oov=oov,
+        combined=cb,
     )
     row = ClusteringSearchSummaryRow(
         model="m",
@@ -153,9 +173,10 @@ def test_clustering_search_summary_screener_flat_round_trip() -> None:
         n_clusters_emergent=MeanWithUncertainty(mean=3.0, std=0.0),
         dbcv=MeanWithUncertainty(mean=0.4, std=0.0),
         ari=MeanWithUncertainty(mean=0.3, std=0.0),
-        negative_screener_cv=ns,
+        all_screener_cv=ac,
     )
     flat = row.to_flat_dict()
     back = clustering_search_summary_row_from_flat_dict(flat)
-    assert back.negative_screener_cv is not None
-    assert back.negative_screener_cv.lda.f1.mean == pytest.approx(0.65)
+    assert back.all_screener_cv is not None
+    assert back.all_screener_cv.screener_lda.f1.mean == pytest.approx(0.65)
+    assert back.all_screener_cv.screener_best_kind == "svm"
