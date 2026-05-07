@@ -159,7 +159,7 @@ def test_clustering_search_summary_screener_flat_round_trip() -> None:
         screener_svm=svm,
         screener_best_kind="svm",
         screener_best=sb,
-        oov_winner_kind="dt",
+        oov_winner_kind="lda",
         oov=oov,
         combined=cb,
     )

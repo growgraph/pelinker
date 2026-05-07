@@ -23,13 +23,11 @@ def test_evaluate_manifold_oov_cv_returns_winner_and_payload() -> None:
         cv_n_splits=5,
         cv_test_size=0.25,
         cv_random_state=0,
-        dt_max_depth_candidates=(2, 4),
-        dt_min_samples_leaf_candidates=(2,),
     )
     raw = evaluate_manifold_oov_cv(X, y, cfg)
     assert raw is not None
-    cv_payload, winner, winner_dt = raw
-    assert winner in ("dt", "svm", "lda")
+    cv_payload, winner = raw
+    assert winner in ("lda", "svm", "rbf")
     assert "winner_f1_mean" in cv_payload
     model, pl = fit_manifold_oov_score_model(X, y, cfg, cv_payload_and_winner=raw)
     assert model is not None

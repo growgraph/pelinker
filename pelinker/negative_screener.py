@@ -9,9 +9,21 @@ import pandas as pd
 from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
 from sklearn.metrics import f1_score, precision_score, recall_score
 from sklearn.model_selection import StratifiedShuffleSplit
-from sklearn.svm import SVC
+from sklearn.svm import LinearSVC
 
 from pelinker.config import NegativeScreenerConfig, ScreenerKind
+
+
+def _linear_svc_for_embeddings(X: np.ndarray, *, random_state: int | None) -> LinearSVC:
+    """``dual=False`` when ``n_samples > n_features`` (typical for embedding rows)."""
+    n, p = X.shape
+    dual = n < p
+    return LinearSVC(
+        C=1.0,
+        dual=dual,
+        max_iter=10_000,
+        random_state=random_state,
+    )
 
 
 @dataclass(frozen=True)
@@ -30,7 +42,7 @@ def evaluate_negative_screener_models(
     random_state: int = 42,
 ) -> dict[str, dict[str, dict[str, float]]] | None:
     """
-    Stratified CV for LDA and SVM (linear kernel); ``y`` is 0/1 with 1 = negative class.
+    Stratified CV for LDA and linear SVM; ``y`` is 0/1 with 1 = negative class.
 
     Returns nested ``{model: {metric: {mean, std}}}`` or ``None`` if stratified CV is not feasible.
     """
@@ -73,7 +85,7 @@ def evaluate_negative_screener_models(
             float(f1_score(y_test, y_pred_lda, pos_label=1, zero_division=0))
         )
 
-        svm = SVC(kernel="linear")
+        svm = _linear_svc_for_embeddings(X_train, random_state=random_state)
         svm.fit(X_train, y_train)
         y_pred_svm = svm.predict(X_test)
         svm_lists.precision.append(
@@ -123,7 +135,7 @@ class NegativeClassScreener:
 
     kind: ScreenerKind
     negative_label: str
-    _estimator: LinearDiscriminantAnalysis | SVC | None
+    _estimator: LinearDiscriminantAnalysis | LinearSVC | None
 
     @classmethod
     def fit_from_frame(
@@ -150,13 +162,14 @@ class NegativeClassScreener:
                 kind=config.kind, negative_label=config.negative_label, _estimator=None
             )
 
+        X64 = X.astype(np.float64, copy=False)
         if config.kind == "lda":
-            est: LinearDiscriminantAnalysis | SVC = LinearDiscriminantAnalysis(
+            est: LinearDiscriminantAnalysis | LinearSVC = LinearDiscriminantAnalysis(
                 solver="svd"
             )
         else:
-            est = SVC(kernel="linear")
-        est.fit(X.astype(np.float64, copy=False), y)
+            est = _linear_svc_for_embeddings(X64, random_state=config.cv_random_state)
+        est.fit(X64, y)
         return cls(
             kind=config.kind, negative_label=config.negative_label, _estimator=est
         )
@@ -172,11 +185,11 @@ class NegativeClassScreener:
         return pred_i == 1
 
     def decision_function(self, X: np.ndarray) -> np.ndarray:
-        """Signed margin when available (SVC, LDA); shape ``(n_samples,)``."""
+        """Signed margin when available (``LinearSVC``, LDA); shape ``(n_samples,)``."""
         if self._estimator is None:
             return np.zeros(X.shape[0], dtype=np.float64)
         xf = X.astype(np.float64, copy=False)
-        if isinstance(self._estimator, SVC):
+        if isinstance(self._estimator, LinearSVC):
             return np.asarray(
                 self._estimator.decision_function(xf), dtype=np.float64
             ).ravel()

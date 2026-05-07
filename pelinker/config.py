@@ -167,7 +167,7 @@ class NegativeScreenerConfig:
     kind: ScreenerKind = "lda"
     """Estimator persisted on :class:`~pelinker.model.Linker` (``Linker.screener``)."""
     negative_label: str = NEGATIVE_LABEL
-    cv_n_splits: int = 20
+    cv_n_splits: int = 5
     cv_test_size: float = 0.2
     cv_random_state: int = 42
 
@@ -185,25 +185,28 @@ class ManifoldOovScreenerConfig:
     """3D (residual, Mahalanobis, spectral entropy) OOV score model; predict-time gate only."""
 
     enabled: bool = True
-    cv_n_splits: int = 20
+    cv_n_splits: int = 5
     cv_test_size: float = 0.2
     cv_random_state: int = 42
-    dt_max_depth_candidates: tuple[int | None, ...] = (None, 4, 8)
-    """``None`` means unrestricted depth (sklearn default)."""
-    dt_min_samples_leaf_candidates: tuple[int, ...] = (1, 2, 5)
+    oov_rbf_C: float = 1.0
+    oov_rbf_gamma: float | Literal["scale", "auto"] = "scale"
 
     def __post_init__(self) -> None:
         if self.cv_n_splits < 2:
             raise ValueError("cv_n_splits must be >= 2")
         if not 0.0 < self.cv_test_size < 1.0:
             raise ValueError("cv_test_size must be in (0, 1)")
-        if not self.dt_max_depth_candidates:
-            raise ValueError("dt_max_depth_candidates must be non-empty")
-        if not self.dt_min_samples_leaf_candidates:
-            raise ValueError("dt_min_samples_leaf_candidates must be non-empty")
-        for leaf in self.dt_min_samples_leaf_candidates:
-            if int(leaf) < 1:
-                raise ValueError("dt_min_samples_leaf_candidates values must be >= 1")
+        if self.oov_rbf_C <= 0.0:
+            raise ValueError("oov_rbf_C must be > 0")
+        if isinstance(self.oov_rbf_gamma, (int, float)):
+            if float(self.oov_rbf_gamma) <= 0.0:
+                raise ValueError(
+                    "oov_rbf_gamma must be > 0 when a numeric value is used"
+                )
+        elif self.oov_rbf_gamma not in ("scale", "auto"):
+            raise ValueError(
+                'oov_rbf_gamma must be "scale", "auto", or a positive float'
+            )
 
 
 @dataclass

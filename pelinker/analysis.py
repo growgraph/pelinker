@@ -40,8 +40,6 @@ from sklearn.metrics import (
     roc_auc_score,
 )
 from sklearn.model_selection import StratifiedKFold
-from sklearn.svm import SVC
-from sklearn.tree import DecisionTreeClassifier
 from numpy.random import RandomState
 
 from pelinker.config import (
@@ -50,8 +48,14 @@ from pelinker.config import (
     NegativeScreenerConfig,
     TransformConfig,
 )
-from pelinker.manifold_oov_screener import ManifoldOovKind, oov_estimator_scores
-from pelinker.negative_screener import NegativeClassScreener
+from pelinker.manifold_oov_screener import (
+    ManifoldOovKind,
+    make_manifold_linear_svc,
+    make_manifold_rbf_svc,
+    oov_estimator_scores,
+    pick_manifold_oov_winner_by_mean_f1,
+)
+from pelinker.negative_screener import NegativeClassScreener, _linear_svc_for_embeddings
 from pelinker.transform import EmbeddingTransformer, compute_transform_artifacts
 
 
@@ -358,91 +362,80 @@ def evaluate_all_screeners_cv(
     )
     Xe = np.asarray(X_embed, dtype=np.float64)
     fold_pairs = list(splitter.split(Xe, y_i))
+    rs_emb = screener_cfg.cv_random_state
 
     oov_run = bool(oov_cfg.enabled) and X_manifold is not None
     Xm: np.ndarray | None = (
         np.asarray(X_manifold, dtype=np.float64) if oov_run else None
     )
     winner_kind_oov: ManifoldOovKind | str = "lda"
-    winner_dt: tuple[int | None, int] | None = None
-    dt_cell_f1s: dict[tuple[int | None, int], list[float]] = {}
 
     if oov_run and Xm is not None:
-        for d in list(oov_cfg.dt_max_depth_candidates):
-            for leaf in list(oov_cfg.dt_min_samples_leaf_candidates):
-                dt_cell_f1s[(d, int(leaf))] = []
         svm_oov_fold: list[float] = []
         lda_oov_fold: list[float] = []
+        rbf_oov_fold: list[float] = []
 
         for train_idx, test_idx in fold_pairs:
             Xtr_m, Xtst_m = Xm[train_idx], Xm[test_idx]
             ytr_m, ytst_m = y_i[train_idx], y_i[test_idx]
             if len(np.unique(ytst_m)) < 2:
                 continue
-            for d in list(oov_cfg.dt_max_depth_candidates):
-                for leaf in list(oov_cfg.dt_min_samples_leaf_candidates):
-                    dt = DecisionTreeClassifier(
-                        max_depth=d,
-                        min_samples_leaf=int(leaf),
-                        random_state=oov_cfg.cv_random_state,
-                    )
-                    dt.fit(Xtr_m.astype(np.float64), ytr_m)
-                    pred = dt.predict(Xtst_m.astype(np.float64))
-                    dt_cell_f1s[(d, int(leaf))].append(
-                        float(f1_score(ytst_m, pred, pos_label=1, zero_division=0))
-                    )
-            svm_est = SVC(kernel="linear", random_state=oov_cfg.cv_random_state)
-            svm_est.fit(Xtr_m.astype(np.float64), ytr_m)
+            xm64 = Xtr_m.astype(np.float64, copy=False)
+            xt64 = Xtst_m.astype(np.float64, copy=False)
+
+            lin_o = make_manifold_linear_svc(xm64, oov_cfg)
+            lin_o.fit(xm64, ytr_m)
             svm_oov_fold.append(
                 float(
                     f1_score(
                         ytst_m,
-                        svm_est.predict(Xtst_m.astype(np.float64)),
+                        lin_o.predict(xt64),
                         pos_label=1,
                         zero_division=0,
                     )
                 )
             )
+
+            rbf_o = make_manifold_rbf_svc(oov_cfg)
+            rbf_o.fit(xm64, ytr_m)
+            rbf_oov_fold.append(
+                float(
+                    f1_score(
+                        ytst_m,
+                        rbf_o.predict(xt64),
+                        pos_label=1,
+                        zero_division=0,
+                    )
+                )
+            )
+
             lda_est_o = LinearDiscriminantAnalysis(solver="svd")
-            lda_est_o.fit(Xtr_m.astype(np.float64), ytr_m)
+            lda_est_o.fit(xm64, ytr_m)
             lda_oov_fold.append(
                 float(
                     f1_score(
                         ytst_m,
-                        lda_est_o.predict(Xtst_m.astype(np.float64)),
+                        lda_est_o.predict(xt64),
                         pos_label=1,
                         zero_division=0,
                     )
                 )
             )
 
-        best_dt_mean = -1.0
-        best_dt_cell: tuple[int | None, int] | None = None
-        for (d, leaf), f1_list in dt_cell_f1s.items():
-            if not f1_list:
-                continue
-            arr = np.asarray(f1_list, dtype=np.float64)
-            m = float(np.mean(arr))
-            if m > best_dt_mean:
-                best_dt_mean = m
-                best_dt_cell = (d, int(leaf))
-
-        svm_m_o = float(np.mean(svm_oov_fold)) if svm_oov_fold else -1.0
-        lda_m_o = float(np.mean(lda_oov_fold)) if lda_oov_fold else -1.0
-
-        if best_dt_cell is None:
+        if not lda_oov_fold:
             oov_run = False
             Xm = None
-        elif best_dt_mean >= svm_m_o and best_dt_mean >= lda_m_o:
-            winner_kind_oov = "dt"
-            winner_dt = best_dt_cell
-        elif svm_m_o >= lda_m_o:
-            winner_kind_oov = "svm"
-            winner_dt = None
         else:
-            winner_kind_oov = "lda"
-            winner_dt = None
+            svm_m_o = float(np.mean(svm_oov_fold))
+            lda_m_o = float(np.mean(lda_oov_fold))
+            rbf_m_o = float(np.mean(rbf_oov_fold))
+            winner_kind_oov = pick_manifold_oov_winner_by_mean_f1(
+                lda_m_o, svm_m_o, rbf_m_o
+            )
 
+    embed_fold_rows: list[
+        tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]
+    ] = []
     pool_y_pooled: list[int] = []
     pool_lda_pooled: list[float] = []
     pool_svm_pooled: list[float] = []
@@ -455,12 +448,13 @@ def evaluate_all_screeners_cv(
         lda_emb = LinearDiscriminantAnalysis(solver="svd")
         lda_emb.fit(Xtr_e, ytr_e)
         sc_lda = np.asarray(lda_emb.transform(Xtst_e), dtype=np.float64).ravel()
-        svm_emb = SVC(kernel="linear")
+        svm_emb = _linear_svc_for_embeddings(Xtr_e, random_state=rs_emb)
         svm_emb.fit(Xtr_e, ytr_e)
         sc_svm = np.asarray(
             svm_emb.decision_function(Xtst_e),
             dtype=np.float64,
         ).ravel()
+        embed_fold_rows.append((train_idx, test_idx, ytst_e, sc_lda, sc_svm))
         for j in range(int(ytst_e.shape[0])):
             pool_y_pooled.append(int(ytst_e[j]))
             pool_lda_pooled.append(float(sc_lda[j]))
@@ -494,43 +488,26 @@ def evaluate_all_screeners_cv(
     oov_disabled = not oov_run or Xm is None
     oov_kind_disp: str = "disabled" if oov_disabled else str(winner_kind_oov)
 
-    for train_idx, test_idx in fold_pairs:
-        Xtr_e, Xtst_e = Xe[train_idx], Xe[test_idx]
-        ytr_e, ytst_e = y_i[train_idx], y_i[test_idx]
-        if len(np.unique(ytst_e)) < 2:
-            continue
-
-        lda_emb = LinearDiscriminantAnalysis(solver="svd")
-        lda_emb.fit(Xtr_e, ytr_e)
-        sc_lda = np.asarray(lda_emb.transform(Xtst_e), dtype=np.float64).ravel()
-        svm_emb = SVC(kernel="linear")
-        svm_emb.fit(Xtr_e, ytr_e)
-        sc_svm = np.asarray(
-            svm_emb.decision_function(Xtst_e),
-            dtype=np.float64,
-        ).ravel()
-
+    for train_idx, test_idx, ytst_e, sc_lda, sc_svm in embed_fold_rows:
         sb_scores = sc_lda if screener_best_kind == "lda" else sc_svm
 
         if not oov_disabled and Xm is not None:
             Xtr_m, Xtst_m = Xm[train_idx], Xm[test_idx]
-            if winner_kind_oov == "dt" and winner_dt is not None:
-                d, leaf = winner_dt
-                dt_w = DecisionTreeClassifier(
-                    max_depth=d,
-                    min_samples_leaf=int(leaf),
-                    random_state=oov_cfg.cv_random_state,
-                )
-                dt_w.fit(Xtr_m.astype(np.float64), ytr_e)
-                o_scores = oov_estimator_scores(dt_w, Xtst_m.astype(np.float64))
-            elif winner_kind_oov == "svm":
-                svm_w = SVC(kernel="linear", random_state=oov_cfg.cv_random_state)
-                svm_w.fit(Xtr_m.astype(np.float64), ytr_e)
-                o_scores = oov_estimator_scores(svm_w, Xtst_m.astype(np.float64))
+            ytr_e = y_i[train_idx]
+            xm_tr = Xtr_m.astype(np.float64, copy=False)
+            xm_ts = Xtst_m.astype(np.float64, copy=False)
+            if winner_kind_oov == "svm":
+                svm_w = make_manifold_linear_svc(xm_tr, oov_cfg)
+                svm_w.fit(xm_tr, ytr_e)
+                o_scores = oov_estimator_scores(svm_w, xm_ts)
+            elif winner_kind_oov == "rbf":
+                rbf_w = make_manifold_rbf_svc(oov_cfg)
+                rbf_w.fit(xm_tr, ytr_e)
+                o_scores = oov_estimator_scores(rbf_w, xm_ts)
             else:
                 lda_w = LinearDiscriminantAnalysis(solver="svd")
-                lda_w.fit(Xtr_m.astype(np.float64), ytr_e)
-                o_scores = oov_estimator_scores(lda_w, Xtst_m.astype(np.float64))
+                lda_w.fit(xm_tr, ytr_e)
+                o_scores = oov_estimator_scores(lda_w, xm_ts)
             mn_s = _minmax01_fold(sb_scores)
             mn_o = _minmax01_fold(o_scores)
             comb_scores = 0.5 * mn_s + 0.5 * mn_o
