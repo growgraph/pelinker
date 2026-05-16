@@ -3,15 +3,12 @@ from __future__ import annotations
 import math
 import pathlib
 from collections.abc import Callable, Iterable, Mapping, Sequence
-from typing import Literal
 
 import numpy as np
 import pandas as pd
 import torch
-import hdbscan
 from pelinker.clustering_grid import (
     aggregate_grid_metrics,
-    evaluate_cluster_size_grid,
     solve_optimal_min_cluster_size_from_aggregated,
 )
 from pelinker.plotting import (
@@ -24,7 +21,6 @@ from pelinker.reporting import (
     AllScreenerCvResult,
     BinaryClassifierMetrics,
     ClusteringFitMetrics,
-    ClusteringHyperparameters,
     MetricMeanStd,
     ModelSelectionReport,
     NegativeScreenerInSampleMetrics,
@@ -40,23 +36,23 @@ from sklearn.metrics import (
     roc_auc_score,
 )
 from sklearn.model_selection import StratifiedKFold
-from numpy.random import RandomState
 
 from pelinker.config import (
     ClusteringOptimizationConfig,
     ManifoldOovScreenerConfig,
     NegativeScreenerConfig,
-    TransformConfig,
 )
-from pelinker.manifold_oov_screener import (
+from pelinker.screener.projection_screener import (
     ManifoldOovKind,
     make_manifold_linear_svc,
     make_manifold_rbf_svc,
     oov_estimator_scores,
-    pick_manifold_oov_winner_by_mean_f1,
+    pick_projection_winner_by_mean_f1,
 )
-from pelinker.negative_screener import NegativeClassScreener, _linear_svc_for_embeddings
-from pelinker.transform import EmbeddingTransformer, compute_transform_artifacts
+from pelinker.screener.ambient_screener import (
+    NegativeClassScreener,
+    _linear_svc_for_embeddings,
+)
 
 
 def get_word_frequencies_from_library(
@@ -268,6 +264,40 @@ def split_by_negative_label(
     return neg_mask, manifold_df
 
 
+def _mention_quality_frame(
+    dfr: pd.DataFrame,
+    *,
+    neg_mask: np.ndarray,
+    cluster_kb: np.ndarray,
+    pca_residuals: np.ndarray,
+    pca_mahalanobis: np.ndarray,
+    pca_spectral_entropy: np.ndarray,
+    negative_label: str,
+) -> pd.DataFrame:
+    """Per-mention PCA quality and labels for all rows (KB clustered; negatives cluster=-1)."""
+    optional = [c for c in ("pmid", "mention") if c in dfr.columns]
+    out = dfr[["entity", *optional]].copy()
+    cluster_full = np.full(len(dfr), -1, dtype=np.int64)
+    cluster_full[~neg_mask] = np.asarray(cluster_kb, dtype=np.int64).ravel()
+    out["cluster"] = cluster_full
+    out["oov_label"] = entity_negative_label_mask_01(dfr["entity"], negative_label)
+    out["pca_residual"] = np.asarray(pca_residuals, dtype=np.float64).ravel()
+    out["pca_mahalanobis"] = np.asarray(pca_mahalanobis, dtype=np.float64).ravel()
+    out["pca_spectral_entropy"] = np.asarray(
+        pca_spectral_entropy, dtype=np.float64
+    ).ravel()
+    ordered = [
+        "entity",
+        *optional,
+        "cluster",
+        "oov_label",
+        "pca_residual",
+        "pca_mahalanobis",
+        "pca_spectral_entropy",
+    ]
+    return out[ordered]
+
+
 def _unified_cv_fold_count(y: np.ndarray, n_splits_requested: int) -> int | None:
     n0 = int(np.sum(y == 0))
     n1 = int(np.sum(y == 1))
@@ -429,7 +459,7 @@ def evaluate_all_screeners_cv(
             svm_m_o = float(np.mean(svm_oov_fold))
             lda_m_o = float(np.mean(lda_oov_fold))
             rbf_m_o = float(np.mean(rbf_oov_fold))
-            winner_kind_oov = pick_manifold_oov_winner_by_mean_f1(
+            winner_kind_oov = pick_projection_winner_by_mean_f1(
                 lda_m_o, svm_m_o, rbf_m_o
             )
 
@@ -592,7 +622,7 @@ def evaluate_all_screeners_cv(
     return result, datapoints
 
 
-def fit_negative_screener_with_metrics(
+def fit_ambient_screener_with_metrics(
     dfr: pd.DataFrame,
     config: NegativeScreenerConfig,
 ) -> tuple[NegativeClassScreener, NegativeScreenerInSampleMetrics | None]:
@@ -666,247 +696,6 @@ def compute_clustering_fit_metrics(
     )
 
 
-def estimate_clustering_from_frame(
-    dfr: pd.DataFrame,
-    transform_config: TransformConfig,
-    optimization_config: ClusteringOptimizationConfig | None = None,
-    *,
-    selected_labels: set[str] | None = None,
-    all_metrics_dfs: list[pd.DataFrame] | None = None,
-    aggregation_level: Literal["mention", "entity"] = "mention",
-) -> ModelSelectionReport | None:
-    """
-    Run clustering grid search and optional **accumulation** of per-sample grid tables.
-
-    When ``all_metrics_dfs`` is provided, each call appends this sample's ``metrics_df`` to
-    that list. The optimal ``min_cluster_size`` for the final HDBSCAN fit **on this sample**
-    is always the per-sample DBCV argmax on its own grid; run
-    :func:`pooled_min_cluster_size_from_metrics_dfs` after all samples to obtain one consensus
-    choice across bootstraps (for summaries, plots, and optional grid CSV markers).
-
-    ``aggregation_level="entity"`` expects one row per distinct ``entity`` (e.g. fused
-    KB vectors) and skips min-mention-per-entity trimming used for mention-level corpora.
-    """
-
-    config = optimization_config or ClusteringOptimizationConfig()
-
-    if "embed" not in dfr.columns or "entity" not in dfr.columns:
-        return None
-
-    if selected_labels is not None:
-        dfr = dfr.loc[dfr["entity"].isin(selected_labels)].copy()
-        if len(dfr) == 0:
-            return None
-
-    screener_cfg = config.negative_screener
-    neg_label = screener_cfg.negative_label
-
-    if aggregation_level == "mention":
-        mention_count = dfr["entity"].value_counts()
-        low_count_entities = mention_count[
-            ~(mention_count >= config.min_class_size)
-        ].index.to_list()
-        low_count_entities = [e for e in low_count_entities if e != neg_label]
-        dfr = dfr.loc[~dfr["entity"].isin(low_count_entities)].copy()
-        if len(dfr) == 0:
-            return None
-
-    _, dfr_manifold = split_by_negative_label(dfr, neg_label)
-    if len(dfr_manifold) == 0:
-        return None
-
-    number_properties = int(dfr_manifold["entity"].nunique())
-
-    embeddings_manifold = np.stack(dfr_manifold["embed"].values).astype(
-        np.float32, copy=False
-    )
-    transformer = EmbeddingTransformer(transform_config).fit(embeddings_manifold)
-
-    X_embed_full = np.stack(dfr["embed"].values).astype(np.float64, copy=False)
-    y_full = (dfr["entity"].astype(str).values == neg_label).astype(np.int64).ravel()
-    entity_full = dfr["entity"].astype(str).values
-    orig_idx_full = np.arange(len(dfr), dtype=np.int64)
-    manifold_oov_cfg = config.manifold_oov_screener
-    _uc, _uv, res_f, mah_f, ent_f = transformer.transform(
-        np.stack(dfr["embed"].values).astype(np.float32, copy=False)
-    )
-    X_manifold_full = np.column_stack(
-        [
-            np.asarray(res_f, dtype=np.float64),
-            np.asarray(mah_f, dtype=np.float64),
-            np.asarray(ent_f, dtype=np.float64),
-        ]
-    )
-    X_m_cv: np.ndarray | None = X_manifold_full if manifold_oov_cfg.enabled else None
-
-    unified = evaluate_all_screeners_cv(
-        X_embed=X_embed_full,
-        X_manifold=X_m_cv,
-        y=y_full,
-        entity=entity_full,
-        orig_idx=orig_idx_full,
-        screener_cfg=screener_cfg,
-        oov_cfg=manifold_oov_cfg,
-    )
-    all_screener_cv: AllScreenerCvResult | None = None
-    screener_oos_dp: PerDatapointScores | None = None
-    if unified is not None:
-        all_screener_cv, screener_oos_dp = unified
-
-    artifacts = compute_transform_artifacts(
-        dfr_manifold,
-        config=transform_config,
-        embed_column="embed",
-    )
-    umap_clustering_df = artifacts.umap_clustering_df()
-
-    sizes = list(
-        np.arange(
-            config.resolved_min_scale(),
-            config.max_scale,
-            config.clustering_grid_step,
-        )
-    )
-    metrics_df = evaluate_cluster_size_grid(
-        umap_clustering_df,
-        list(umap_clustering_df.columns),
-        sizes,
-    )
-    if len(metrics_df) == 0:
-        return None
-
-    if all_metrics_dfs is not None:
-        all_metrics_dfs.append(metrics_df)
-
-    best_idx = metrics_df["dbcv"].idxmax()
-    best_size = int(metrics_df.loc[best_idx, "min_cluster_size"])
-    best_score = float(metrics_df.loc[best_idx, "dbcv"])
-
-    clusterer = hdbscan.HDBSCAN(min_cluster_size=best_size, gen_min_span_tree=True)
-    labels = clusterer.fit_predict(artifacts.umap_clustering)
-    fit_metrics = compute_clustering_fit_metrics(
-        clusterer,
-        dfr_manifold,
-        min_cluster_size=best_size,
-        cluster_labels=labels,
-    )
-    assignments = dfr_manifold[["entity"]].copy()
-    for optional_col in ["pmid", "mention"]:
-        if optional_col in dfr_manifold.columns:
-            assignments[optional_col] = dfr_manifold[optional_col]
-    assignments["cluster"] = labels.astype(int, copy=False)
-
-    res_a = artifacts.pca_residuals
-    mah_a = artifacts.pca_mahalanobis
-    ent_a = artifacts.pca_spectral_entropy
-    y_neg = entity_negative_label_mask_01(dfr_manifold["entity"], neg_label)
-
-    return ModelSelectionReport(
-        hyperparameters=ClusteringHyperparameters(min_cluster_size=best_size),
-        best_score=best_score,
-        number_properties=number_properties,
-        n_clusters_emergent=fit_metrics.n_clusters_emergent,
-        metrics_df=metrics_df,
-        assignments=assignments,
-        pca_residuals=res_a,
-        pca_mahalanobis=mah_a,
-        pca_spectral_entropy=ent_a,
-        pca_residual_label_01=y_neg,
-        pca_mahalanobis_label_01=y_neg,
-        pca_spectral_entropy_label_01=y_neg,
-        umap_clustering=artifacts.umap_clustering,
-        umap_visualization=artifacts.umap_visualization,
-        pca_reduced=artifacts.pca_reduced,
-        all_screener_cv=all_screener_cv,
-        screener_oos_datapoints=screener_oos_dp,
-        ari=fit_metrics.ari,
-    )
-
-
-def estimate_model_clustering(
-    transform_config: TransformConfig,
-    optimization_config: ClusteringOptimizationConfig | None = None,
-    *,
-    file_path: pathlib.Path | None = None,
-    file_paths: Sequence[pathlib.Path] | None = None,
-    dfr: pd.DataFrame | None = None,
-    selected_labels: set[str] | None = None,
-    all_metrics_dfs: list[pd.DataFrame] | None = None,
-    embedding_read_status: Callable[[str], None] | None = None,
-    show_embedding_read_progress: bool = False,
-):
-    """
-    Estimate optimal cluster size from parquet file(s) or a preloaded DataFrame.
-
-    Provide exactly one of ``file_path``, ``file_paths``, or ``dfr``. For multiple parquets,
-    rows are inner-joined on (pmid, entity, mention) and ``embed`` vectors are concatenated
-    in path order (must match ``EmbeddingModelMetadata.sources``). Sampling ``frac`` /
-    ``n_embedding_batches`` are applied while loading each file (batches), then ``frac`` is applied
-    once on the merged
-    mention-level frame.
-
-    Args:
-        transform_config: TransformConfig instance specifying transformation parameters
-        optimization_config: Clustering optimization settings. If None, defaults
-            to ClusteringOptimizationConfig().
-        file_path: Single parquet path (backward-compatible entry point).
-        file_paths: Multiple parquets to fuse at mention level before clustering.
-        dfr: Optional pre-built frame (e.g. fused) with ``entity`` and ``embed`` columns.
-        selected_labels: Optional set of labels from selected labels KB to filter by
-        all_metrics_dfs: Optional mutable list that receives each sample's grid ``DataFrame``
-            (for a pooled choice after the batch via :func:`pooled_min_cluster_size_from_metrics_dfs`).
-        embedding_read_status: Callback for embedding parquet batch progress lines
-            (e.g. append to an existing Rich ``Progress`` task description).
-        show_embedding_read_progress: When True and ``embedding_read_status`` is omitted,
-            show a transient Rich progress display while loading parquet batches.
-
-    Returns:
-        ClusteringReport or None if processing failed
-    """
-    config = optimization_config or ClusteringOptimizationConfig()
-    rns: RandomState = config.rns
-
-    sources = [file_path is not None, file_paths is not None, dfr is not None]
-    if sum(bool(x) for x in sources) != 1:
-        raise ValueError(
-            "Provide exactly one of file_path=, file_paths=, or dfr= to estimate_model_clustering"
-        )
-
-    frame: pd.DataFrame | None
-    if dfr is not None:
-        frame = dfr.copy()
-    else:
-        if file_paths is not None:
-            paths = list(file_paths)
-        else:
-            assert file_path is not None
-            paths = [file_path]
-        if len(paths) == 0:
-            return None
-        frame = concat_mention_level_embedding_sources(
-            paths,
-            batch_size=config.batch_size,
-            n_embedding_batches=config.n_embedding_batches,
-            read_status=embedding_read_status,
-            show_read_progress=show_embedding_read_progress,
-        )
-        if frame is None or len(frame) == 0:
-            return None
-
-    frame = frame.sample(frac=config.frac, random_state=rns, replace=False)
-    if len(frame) == 0:
-        return None
-
-    return estimate_clustering_from_frame(
-        frame,
-        transform_config,
-        optimization_config=config,
-        selected_labels=selected_labels,
-        all_metrics_dfs=all_metrics_dfs,
-        aggregation_level="mention",
-    )
-
-
 def mention_frame_from_embedding_paths(
     paths: Sequence[pathlib.Path],
     *,
@@ -915,8 +704,8 @@ def mention_frame_from_embedding_paths(
     show_read_progress: bool = False,
 ) -> pd.DataFrame | None:
     """
-    Load mention-level rows from parquet file(s) like ``estimate_model_clustering``
-    (batched read, optional multi-source inner join on keys), without ``frac`` subsampling.
+    Load mention-level rows from parquet file(s) like :func:`~pelinker.selection.load_selection_frame`
+    (batched read, optional multi-source inner join on keys), without subsampling.
     """
     cfg = optimization_config or ClusteringOptimizationConfig()
     return concat_mention_level_embedding_sources(
@@ -936,7 +725,7 @@ def drop_entities_with_few_mentions(
 ) -> pd.DataFrame:
     """
     Drop entities with fewer than ``min_mentions_per_entity`` rows (same rule as
-    ``estimate_clustering_from_frame`` with ``aggregation_level='mention'``).
+    :func:`~pelinker.selection.load_selection_frame` / mention-level selection eval).
 
     When ``negative_label`` is set, that label is never dropped for low mention count
     (so thin negative tails remain for screener training).

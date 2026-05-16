@@ -68,3 +68,8 @@ def test_clustering_optimization_resolved_min_scale_explicit() -> None:
 def test_clustering_optimization_rejects_max_below_resolved_min() -> None:
     with pytest.raises(ValueError, match="max_scale must be >="):
         ClusteringOptimizationConfig(min_class_size=20, min_scale=50, max_scale=40)
+
+
+def test_clustering_optimization_rejects_invalid_eval_max_rows() -> None:
+    with pytest.raises(ValueError, match="eval_max_rows"):
+        ClusteringOptimizationConfig(eval_max_rows=0)

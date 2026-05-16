@@ -217,12 +217,16 @@ class LinkerFitConfig:
     """Minimum mention rows per KB ``entity`` before training (negative label exempt)."""
     batch_size: int = 1000
     n_embedding_batches: int | None = None
-    negative_screener: NegativeScreenerConfig = field(
+    ambient_screener: NegativeScreenerConfig = field(
         default_factory=NegativeScreenerConfig
     )
-    manifold_oov_screener: ManifoldOovScreenerConfig = field(
+    projection_screener: ManifoldOovScreenerConfig = field(
         default_factory=ManifoldOovScreenerConfig
     )
+    diagnostics_sample_size: int = 20_000
+    """Max rows of :class:`~pelinker.reporting.LinkerFitDiagnostics` stored on the fit report."""
+    diagnostics_random_state: int = 0
+    """Stratified subsample seed for training diagnostics."""
 
     def __post_init__(self) -> None:
         if self.min_class_size < 1:
@@ -231,6 +235,8 @@ class LinkerFitConfig:
             raise ValueError("batch_size must be >= 1")
         if self.n_embedding_batches is not None and self.n_embedding_batches < 1:
             raise ValueError("n_embedding_batches must be >= 1 when provided")
+        if self.diagnostics_sample_size < 1:
+            raise ValueError("diagnostics_sample_size must be >= 1")
 
 
 @dataclass
@@ -250,7 +256,11 @@ class ClusteringOptimizationConfig:
     clustering_grid_step: int = 5
     """Step between consecutive ``min_cluster_size`` values on the grid (``numpy.arange`` step)."""
     rns: RandomState = field(default_factory=lambda: RandomState(seed=13))
+    base_seed: int = 13
+    """Seed for stratified selection draws; per-bootstrap seed is ``base_seed + sample_index``."""
     frac: float = 1.0
+    eval_max_rows: int | None = 100_000
+    """Cap rows per selection draw after frac (stratified). None = no cap beyond frac."""
     n_embedding_batches: int | None = None
     """Cap parquet reads at this many batches (`batch_size` rows each); None = read all."""
     batch_size: int = 1000
@@ -265,11 +275,11 @@ class ClusteringOptimizationConfig:
     """Plateau threshold on the **smoothed** curve: ``y_min + this * (y_max - y_min)`` (finite values only)."""
     grid_derivative_rel_tol: float = 0.12
     """|df/dx| below this times max|df/dx| counts as “derivative near zero” on the smoothed curve."""
-    negative_screener: NegativeScreenerConfig = field(
+    ambient_screener: NegativeScreenerConfig = field(
         default_factory=NegativeScreenerConfig
     )
     """Negative-class screening before PCA→UMAP (see :class:`NegativeScreenerConfig`)."""
-    manifold_oov_screener: ManifoldOovScreenerConfig = field(
+    projection_screener: ManifoldOovScreenerConfig = field(
         default_factory=ManifoldOovScreenerConfig
     )
     """Validation config for manifold OOV model selection (analysis reporting only)."""
@@ -296,6 +306,8 @@ class ClusteringOptimizationConfig:
             raise ValueError("batch_size must be >= 1")
         if not 0 < self.frac <= 1:
             raise ValueError("frac must be in range (0, 1]")
+        if self.eval_max_rows is not None and self.eval_max_rows < 1:
+            raise ValueError("eval_max_rows must be >= 1 when provided")
         if self.n_embedding_batches is not None and self.n_embedding_batches < 1:
             raise ValueError("n_embedding_batches must be >= 1 when provided")
         if not self.optimization_method:

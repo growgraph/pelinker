@@ -7,12 +7,13 @@ from click.testing import CliRunner
 
 from pelinker.cli import link_files
 from pelinker.model import Linker, LinkerPredictResult
-from pelinker.negative_screener import NegativeClassScreener
+from pelinker.screener.ambient_screener import NegativeClassScreener
 from pelinker.onto import MentionCandidate, NEGATIVE_LABEL, WordGrouping
 from pelinker.transform import (
     EmbeddingTransformer,
     TransformConfig,
     compute_transform_artifacts,
+    score_transform_artifacts,
 )
 
 
@@ -123,6 +124,58 @@ def test_compute_transform_artifacts_exposes_pca_metric_arrays() -> None:
     assert (artifacts.pca_spectral_entropy >= 0.0).all()
 
 
+def test_score_transform_artifacts_matches_compute_pca_metrics() -> None:
+    rng = np.random.default_rng(2)
+    df = pd.DataFrame(
+        {
+            "embed": [row for row in rng.normal(size=(10, 6)).astype(np.float32)],
+        }
+    )
+    cfg = TransformConfig(pca_components=3, umap_components=2, umap_viz_components=2)
+    fitted = compute_transform_artifacts(df, config=cfg)
+    emb = np.stack(df["embed"].values).astype(np.float32, copy=False)
+    transformer = EmbeddingTransformer(cfg).fit(emb)
+    scored = score_transform_artifacts(df, transformer, include_umap=True)
+
+    np.testing.assert_allclose(scored.pca_residuals, fitted.pca_residuals)
+    np.testing.assert_allclose(scored.pca_mahalanobis, fitted.pca_mahalanobis)
+    np.testing.assert_allclose(scored.pca_spectral_entropy, fitted.pca_spectral_entropy)
+
+
+def test_score_transform_artifacts_is_stable_for_same_transformer() -> None:
+    rng = np.random.default_rng(4)
+    df = pd.DataFrame(
+        {"embed": [row for row in rng.normal(size=(10, 6)).astype(np.float32)]}
+    )
+    cfg = TransformConfig(pca_components=3, umap_components=2, umap_viz_components=2)
+    emb = np.stack(df["embed"].values).astype(np.float32, copy=False)
+    transformer = EmbeddingTransformer(cfg).fit(emb)
+    a = score_transform_artifacts(df, transformer, include_umap=True)
+    b = score_transform_artifacts(df, transformer, include_umap=True)
+
+    np.testing.assert_allclose(a.pca_residuals, b.pca_residuals)
+    np.testing.assert_allclose(a.pca_mahalanobis, b.pca_mahalanobis)
+    np.testing.assert_allclose(a.pca_spectral_entropy, b.pca_spectral_entropy)
+
+
+def test_score_transform_artifacts_scores_extra_rows_without_umap() -> None:
+    rng = np.random.default_rng(3)
+    fit_df = pd.DataFrame(
+        {"embed": [row for row in rng.normal(size=(8, 5)).astype(np.float32)]}
+    )
+    score_df = pd.DataFrame(
+        {"embed": [row for row in rng.normal(size=(12, 5)).astype(np.float32)]}
+    )
+    cfg = TransformConfig(pca_components=3, umap_components=2, umap_viz_components=2)
+    emb_fit = np.stack(fit_df["embed"].values).astype(np.float32, copy=False)
+    transformer = EmbeddingTransformer(cfg).fit(emb_fit)
+    scored = score_transform_artifacts(score_df, transformer, include_umap=False)
+
+    assert scored.pca_residuals.shape == (12,)
+    assert scored.umap_clustering.shape == (12, 0)
+    assert scored.umap_visualization.shape == (12, 0)
+
+
 class _DummyTransformer:
     class _UmapStub:
         n_components = 2
@@ -177,9 +230,9 @@ def test_predict_with_clustering_adds_anomaly_metrics(monkeypatch) -> None:
     assert "pca_residual" in out[0]
     assert "pca_mahalanobis" in out[0]
     assert "pca_spectral_entropy" in out[0]
-    assert "manifold_oov_score" in out[0]
+    assert "projection_score" in out[0]
     assert "anomaly_score_max_z" in out[0]
-    assert np.isnan(float(out[0]["manifold_oov_score"]))
+    assert np.isnan(float(out[0]["projection_score"]))
 
 
 def test_predict_with_clustering_respects_cluster_probability_threshold(

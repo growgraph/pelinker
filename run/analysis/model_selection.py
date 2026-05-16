@@ -20,9 +20,14 @@ from rich.progress import (
 from rich.table import Table
 
 from pelinker.analysis import (
-    estimate_model_clustering,
     metrics_df_with_grid_sample_columns,
     pooled_min_cluster_size_from_metrics_dfs,
+)
+from pelinker.sampling import draw_selection_sample
+from pelinker.selection import (
+    evaluate_selection_from_paths,
+    evaluate_selection_sample,
+    load_selection_frame,
 )
 from pelinker.clustering_fusion_ranking import (
     singleton_items_by_dbcv_score,
@@ -55,6 +60,7 @@ from pelinker.plotting import (
     plot_heatmap,
     plot_metrics,
     plot_metrics_with_error_bars,
+    plot_pca_quality_pairgrid,
     plot_roc_comparison,
     plot_screener_oov_bar,
     plot_umap_viz,
@@ -76,6 +82,8 @@ from pelinker.reporting import (
 )
 from pelinker.transform import TransformConfig
 
+id_columns = ["model", "layer", "sample_idx", "min_cluster_size"]
+
 
 def _path_by_model_layer(
     valid_files: list[tuple[pathlib.Path, str, str]],
@@ -91,6 +99,7 @@ def _clustering_optimization_config_for_run(
     clustering_grid_step: int,
     seed: int,
     frac: float,
+    eval_max_rows: int | None,
     n_embedding_batches: int | None,
     batch_size: int,
     negative_label: str,
@@ -104,11 +113,13 @@ def _clustering_optimization_config_for_run(
         min_scale=min_scale,
         clustering_grid_step=clustering_grid_step,
         rns=RandomState(seed=seed),
+        base_seed=seed,
         frac=frac,
+        eval_max_rows=eval_max_rows,
         n_embedding_batches=n_embedding_batches,
         batch_size=batch_size,
         optimization_method="mean",
-        negative_screener=ns,
+        ambient_screener=ns,
     )
 
 
@@ -168,6 +179,45 @@ def _recompute_leaderboard_from_results(
     return best_overall_score, best_overall_model, best_overall_layer, best_per_model
 
 
+def _validated_oov_label_series(
+    df: pd.DataFrame,
+    *,
+    source_name: str,
+) -> pd.Series:
+    if "oov_label" not in df.columns:
+        raise ValueError(f"{source_name}: missing required 'oov_label' column")
+
+    raw = pd.to_numeric(df["oov_label"], errors="coerce")
+    if raw.isna().any():
+        raise ValueError(f"{source_name}: oov_label contains non-numeric or NaN values")
+
+    vals = raw.astype(np.int64)
+    uniq = set(vals.unique().tolist())
+    if not uniq.issubset({0, 1}):
+        raise ValueError(
+            f"{source_name}: oov_label must be binary {{0,1}}; got {sorted(uniq)}"
+        )
+
+    n_neg = int((vals == 1).sum())
+    n_pos = int((vals == 0).sum())
+    if n_neg == 0 or n_pos == 0:
+        raise ValueError(
+            f"{source_name}: trivial oov_label mask (n_negative={n_neg}, n_positive={n_pos})"
+        )
+    return vals
+
+
+def _with_validated_class_label(
+    df: pd.DataFrame,
+    *,
+    source_name: str,
+) -> pd.DataFrame:
+    out = df.copy()
+    oov = _validated_oov_label_series(out, source_name=source_name)
+    out["class_label"] = np.where(oov == 1, "negative", "positive")
+    return out
+
+
 def _materialize_best_report(
     top: ClusteringSearchSummaryRow,
     *,
@@ -183,7 +233,7 @@ def _materialize_best_report(
             ordered_paths = _ordered_paths_for_fusion(path_by_ml, members)
         except KeyError:
             return None
-        return estimate_model_clustering(
+        return evaluate_selection_from_paths(
             transform_config=transform_config,
             optimization_config=optimization_config,
             file_paths=ordered_paths,
@@ -195,7 +245,7 @@ def _materialize_best_report(
     path = path_by_ml.get(key)
     if path is None:
         return None
-    return estimate_model_clustering(
+    return evaluate_selection_from_paths(
         transform_config=transform_config,
         optimization_config=optimization_config,
         file_path=path,
@@ -212,9 +262,32 @@ def _fine_clustering_metadata_df(
     layer: str,
     sample_idx: int,
 ) -> pd.DataFrame:
-    """Per-sample clustering assignments for downstream analysis."""
+    """Per-sample clustering assignments and PCA quality for downstream analysis."""
     cols = ["model", "layer", "sample_idx", "entity", "cluster"]
     optional_cols = ["pmid", "mention"]
+    quality_cols = [
+        "pca_residual",
+        "pca_mahalanobis",
+        "pca_spectral_entropy",
+        "oov_label",
+    ]
+
+    mq = report.mention_quality
+    if mq is not None and not mq.empty:
+        present_optional = [c for c in optional_cols if c in mq.columns]
+        keep = [
+            c
+            for c in ["entity", "cluster", *present_optional, *quality_cols]
+            if c in mq.columns
+        ]
+        if "entity" not in keep or "cluster" not in keep:
+            return pd.DataFrame(columns=cols + present_optional + quality_cols)
+        out = mq[keep].copy()
+        out.insert(0, "sample_idx", sample_idx)
+        out.insert(0, "layer", layer)
+        out.insert(0, "model", model)
+        return out
+
     present_optional = [c for c in optional_cols if c in report.assignments.columns]
     keep = [
         c
@@ -236,18 +309,11 @@ def _fine_clustering_metadata_df(
         out["pca_spectral_entropy"] = np.asarray(
             report.pca_spectral_entropy, dtype=np.float64
         )
-    if len(report.pca_residual_label_01) == n:
-        out["pca_residual_label_01"] = np.asarray(
-            report.pca_residual_label_01, dtype=np.int64
+    if len(report.oov_label) != n:
+        raise ValueError(
+            f"fine metadata labels length mismatch: len(oov_label)={len(report.oov_label)} vs n_rows={n}"
         )
-    if len(report.pca_mahalanobis_label_01) == n:
-        out["pca_mahalanobis_label_01"] = np.asarray(
-            report.pca_mahalanobis_label_01, dtype=np.int64
-        )
-    if len(report.pca_spectral_entropy_label_01) == n:
-        out["pca_spectral_entropy_label_01"] = np.asarray(
-            report.pca_spectral_entropy_label_01, dtype=np.int64
-        )
+    out["oov_label"] = np.asarray(report.oov_label, dtype=np.int64)
     return out
 
 
@@ -272,9 +338,7 @@ def _dedupe_per_sample_grid(df: pd.DataFrame) -> pd.DataFrame:
     ordered = [c for c in grid_cols if c in df.columns]
     tail = [c for c in df.columns if c not in ordered]
     out = df[ordered + tail]
-    dup_subset = [c for c in grid_cols if c in out.columns]
-    if dup_subset:
-        out = out.drop_duplicates(subset=dup_subset, keep="last")
+    out = out.drop_duplicates(subset=id_columns, keep="last")
     return out
 
 
@@ -502,23 +566,68 @@ class SummaryFigureRenderResult:
     skipped_messages: tuple[str, ...]
 
 
+def _summary_plot_path(report_path: pathlib.Path, stem: str) -> pathlib.Path:
+    """Canonical summary figure path (PNG stem); plotting writes PNG+PDF siblings."""
+    return report_path / f"{stem}.png"
+
+
+def _per_combo_metrics_from_grid(
+    df_grid: pd.DataFrame,
+) -> dict[tuple[str, str], tuple[list[pd.DataFrame], float | None]]:
+    """
+    Reconstruct per-combination metrics lists from the persisted per-sample grid CSV.
+
+    Returns a mapping of (model, layer) → (metrics_list, chosen_min_cluster_size) where
+    ``metrics_list`` is a list of DataFrames (one per sample_idx), each containing
+    ``min_cluster_size``, ``dbcv``, ``ari``, ``n_clusters`` — exactly what
+    ``plot_metrics`` / ``plot_metrics_with_error_bars`` expect.
+    """
+    metric_cols = [
+        c
+        for c in ("min_cluster_size", "dbcv", "ari", "n_clusters", "icm")
+        if c in df_grid.columns
+    ]
+    if "min_cluster_size" not in metric_cols or "dbcv" not in metric_cols:
+        return {}
+
+    out: dict[tuple[str, str], tuple[list[pd.DataFrame], float | None]] = {}
+    for (model, layer), combo_df in df_grid.groupby(["model", "layer"], sort=False):
+        mcs_val: float | None = None
+        if GRID_COL_CHOSEN_MIN_CLUSTER_SIZE in combo_df.columns:
+            vals = combo_df[GRID_COL_CHOSEN_MIN_CLUSTER_SIZE].dropna()
+            if not vals.empty:
+                mcs_val = float(vals.iloc[0])
+
+        metrics_list: list[pd.DataFrame] = []
+        for _sidx, sample_df in combo_df.groupby("sample_idx", sort=True):
+            metrics_list.append(sample_df[metric_cols].reset_index(drop=True))
+
+        if metrics_list:
+            out[(str(model), str(layer))] = (metrics_list, mcs_val)
+    return out
+
+
 def render_model_selection_summary_figures(
     report_path: pathlib.Path,
     *,
     checkpoint_path: pathlib.Path | None = None,
     grid_csv_path: pathlib.Path | None = None,
     fine_screener_eval_path: pathlib.Path | None = None,
+    fine_metadata_path: pathlib.Path | None = None,
 ) -> SummaryFigureRenderResult:
     """
-    Regenerate aggregate model-selection PNGs from on-disk artifacts (no parquet re-load).
+    Regenerate aggregate model-selection figures from on-disk artifacts (no parquet re-load).
 
     Uses the checkpoint summaries for score heatmaps and AUC panels, the optional
-    per-sample grid CSV for the DBCV vs ARI scatter, and gzipped JSON Lines
-    ``fine_screener_eval.jsonl.gz`` for ROC comparison when present.
+    per-sample grid CSV for the DBCV vs ARI scatter, gzipped JSON Lines
+    ``fine_screener_eval.jsonl.gz`` for ROC comparison, and
+    ``fine_metadata.jsonl.gz`` for the PCA quality pair grid.
 
-    Writes the same filenames as ``model_selection`` end-of-run: ``model.perf.heatmap.png``,
-    ``model.*.heatmap.png`` (scores, ARI, screener LDA/SVM/best, OOV, combined),
-    ``model.screener_oov_auc.png``, ``model.roc_curves.png``, ``model.dbcv_vs_ari.png``.
+    Writes the same PNG filenames as ``model_selection`` end-of-run and corresponding
+    PDF siblings: ``model.perf.heatmap.png``, ``model.*.heatmap.png`` (scores, ARI,
+    screener LDA/SVM/best, OOV, combined), ``model.screener_oov_auc.png``,
+    ``model.roc_curves.png``, ``model.dbcv_vs_ari.png``,
+    ``model.pca_quality_pairgrid.png``.
     """
     report_path = report_path.expanduser()
     ckpt_file = (
@@ -536,6 +645,11 @@ def render_model_selection_summary_figures(
         if fine_screener_eval_path
         else report_path / FINE_SCREENER_EVAL_BASENAME
     )
+    fm_path = (
+        fine_metadata_path.expanduser()
+        if fine_metadata_path
+        else report_path / CLUSTERING_SEARCH_FINE_METADATA_BASENAME
+    )
 
     written: list[pathlib.Path] = []
     skipped: list[str] = []
@@ -543,13 +657,30 @@ def render_model_selection_summary_figures(
     df_grid_detail = _read_optional_csv(detail_path)
     if df_grid_detail is not None and not df_grid_detail.empty:
         df_grid_detail = _dedupe_per_sample_grid(df_grid_detail)
-        scatter_path = report_path / "model.dbcv_vs_ari.png"
+
+        scatter_path = _summary_plot_path(report_path, "model.dbcv_vs_ari")
         if plot_dbcv_vs_ari_from_grid(df_grid_detail, scatter_path):
             written.append(scatter_path)
         else:
             skipped.append(
                 "DBCV vs ARI scatter: insufficient grid columns or no ARI data"
             )
+
+        # Per-combination metric plots (DBCV / ARI / n_clusters vs min_cluster_size).
+        combo_metrics = _per_combo_metrics_from_grid(df_grid_detail)
+        for (model, layer), (metrics_list, chosen_mcs) in combo_metrics.items():
+            safe_layer = layer.replace("/", "_").replace("+", "__")
+            if len(metrics_list) > 1:
+                out_p = report_path / f"{model}_{safe_layer}_error_bars.png"
+                plot_metrics_with_error_bars(
+                    metrics_list,
+                    out_p,
+                    chosen_min_cluster_size=chosen_mcs,
+                )
+            else:
+                out_p = report_path / f"{model}_{safe_layer}.png"
+                plot_metrics(metrics_list[0], out_p)
+            written.append(out_p)
     else:
         skipped.append(f"Grid CSV missing or empty: {detail_path}")
 
@@ -587,7 +718,7 @@ def render_model_selection_summary_figures(
     df_heatmap = df_results[~df_results["model"].isin(["fusion2", "fusion3"])].copy()
 
     if len(df_heatmap) > 0:
-        heatmap_path = report_path / "model.perf.heatmap.png"
+        heatmap_path = _summary_plot_path(report_path, "model.perf.heatmap")
         plot_heatmap(
             df_heatmap, heatmap_path, metric="best_score", metric_label="Best Score"
         )
@@ -597,7 +728,7 @@ def render_model_selection_summary_figures(
 
     if len(df_heatmap) > 0:
         if "ari" in df_heatmap.columns and df_heatmap["ari"].notna().any():
-            ari_heatmap_path = report_path / "model.ari.heatmap.png"
+            ari_heatmap_path = _summary_plot_path(report_path, "model.ari.heatmap")
             plot_heatmap(
                 df_heatmap,
                 ari_heatmap_path,
@@ -655,7 +786,7 @@ def render_model_selection_summary_figures(
             "Screener LDA/SVM/best, OOV, combined AUC heatmaps: no singleton rows"
         )
 
-    bar_path = report_path / "model.screener_oov_auc.png"
+    bar_path = _summary_plot_path(report_path, "model.screener_oov_auc")
     if plot_screener_oov_bar(df_heatmap, bar_path):
         written.append(bar_path)
     else:
@@ -671,11 +802,11 @@ def render_model_selection_summary_figures(
             and "combined_auc_mean" in df_results.columns
         ):
             top_df = df_results.dropna(subset=["combined_auc_mean"]).nlargest(
-                5,
+                3,
                 "combined_auc_mean",
             )
             top_keys_top = top_df["combo_key"].astype(str).drop_duplicates().tolist()
-            roc_out = report_path / "model.roc_curves.png"
+            roc_out = _summary_plot_path(report_path, "model.roc_curves")
             if plot_roc_comparison(roc_df, roc_out, combo_keys=top_keys_top):
                 written.append(roc_out)
             else:
@@ -688,6 +819,24 @@ def render_model_selection_summary_figures(
             )
     else:
         skipped.append(f"ROC curves: file missing {screener_path}")
+
+    fm = _read_optional_jsonl_gzip(fm_path)
+    if fm is not None and not fm.empty:
+        fm_plot = _with_validated_class_label(
+            fm,
+            source_name=f"summary figures ({fm_path})",
+        )
+        pca_pair_path = _summary_plot_path(report_path, "model.pca_quality_pairgrid")
+        if plot_pca_quality_pairgrid(fm_plot, pca_pair_path, class_col="class_label"):
+            written.append(pca_pair_path)
+        else:
+            skipped.append(
+                "PCA quality pair grid: missing pca_residual/pca_spectral_entropy/pca_mahalanobis columns"
+            )
+    else:
+        skipped.append(
+            f"PCA quality pair grid: fine metadata missing or empty: {fm_path}"
+        )
 
     return SummaryFigureRenderResult(
         written_paths=tuple(written),
@@ -750,6 +899,16 @@ def _json_ready_flat_row(row: ClusteringSearchSummaryRow) -> dict[str, object]:
     type=click.FLOAT,
     default=0.1,
     help="Fraction of dataset to sample",
+)
+@click.option(
+    "--eval-max-rows",
+    type=click.INT,
+    default=100_000,
+    show_default=True,
+    help=(
+        "Stratified cap on mention rows per bootstrap draw (after --frac). "
+        "Pass 0 to disable the cap (frac only)."
+    ),
 )
 @click.option(
     "--n-embedding-batches",
@@ -872,6 +1031,7 @@ def main(
     min_class_size: int,
     seed: int,
     frac: float,
+    eval_max_rows: int,
     n_embedding_batches: int | None,
     batch_size: int,
     n_sample: int,
@@ -896,7 +1056,8 @@ def main(
     After scoring each (model, layer) alone (mean DBCV as ``best_score``), optionally
     evaluates fused embeddings: pairs/triples with the highest sum of singleton DBCV
     scores (see ``--fusion-pairs`` / ``--fusion-triples``), then clusters the
-    concatenated mention-level vectors via ``estimate_model_clustering(..., file_paths=...)``.
+    concatenated mention-level vectors via :func:`~pelinker.selection.load_selection_frame`
+    and per-bootstrap :func:`~pelinker.selection.evaluate_selection_sample`.
 
     Checkpointing is on by default (``--resume``): progress is saved under ``--report-path``.
     Use ``--no-resume`` to discard the on-disk checkpoint and start from an empty state.
@@ -931,6 +1092,10 @@ def main(
             console.print(f"[red]Error loading selected labels KB: {e}[/red]")
             return
 
+    eval_max_rows_resolved: int | None = (
+        None if eval_max_rows <= 0 else int(eval_max_rows)
+    )
+
     report_path = report_path.expanduser()
     report_path.mkdir(parents=True, exist_ok=True)
     detail_path = report_path / CLUSTERING_SEARCH_GRID_PER_SAMPLE_CSV_BASENAME
@@ -952,6 +1117,7 @@ def main(
         min_class_size=min_class_size,
         seed=seed,
         frac=frac,
+        eval_max_rows=eval_max_rows_resolved,
         n_embedding_batches=n_embedding_batches,
         batch_size=batch_size,
         prefix=prefix,
@@ -1122,15 +1288,42 @@ def main(
                     clustering_grid_step=clustering_grid_step,
                     seed=seed,
                     frac=frac,
+                    eval_max_rows=eval_max_rows_resolved,
                     n_embedding_batches=n_embedding_batches,
                     batch_size=batch_size,
                     negative_label=negative_label,
                     screener_kind=screener_kind,
                 )
 
+                status_parts_base = [
+                    f"[cyan]{model}[/cyan]/[yellow]{layer}[/yellow]",
+                ]
+                try:
+                    base_frame = load_selection_frame(
+                        file_path=file_path,
+                        config=optimization_config,
+                        selected_labels=selected_labels,
+                        embedding_read_status=lambda m, sp=status_parts_base: (
+                            progress.update(
+                                task,
+                                description=" | ".join([*sp, m]),
+                            )
+                        ),
+                    )
+                except Exception as e:
+                    base_frame = None
+                    console.print(
+                        "[yellow]Skipping combo (load failed)[/yellow] "
+                        f"{model}/{layer}: {e}"
+                    )
+
+                if base_frame is None:
+                    progress.advance(task, advance=n_sample)
+                    continue
+
                 for sample_idx in range(n_sample):
                     status_parts = [
-                        f"[cyan]{model}[/cyan]/[yellow]{layer}[/yellow]",
+                        *status_parts_base,
                         f"sample {sample_idx + 1}/{n_sample}",
                     ]
                     if best_overall_score is not None:
@@ -1145,18 +1338,16 @@ def main(
                     progress.update(task, description=" | ".join(status_parts))
 
                     try:
-                        report = estimate_model_clustering(
-                            transform_config=transform_config,
+                        sample_frame = draw_selection_sample(
+                            base_frame,
+                            optimization_config,
+                            sample_index=sample_idx,
+                        )
+                        report = evaluate_selection_sample(
+                            sample_frame,
+                            transform_config,
                             optimization_config=optimization_config,
-                            file_path=file_path,
-                            selected_labels=selected_labels,
                             all_metrics_dfs=all_metrics_dfs,
-                            embedding_read_status=lambda m, sp=status_parts: (
-                                progress.update(
-                                    task,
-                                    description=" | ".join([*sp, m]),
-                                )
-                            ),
                         )
                     except Exception as e:
                         report = None
@@ -1369,33 +1560,57 @@ def main(
                         clustering_grid_step=clustering_grid_step,
                         seed=seed,
                         frac=frac,
+                        eval_max_rows=eval_max_rows_resolved,
                         n_embedding_batches=n_embedding_batches,
                         batch_size=batch_size,
                         negative_label=negative_label,
                         screener_kind=screener_kind,
                     )
 
+                    fusion_status_base = (
+                        f"[cyan]{model_label}[/cyan] "
+                        f"[yellow]{layer_label}[/yellow] "
+                        f"(mean singles≈{sum_proxy / len(paths):.3f})"
+                    )
+                    try:
+                        fusion_base_frame = load_selection_frame(
+                            file_paths=ordered_paths,
+                            config=optimization_config,
+                            selected_labels=selected_labels,
+                            embedding_read_status=lambda m, fs=fusion_status_base: (
+                                fusion_progress.update(
+                                    ftask,
+                                    description=f"{fs} | [dim]{m}[/dim]",
+                                )
+                            ),
+                        )
+                    except Exception as e:
+                        fusion_base_frame = None
+                        console.print(
+                            "[yellow]Skipping fusion combo (load failed)[/yellow] "
+                            f"{layer_label}: {e}"
+                        )
+
+                    if fusion_base_frame is None:
+                        fusion_progress.advance(ftask, advance=n_sample)
+                        continue
+
                     for sample_idx in range(n_sample):
                         fusion_status = (
-                            f"[cyan]{model_label}[/cyan] "
-                            f"[yellow]{layer_label}[/yellow] "
-                            f"(mean singles≈{sum_proxy / len(paths):.3f}) "
-                            f"sample {sample_idx + 1}/{n_sample}"
+                            f"{fusion_status_base} sample {sample_idx + 1}/{n_sample}"
                         )
                         fusion_progress.update(ftask, description=fusion_status)
                         try:
-                            report = estimate_model_clustering(
-                                transform_config=transform_config,
+                            sample_frame = draw_selection_sample(
+                                fusion_base_frame,
+                                optimization_config,
+                                sample_index=sample_idx,
+                            )
+                            report = evaluate_selection_sample(
+                                sample_frame,
+                                transform_config,
                                 optimization_config=optimization_config,
-                                file_paths=ordered_paths,
-                                selected_labels=selected_labels,
                                 all_metrics_dfs=fusion_all_metrics_dfs,
-                                embedding_read_status=lambda m, fs=fusion_status: (
-                                    fusion_progress.update(
-                                        ftask,
-                                        description=f"{fs} | [dim]{m}[/dim]",
-                                    )
-                                ),
                             )
                         except Exception as e:
                             report = None
@@ -1612,6 +1827,7 @@ def main(
             f"[green]✓[/green] Per-sample grid (all min_cluster_size values) saved to: "
             f"[cyan]{detail_path}[/cyan]"
         )
+    fm: pd.DataFrame | None = None
     if fine_metadata_path.exists():
         fm = _read_optional_jsonl_gzip(fine_metadata_path)
         if fm is not None:
@@ -1645,6 +1861,7 @@ def main(
             clustering_grid_step=clustering_grid_step,
             seed=seed,
             frac=frac,
+            eval_max_rows=eval_max_rows_resolved,
             n_embedding_batches=n_embedding_batches,
             batch_size=batch_size,
             negative_label=negative_label,
@@ -1693,6 +1910,19 @@ def main(
         console.print(
             f"[green]✓[/green] UMAP visualization saved to: [cyan]{umap_viz_path}[/cyan]"
         )
+        if fm is not None and not fm.empty:
+            pca_pair_path = report_path / "model.pca_quality_pairgrid.png"
+            fm_plot = _with_validated_class_label(
+                fm,
+                source_name=f"model_selection main ({fine_metadata_path})",
+            )
+            if plot_pca_quality_pairgrid(
+                fm_plot, pca_pair_path, class_col="class_label"
+            ):
+                console.print(
+                    "[green]✓[/green] PCA quality pair grid saved to: "
+                    f"[cyan]{pca_pair_path}[/cyan] (and PDF sibling)"
+                )
 
     checkpoint_payload = {
         "path": str(ckpt_path),

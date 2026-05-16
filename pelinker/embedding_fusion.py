@@ -269,7 +269,8 @@ def concat_mention_level_embedding_sources(
     show_read_progress: bool = False,
 ) -> pd.DataFrame | None:
     """
-    Load one or more mention-level parquet sources like ``estimate_model_clustering``:
+    Load one or more mention-level parquet sources like
+    :func:`~pelinker.selection.load_selection_frame`:
     read each path in batches, optionally inner-join across sources, return one frame
     (no ``frac`` sampling).
     """

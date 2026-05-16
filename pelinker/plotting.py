@@ -4,6 +4,8 @@ import pathlib
 import matplotlib
 import numpy as np
 import pandas as pd
+
+from pelinker.reporting import LinkerFitDiagnostics
 import seaborn as sns
 
 # Force a non-interactive backend because this project only saves plots to files.
@@ -38,6 +40,28 @@ _MARKER_OUTLINE_ALPHA = 0.72
 _ELLIPSE_FILL_ALPHA = 0.14
 _ELLIPSE_EDGE_ALPHA = 0.88
 _ELLIPSE_INFLATE = 1.12
+
+
+def _save_figure_multi_format(
+    fig: plt.Figure,
+    output_path: pathlib.Path,
+    *,
+    formats: tuple[str, ...] = ("png", "pdf"),
+) -> tuple[pathlib.Path, ...]:
+    output_path = pathlib.Path(output_path)
+    known_suffixes = {".png", ".pdf", ".svg", ".jpg", ".jpeg", ".webp"}
+    base = (
+        output_path.with_suffix("")
+        if output_path.suffix.lower() in known_suffixes
+        else output_path
+    )
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    written: list[pathlib.Path] = []
+    for fmt in formats:
+        out = base.parent / f"{base.name}.{fmt}"
+        fig.savefig(out, dpi=300, bbox_inches="tight")
+        written.append(out)
+    return tuple(written)
 
 
 def _arity_from_model(model: str) -> str:
@@ -464,8 +488,7 @@ def plot_dbcv_vs_ari_from_grid(
 
     ax.grid(True, alpha=0.28, linestyle="--", zorder=0)
     plt.tight_layout()
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    plt.savefig(output_path, dpi=300, bbox_inches="tight")
+    _save_figure_multi_format(fig, output_path)
     plt.close(fig)
     return True
 
@@ -503,18 +526,16 @@ def plot_metrics_with_error_bars(
         return
 
     has_ari = "ari" in df_combined.columns and bool(df_combined["ari"].notna().any())
-    ncols = 3 if has_ari else 2
-    fig, axes = plt.subplots(1, ncols, figsize=(6 * ncols, 5))
-    if ncols == 2:
-        ax_dbcv, ax_k = axes[0], axes[1]
-        ax_ari = None
+    colors = ["#2E86AB", "#A23B72", "#C44E52"]  # Blue, Purple, Red
+
+    if has_ari:
+        fig, axes = plt.subplots(1, 3, figsize=(18, 5))
+        ax_dbcv, ax_ari, ax_k = axes[0], axes[1], axes[2]
     else:
-        ax_dbcv, ax_k, ax_ari = axes[0], axes[1], axes[2]
+        fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+        ax_dbcv, ax_k = axes[0], axes[1]
 
-    # Color palette for different plots
-    colors = ["#2E86AB", "#A23B72", "#F18F01"]  # Blue, Purple, Orange
-
-    def _maybe_vline(ax) -> None:
+    def _maybe_vline(ax: plt.Axes) -> None:
         if chosen_min_cluster_size is None:
             return
         ax.axvline(
@@ -526,13 +547,21 @@ def plot_metrics_with_error_bars(
             zorder=0,
         )
 
-    # Plot DBCV score with error bars
+    def _style_ax(ax: plt.Axes, ylabel: str, title: str, color: str) -> None:
+        ax.set_xlabel("min_cluster_size", fontsize=12, fontweight="bold")
+        ax.set_ylabel(ylabel, fontsize=12, fontweight="bold", color=color)
+        ax.set_title(title, fontsize=13, fontweight="bold")
+        ax.tick_params(axis="y", labelcolor=color)
+        ax.grid(True, alpha=0.3, linestyle="--")
+        ax.spines["top"].set_visible(False)
+        ax.spines["right"].set_visible(False)
+
     sns.lineplot(
         data=df_combined,
         x="min_cluster_size",
         y="dbcv",
         ax=ax_dbcv,
-        errorbar="sd",  # Standard deviation error bars
+        errorbar="sd",
         marker="o",
         color=colors[0],
         linewidth=2,
@@ -540,39 +569,9 @@ def plot_metrics_with_error_bars(
         err_kws={"alpha": 0.3, "linewidth": 1.5},
     )
     _maybe_vline(ax_dbcv)
-    ax_dbcv.set_xlabel("min_cluster_size", fontsize=12, fontweight="bold")
-    ax_dbcv.set_ylabel("DBCV Score", fontsize=12, fontweight="bold", color=colors[0])
-    ax_dbcv.set_title("DBCV Score vs. min_cluster_size", fontsize=13, fontweight="bold")
-    ax_dbcv.grid(True, alpha=0.3, linestyle="--")
-    ax_dbcv.tick_params(axis="y", labelcolor=colors[0])
-    ax_dbcv.spines["top"].set_visible(False)
-    ax_dbcv.spines["right"].set_visible(False)
+    _style_ax(ax_dbcv, "DBCV Score", "DBCV vs. min_cluster_size", colors[0])
 
-    # Plot n_clusters with error bars (log scale)
-    sns.lineplot(
-        data=df_combined,
-        x="min_cluster_size",
-        y="n_clusters",
-        ax=ax_k,
-        errorbar="sd",
-        marker="^",
-        color=colors[1],
-        linewidth=2,
-        markersize=8,
-        err_kws={"alpha": 0.3, "linewidth": 1.5},
-    )
-    _maybe_vline(ax_k)
-    ax_k.set_xlabel("min_cluster_size", fontsize=12, fontweight="bold")
-    ax_k.set_ylabel("n clusters", fontsize=12, fontweight="bold", color=colors[1])
-    ax_k.set_title(
-        "Number of Clusters vs. min_cluster_size", fontsize=13, fontweight="bold"
-    )
-    ax_k.grid(True, alpha=0.3, linestyle="--")
-    ax_k.tick_params(axis="y", labelcolor=colors[1])
-    ax_k.spines["top"].set_visible(False)
-    ax_k.spines["right"].set_visible(False)
-
-    if ax_ari is not None:
+    if has_ari:
         sns.lineplot(
             data=df_combined,
             x="min_cluster_size",
@@ -580,23 +579,34 @@ def plot_metrics_with_error_bars(
             ax=ax_ari,
             errorbar="sd",
             marker="D",
-            color=colors[2],
+            color=colors[1],
             linewidth=2,
             markersize=7,
             err_kws={"alpha": 0.3, "linewidth": 1.5},
         )
         _maybe_vline(ax_ari)
-        ax_ari.set_xlabel("min_cluster_size", fontsize=12, fontweight="bold")
-        ax_ari.set_ylabel("ARI", fontsize=12, fontweight="bold", color=colors[2])
-        ax_ari.set_title("ARI vs. min_cluster_size", fontsize=13, fontweight="bold")
-        ax_ari.grid(True, alpha=0.3, linestyle="--")
-        ax_ari.tick_params(axis="y", labelcolor=colors[2])
-        ax_ari.spines["top"].set_visible(False)
-        ax_ari.spines["right"].set_visible(False)
+        _style_ax(ax_ari, "ARI", "ARI vs. min_cluster_size", colors[1])
+    else:
+        pass
+
+    sns.lineplot(
+        data=df_combined,
+        x="min_cluster_size",
+        y="n_clusters",
+        ax=ax_k,
+        errorbar="sd",
+        marker="^",
+        color=colors[2],
+        linewidth=2,
+        markersize=8,
+        err_kws={"alpha": 0.3, "linewidth": 1.5},
+    )
+    _maybe_vline(ax_k)
+    _style_ax(ax_k, "n clusters", "Number of Clusters vs. min_cluster_size", colors[2])
 
     plt.tight_layout()
-    plt.savefig(output_path, dpi=300, bbox_inches="tight")
-    plt.close()
+    _save_figure_multi_format(fig, output_path)
+    plt.close(fig)
 
 
 def plot_heatmap(
@@ -714,7 +724,7 @@ def plot_heatmap(
     ax.set_ylabel("Model")
 
     plt.tight_layout()
-    plt.savefig(output_path, dpi=300, bbox_inches="tight")
+    _save_figure_multi_format(fig, output_path)
     plt.close()
 
 
@@ -816,7 +826,7 @@ def plot_screener_oov_bar(
     ax.set_ylabel("AUC")
     ax.set_title("Mean AUC: screener / OOV / combined (± std)")
     plt.tight_layout()
-    plt.savefig(output_path, dpi=300, bbox_inches="tight")
+    _save_figure_multi_format(fig, output_path)
     plt.close()
     return True
 
@@ -885,7 +895,7 @@ def plot_roc_comparison(
         axes_flat[k].set_visible(False)
 
     plt.tight_layout()
-    plt.savefig(output_path, dpi=300, bbox_inches="tight")
+    _save_figure_multi_format(fig, output_path)
     plt.close()
     return True
 
@@ -1029,57 +1039,187 @@ def plot_umap_viz(
     fig.write_html(str(output_path))
 
 
-def plot_metrics(df: pd.DataFrame, fname):
-    fig, ax1 = plt.subplots(figsize=(8, 5))
+def plot_metrics(df: pd.DataFrame, output_path: pathlib.Path) -> None:
+    if df.empty:
+        return
 
-    color1 = "tab:blue"
-    ax1.set_xlabel("min_cluster_size")
-    ax1.set_ylabel("DBCV Score", color=color1)
-    ax1.plot(
-        df["min_cluster_size"],
-        df["dbcv"],
+    df_plot = df.copy()
+    df_plot = df_plot[df_plot["n_clusters"] > 1].copy()
+    if df_plot.empty:
+        print(
+            f"Warning: No valid data points after filtering (n_clusters > 1) for {output_path}"
+        )
+        return
+
+    has_ari = "ari" in df_plot.columns and bool(df_plot["ari"].notna().any())
+    colors = ["#2E86AB", "#A23B72", "#C44E52"]  # Blue, Purple, Red
+
+    if has_ari:
+        fig, axes = plt.subplots(1, 3, figsize=(18, 5))
+        ax_dbcv, ax_ari, ax_k = axes[0], axes[1], axes[2]
+    else:
+        fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+        ax_dbcv, ax_k = axes[0], axes[1]
+
+    def _style_ax(ax: plt.Axes, ylabel: str, title: str, color: str) -> None:
+        ax.set_xlabel("min_cluster_size", fontsize=12, fontweight="bold")
+        ax.set_ylabel(ylabel, fontsize=12, fontweight="bold", color=color)
+        ax.set_title(title, fontsize=13, fontweight="bold")
+        ax.tick_params(axis="y", labelcolor=color)
+        ax.grid(True, alpha=0.3, linestyle="--")
+        ax.spines["top"].set_visible(False)
+        ax.spines["right"].set_visible(False)
+
+    ax_dbcv.plot(
+        df_plot["min_cluster_size"],
+        df_plot["dbcv"],
         marker="o",
-        color=color1,
-        label="DBCV",
+        color=colors[0],
+        linewidth=2,
     )
-    ax1.tick_params(axis="y", labelcolor=color1)
+    _style_ax(ax_dbcv, "DBCV Score", "DBCV vs. min_cluster_size", colors[0])
 
-    # Add a second y-axis for icm
-    ax2 = ax1.twinx()
-    color2 = "tab:orange"
-    # ax2.set_yscale("log")
-    ax2.set_ylabel("ICM", color=color2)
-    ax2.plot(
-        df["min_cluster_size"],
-        df["icm"],
-        marker="s",
-        linestyle="--",
-        color=color2,
-        label="ICM",
+    if has_ari:
+        ax_ari.plot(
+            df_plot["min_cluster_size"],
+            df_plot["ari"],
+            marker="D",
+            color=colors[1],
+            linewidth=2,
+        )
+        _style_ax(ax_ari, "ARI", "ARI vs. min_cluster_size", colors[1])
+    else:
+        pass
+
+    ax_k.plot(
+        df_plot["min_cluster_size"],
+        df_plot["n_clusters"],
+        marker="^",
+        color=colors[2],
+        linewidth=2,
     )
-    ax2.tick_params(axis="y", labelcolor=color2)
+    _style_ax(ax_k, "n clusters", "Number of Clusters vs. min_cluster_size", colors[2])
 
-    # Add a second y-axis for icm
-    ax3 = ax1.twinx()
-    color2 = "tab:green"
-    # ax3.set_yscale("log")
-    ax3.set_ylabel("n_clusters", color=color2)
-    ax3.plot(
-        df["min_cluster_size"],
-        df["n_clusters"],
-        marker="s",
-        linestyle="--",
-        color=color2,
-        label="ICM",
-    )
-
-    ax3.tick_params(axis="y", labelcolor=color2)
-
-    # Titles and layout
-    plt.title("Clustering metrics vs. min_cluster_size (HDBSCAN)")
-    fig.tight_layout()
-
+    plt.tight_layout()
     try:
-        plt.savefig(fname, bbox_inches="tight", dpi=300)
+        _save_figure_multi_format(fig, output_path)
     finally:
         plt.close(fig)
+
+
+def diagnostics_to_pairgrid_dataframe(diag: LinkerFitDiagnostics) -> pd.DataFrame:
+    """
+    Build a DataFrame for :func:`plot_pca_quality_pairgrid` from linker fit diagnostics.
+
+    ``class_label`` is ``negative`` / ``positive`` from ``oov_label`` (1 / 0).
+    """
+    ol = np.asarray(diag.oov_label, dtype=np.int64).ravel()
+    return pd.DataFrame(
+        {
+            "pca_residual": np.asarray(diag.pca_residual, dtype=np.float64),
+            "pca_mahalanobis": np.asarray(diag.pca_mahalanobis, dtype=np.float64),
+            "pca_spectral_entropy": np.asarray(
+                diag.pca_spectral_entropy, dtype=np.float64
+            ),
+            "class_label": np.where(ol == 1, "negative", "positive"),
+        }
+    )
+
+
+def plot_pca_quality_pairgrid(
+    df: pd.DataFrame,
+    output_path: pathlib.Path,
+    *,
+    class_col: str = "class_label",
+    max_scatter_points: int = 4_000,
+    max_kde_points: int = 20_000,
+) -> bool:
+    """
+    PairGrid of PCA quality features (pca_residual, pca_spectral_entropy, pca_mahalanobis)
+    with hue for class (negative / positive).
+
+    Upper triangle: scatter on a class-stratified subsample (≤ max_scatter_points total).
+    Lower triangle & diagonal: KDE on a larger stratified subsample (≤ max_kde_points total)
+    so that density estimates remain representative without rendering millions of points.
+
+    Args:
+        df: DataFrame with feature columns and class_col.
+        output_path: PNG path (PDF sibling also written).
+        class_col: Column used for hue.
+        max_scatter_points: Cap for upper-triangle scatter layer.
+        max_kde_points: Cap for lower-triangle KDE and diagonal KDE layers.
+    """
+    feature_cols = ["pca_residual", "pca_spectral_entropy", "pca_mahalanobis"]
+    needed = set(feature_cols + [class_col])
+    if not needed.issubset(df.columns):
+        return False
+
+    plot_df = df.loc[:, feature_cols + [class_col]].dropna().copy()
+    if plot_df.empty:
+        return False
+
+    def _stratified_subsample(source: pd.DataFrame, n: int) -> pd.DataFrame:
+        """Downsample proportionally per class so class balance is preserved."""
+        if len(source) <= n:
+            return source
+        classes = source[class_col].unique()
+        fracs: list[pd.DataFrame] = []
+        for cls in classes:
+            sub = source[source[class_col] == cls]
+            k = max(1, round(n * len(sub) / len(source)))
+            fracs.append(sub.sample(n=min(k, len(sub)), random_state=0))
+        return pd.concat(fracs, ignore_index=True)
+
+    scatter_df = _stratified_subsample(plot_df, max_scatter_points)
+    kde_df = _stratified_subsample(plot_df, max_kde_points)
+
+    n_total = len(plot_df)
+    n_scatter = len(scatter_df)
+    n_kde = len(kde_df)
+
+    # Resolve palette once so both layers share the same class→color mapping.
+    classes = sorted(kde_df[class_col].unique())
+    palette = sns.color_palette("Set2", n_colors=len(classes))
+    color_map = dict(zip(classes, palette, strict=True))
+
+    # Build grid using kde_df (larger sample) for lower triangle + diagonal.
+    g = sns.PairGrid(
+        kde_df, vars=feature_cols, hue=class_col, palette=color_map, diag_sharey=False
+    )
+    g.map_lower(sns.kdeplot, fill=True, alpha=0.35, thresh=0.05)
+    g.map_diag(sns.kdeplot, lw=2)
+
+    # Upper triangle: scatter the smaller subsample by iterating axes directly
+    # so we control which data is rendered without re-initialising the grid.
+    n_vars = len(feature_cols)
+    for row in range(n_vars):
+        for col in range(n_vars):
+            if col <= row:
+                continue
+            ax = g.axes[row, col]
+            x_col = feature_cols[col]
+            y_col = feature_cols[row]
+            for cls in classes:
+                sub = scatter_df[scatter_df[class_col] == cls]
+                ax.scatter(
+                    sub[x_col].to_numpy(),
+                    sub[y_col].to_numpy(),
+                    color=color_map[cls],
+                    alpha=0.45,
+                    s=12,
+                    linewidths=0,
+                    rasterized=True,
+                    label=str(cls),
+                )
+
+    g.add_legend(title="class")
+    g.figure.suptitle(
+        f"PCA quality diagnostics by class — "
+        f"scatter n={n_scatter:,} / KDE n={n_kde:,} (total {n_total:,})",
+        y=1.02,
+        fontsize=11,
+    )
+    g.figure.tight_layout()
+    _save_figure_multi_format(g.figure, output_path)
+    plt.close(g.figure)
+    return True

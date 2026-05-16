@@ -73,7 +73,7 @@ class FitCliConfig:
     negative_seed: int | None = None
     screener_kind: str = "lda"
     """``lda`` or ``svm``; persisted as :attr:`~pelinker.model.Linker.screener`."""
-    manifold_oov_enabled: bool = True
+    projection_enabled: bool = True
     """When false, skip 3D manifold OOV score model (no predict-time gate from that path)."""
     # Stage (B): parquet batching (``batch_size`` rows per read batch).
     n_embedding_batches: int | None = None  # max read batches per parquet; None = all
@@ -430,12 +430,12 @@ def fit(cfg: FitCliConfig) -> None:
         min_class_size=cfg.min_class_size,
         batch_size=cfg.batch_size,
         n_embedding_batches=cfg.n_embedding_batches,
-        negative_screener=NegativeScreenerConfig(
+        ambient_screener=NegativeScreenerConfig(
             kind=cfg.screener_kind,
             negative_label=cfg.negative_label,
         ),
-        manifold_oov_screener=ManifoldOovScreenerConfig(
-            enabled=cfg.manifold_oov_enabled,
+        projection_screener=ManifoldOovScreenerConfig(
+            enabled=cfg.projection_enabled,
         ),
     )
 

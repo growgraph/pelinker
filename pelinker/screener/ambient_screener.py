@@ -33,7 +33,7 @@ class _ModelCvLists:
     f1: list[float]
 
 
-def evaluate_negative_screener_models(
+def evaluate_ambient_screener_models(
     X: np.ndarray,
     y: np.ndarray,
     *,

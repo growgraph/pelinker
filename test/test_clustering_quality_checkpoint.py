@@ -106,6 +106,7 @@ def test_fingerprint_depends_on_input_dir_not_fusion_cli(
         min_class_size=20,
         seed=1,
         frac=0.1,
+        eval_max_rows=100_000,
         n_embedding_batches=None,
         batch_size=1000,
         prefix="p",

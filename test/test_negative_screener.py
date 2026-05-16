@@ -7,12 +7,12 @@ import pandas as pd
 import pytest
 
 from pelinker.analysis import (
-    estimate_clustering_from_frame,
-    fit_negative_screener_with_metrics,
+    fit_ambient_screener_with_metrics,
     split_by_negative_label,
 )
+from pelinker.selection import evaluate_selection_sample
 from pelinker.config import ClusteringOptimizationConfig, NegativeScreenerConfig
-from pelinker.negative_screener import NegativeClassScreener
+from pelinker.screener.ambient_screener import NegativeClassScreener
 from pelinker.onto import NEGATIVE_LABEL
 from pelinker.reporting import (
     AllScreenerCvResult,
@@ -70,25 +70,27 @@ def _bmc(
     )
 
 
-def test_estimate_clustering_negative_screener_cv_and_manifold_only_positives() -> None:
-    dfr = _tiny_frame()
+def test_evaluate_selection_sample_ambient_screener_cv_and_manifold_only_positives() -> (
+    None
+):
+    dfr = _tiny_frame(n_pos=80)
     opt = ClusteringOptimizationConfig(
         min_class_size=5,
         max_scale=30,
         min_scale=5,
-        clustering_grid_step=10,
-        negative_screener=NegativeScreenerConfig(
+        clustering_grid_step=5,
+        ambient_screener=NegativeScreenerConfig(
             cv_n_splits=5,
             cv_test_size=0.25,
             cv_random_state=0,
         ),
     )
     tc = TransformConfig(pca_components=6, umap_components=3, umap_viz_components=3)
-    report = estimate_clustering_from_frame(
+    report = evaluate_selection_sample(
         dfr,
         tc,
         optimization_config=opt,
-        aggregation_level="mention",
+        entities_pre_filtered=False,
     )
     assert report is not None
     assert report.all_screener_cv is not None
@@ -96,6 +98,16 @@ def test_estimate_clustering_negative_screener_cv_and_manifold_only_positives() 
     assert len(report.assignments) == len(dfr[dfr["entity"] != NEGATIVE_LABEL])
     assert report.number_properties == 2
     assert NEGATIVE_LABEL not in set(report.assignments["entity"].astype(str))
+    assert report.mention_quality is not None
+    assert len(report.mention_quality) == len(dfr)
+    assert set(np.unique(report.mention_quality["oov_label"]).tolist()) == {0, 1}
+    assert (
+        report.mention_quality.loc[
+            report.mention_quality["entity"] == NEGATIVE_LABEL, "cluster"
+        ]
+        == -1
+    ).all()
+    assert NEGATIVE_LABEL in set(report.mention_quality["entity"].astype(str))
 
 
 def test_split_by_negative_label_excludes_synthetic_rows() -> None:
@@ -106,19 +118,19 @@ def test_split_by_negative_label_excludes_synthetic_rows() -> None:
     assert NEGATIVE_LABEL not in set(manifold["entity"].astype(str).unique())
 
 
-def test_fit_negative_screener_with_metrics_none_when_single_class() -> None:
+def test_fit_ambient_screener_with_metrics_none_when_single_class() -> None:
     dfr = _tiny_frame(dim=4, n_pos=20, n_neg=0)
     cfg = NegativeScreenerConfig(kind="lda", negative_label=NEGATIVE_LABEL)
-    scr, metrics = fit_negative_screener_with_metrics(dfr, cfg)
+    scr, metrics = fit_ambient_screener_with_metrics(dfr, cfg)
     assert metrics is None
     assert scr._estimator is None
 
 
-def test_fit_negative_screener_with_metrics_matches_direct_fit() -> None:
+def test_fit_ambient_screener_with_metrics_matches_direct_fit() -> None:
     dfr = _tiny_frame(dim=4, n_pos=30, n_neg=20)
     cfg = NegativeScreenerConfig(kind="lda", negative_label=NEGATIVE_LABEL)
     scr_direct = NegativeClassScreener.fit_from_frame(dfr, cfg)
-    scr_wrapped, metrics = fit_negative_screener_with_metrics(dfr, cfg)
+    scr_wrapped, metrics = fit_ambient_screener_with_metrics(dfr, cfg)
     assert metrics is not None
     X = np.stack(dfr["embed"].values).astype(np.float32, copy=False)
     assert np.array_equal(

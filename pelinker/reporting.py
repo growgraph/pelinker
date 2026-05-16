@@ -13,7 +13,7 @@ import pandas as pd
 
 from pelinker.config import ScreenerKind
 
-_JSON_CLUSTERING_REPORT_SCHEMA = "pelinker.clustering_report.v6"
+_JSON_CLUSTERING_REPORT_SCHEMA = "pelinker.clustering_report.v8"
 MODEL_SELECTION_RUN_REPORT_SCHEMA = "pelinker.model_selection.run_report.v2"
 
 
@@ -209,6 +209,95 @@ class HyperparameterSearchStats:
     min_cluster_size: MeanWithUncertainty
 
 
+@dataclass(frozen=True)
+class LinkerFitDiagnostics:
+    """Per-row training diagnostics for plotting (often stratified-subsampled)."""
+
+    pca_residual: np.ndarray
+    pca_mahalanobis: np.ndarray
+    pca_spectral_entropy: np.ndarray
+    oov_label: np.ndarray
+    """``1`` iff ``entity == negative_label`` (same convention as :class:`ModelSelectionReport`)."""
+    screener_decision: np.ndarray
+    projection_score: np.ndarray
+    n_total: int
+    """Original mention count before subsampling (same as ``len(prepared)`` at fit time)."""
+    sample_random_state: int
+    """RNG seed used for stratified subsampling (or configured seed when no subsample)."""
+
+
+def subsample_diagnostics_stratified(
+    full: LinkerFitDiagnostics,
+    *,
+    max_rows: int,
+    random_state: int,
+) -> LinkerFitDiagnostics:
+    """
+    Stratified subsample by ``oov_label`` (preserve class proportions, at least one row per
+    non-empty class when two classes exist). Mirrors logic used in pairgrid plotting.
+    """
+    if max_rows < 1:
+        raise ValueError("max_rows must be >= 1")
+    n_total = full.n_total
+    n = int(len(full.pca_residual))
+    if n != n_total:
+        raise ValueError(
+            f"LinkerFitDiagnostics length mismatch: len(arrays)={n} vs n_total={n_total}"
+        )
+
+    def _copy_same() -> LinkerFitDiagnostics:
+        return LinkerFitDiagnostics(
+            pca_residual=np.asarray(full.pca_residual, dtype=np.float64).copy(),
+            pca_mahalanobis=np.asarray(full.pca_mahalanobis, dtype=np.float64).copy(),
+            pca_spectral_entropy=np.asarray(
+                full.pca_spectral_entropy, dtype=np.float64
+            ).copy(),
+            oov_label=np.asarray(full.oov_label, dtype=np.int64).copy(),
+            screener_decision=np.asarray(
+                full.screener_decision, dtype=np.float64
+            ).copy(),
+            projection_score=np.asarray(full.projection_score, dtype=np.float64).copy(),
+            n_total=n_total,
+            sample_random_state=random_state,
+        )
+
+    if n <= max_rows:
+        return _copy_same()
+
+    rng = np.random.default_rng(random_state)
+    y = np.asarray(full.oov_label, dtype=np.int64).ravel()
+    classes = np.unique(y)
+
+    if len(classes) == 1:
+        idx_all = np.flatnonzero(y == int(classes[0]))
+        k = min(max_rows, len(idx_all))
+        chosen = rng.choice(idx_all, size=k, replace=False)
+    else:
+        parts: list[np.ndarray] = []
+        for cls in classes:
+            idx = np.flatnonzero(y == int(cls))
+            k_i = max(1, int(round(max_rows * len(idx) / n)))
+            k_i = min(k_i, len(idx))
+            parts.append(rng.choice(idx, size=k_i, replace=False))
+        chosen = np.concatenate(parts)
+        if len(chosen) > max_rows:
+            chosen = rng.choice(chosen, size=max_rows, replace=False)
+
+    chosen = np.sort(chosen.astype(np.int64, copy=False))
+    return LinkerFitDiagnostics(
+        pca_residual=np.asarray(full.pca_residual, dtype=np.float64)[chosen],
+        pca_mahalanobis=np.asarray(full.pca_mahalanobis, dtype=np.float64)[chosen],
+        pca_spectral_entropy=np.asarray(full.pca_spectral_entropy, dtype=np.float64)[
+            chosen
+        ],
+        oov_label=np.asarray(full.oov_label, dtype=np.int64)[chosen],
+        screener_decision=np.asarray(full.screener_decision, dtype=np.float64)[chosen],
+        projection_score=np.asarray(full.projection_score, dtype=np.float64)[chosen],
+        n_total=n_total,
+        sample_random_state=random_state,
+    )
+
+
 @dataclass
 class ModelSelectionReport:
     """Report containing clustering analysis results for one sample."""
@@ -228,12 +317,8 @@ class ModelSelectionReport:
     pca_residuals: np.ndarray
     pca_mahalanobis: np.ndarray
     pca_spectral_entropy: np.ndarray
-    pca_residual_label_01: np.ndarray
-    """``1`` iff ``entity == negative_label`` on that row (same length as ``pca_residuals``)."""
-    pca_mahalanobis_label_01: np.ndarray
-    """Same mask as ``pca_residual_label_01`` (repeated for per-metric plots)."""
-    pca_spectral_entropy_label_01: np.ndarray
-    """Same mask as ``pca_residual_label_01`` (repeated for per-metric plots)."""
+    oov_label: np.ndarray
+    """Per-row OOV mask: ``1`` iff ``entity == negative_label`` (same length as ``pca_residuals``)."""
     umap_clustering: np.ndarray
     umap_visualization: np.ndarray
     pca_reduced: np.ndarray
@@ -242,6 +327,10 @@ class ModelSelectionReport:
     screener_oos_datapoints: PerDatapointScores | None = None
     """Per-datapoint OOS scores (not serialized in JSON clustering report)."""
     ari: float | None = None
+    training_diagnostics: LinkerFitDiagnostics | None = None
+    """Stratified-subsampled PCA quality + screener / manifold OOV scores (linker fit only)."""
+    mention_quality: pd.DataFrame | None = None
+    """All mentions (pos+neg) with PCA quality scores and oov_label; cluster=-1 for negatives."""
 
 
 def _json_normalize(obj: object) -> object:
@@ -292,6 +381,60 @@ def model_selection_run_report_path(report_dir: str | pathlib.Path) -> pathlib.P
     return pathlib.Path(report_dir).expanduser() / MODEL_SELECTION_RUN_REPORT_BASENAME
 
 
+def _linker_fit_diagnostics_to_jsonable(d: LinkerFitDiagnostics) -> dict[str, Any]:
+    return {
+        "pca_residual": _ndarray_to_jsonable_nested(d.pca_residual),
+        "pca_mahalanobis": _ndarray_to_jsonable_nested(d.pca_mahalanobis),
+        "pca_spectral_entropy": _ndarray_to_jsonable_nested(d.pca_spectral_entropy),
+        "oov_label": _ndarray_to_jsonable_nested(d.oov_label),
+        "screener_decision": _ndarray_to_jsonable_nested(d.screener_decision),
+        "projection_score": _ndarray_to_jsonable_nested(d.projection_score),
+        "n_total": int(d.n_total),
+        "sample_random_state": int(d.sample_random_state),
+    }
+
+
+def _linker_fit_diagnostics_from_jsonable(obj: object) -> LinkerFitDiagnostics | None:
+    if obj is None or not isinstance(obj, dict):
+        return None
+    d = cast(dict[str, Any], obj)
+    needed = (
+        "pca_residual",
+        "pca_mahalanobis",
+        "pca_spectral_entropy",
+        "oov_label",
+        "screener_decision",
+        "projection_score",
+        "n_total",
+        "sample_random_state",
+    )
+    if not all(k in d for k in needed):
+        return None
+    pr = np.asarray(d["pca_residual"], dtype=np.float64)
+    pm = np.asarray(d["pca_mahalanobis"], dtype=np.float64)
+    pe = np.asarray(d["pca_spectral_entropy"], dtype=np.float64)
+    ol = np.asarray(d["oov_label"], dtype=np.int64).ravel()
+    sd = np.asarray(d["screener_decision"], dtype=np.float64).ravel()
+    mo = np.asarray(d["projection_score"], dtype=np.float64).ravel()
+    n_tot = int(d["n_total"])
+    srs = int(d["sample_random_state"])
+    m = len(pr)
+    if not (
+        len(pm) == m and len(pe) == m and len(ol) == m and len(sd) == m and len(mo) == m
+    ):
+        return None
+    return LinkerFitDiagnostics(
+        pca_residual=pr,
+        pca_mahalanobis=pm,
+        pca_spectral_entropy=pe,
+        oov_label=ol,
+        screener_decision=sd,
+        projection_score=mo,
+        n_total=n_tot,
+        sample_random_state=srs,
+    )
+
+
 def clustering_report_to_jsonable_dict(report: ModelSelectionReport) -> dict[str, Any]:
     """
     Flatten a :class:`ClusteringReport` into JSON-serializable built-ins (no DataFrames/ndarrays).
@@ -321,15 +464,7 @@ def clustering_report_to_jsonable_dict(report: ModelSelectionReport) -> dict[str
         "pca_spectral_entropy": _ndarray_to_jsonable_nested(
             report.pca_spectral_entropy
         ),
-        "pca_residual_label_01": _ndarray_to_jsonable_nested(
-            report.pca_residual_label_01
-        ),
-        "pca_mahalanobis_label_01": _ndarray_to_jsonable_nested(
-            report.pca_mahalanobis_label_01
-        ),
-        "pca_spectral_entropy_label_01": _ndarray_to_jsonable_nested(
-            report.pca_spectral_entropy_label_01
-        ),
+        "oov_label": _ndarray_to_jsonable_nested(report.oov_label),
         "umap_clustering": _ndarray_to_jsonable_nested(report.umap_clustering),
         "umap_visualization": _ndarray_to_jsonable_nested(report.umap_visualization),
         "pca_reduced": _ndarray_to_jsonable_nested(report.pca_reduced),
@@ -338,6 +473,13 @@ def clustering_report_to_jsonable_dict(report: ModelSelectionReport) -> dict[str
             None
             if report.all_screener_cv is None
             else _json_normalize(_all_screener_cv_to_jsonable(report.all_screener_cv))
+        ),
+        "training_diagnostics": (
+            None
+            if report.training_diagnostics is None
+            else _json_normalize(
+                _linker_fit_diagnostics_to_jsonable(report.training_diagnostics)
+            )
         ),
     }
 
@@ -356,6 +498,68 @@ def write_clustering_report_json(
 
     with gzip.open(p, mode="wt", encoding="utf-8", compresslevel=9) as f:
         json.dump(payload, f, indent=indent)
+
+
+def read_clustering_report_json(path: str | pathlib.Path) -> ModelSelectionReport:
+    """
+    Load a :class:`ModelSelectionReport` written by :func:`write_clustering_report_json`.
+
+    Supports schema ``pelinker.clustering_report.v7`` and ``v8`` (``training_diagnostics``).
+    """
+    p = pathlib.Path(path).expanduser()
+    with gzip.open(p, mode="rt", encoding="utf-8") as f:
+        raw: dict[str, Any] = json.load(f)
+
+    schema = str(raw.get("schema", ""))
+    if schema not in (
+        "pelinker.clustering_report.v7",
+        "pelinker.clustering_report.v8",
+    ):
+        raise ValueError(f"Unsupported clustering report schema: {schema!r}")
+
+    hp = raw["hyperparameters"]
+    h = ClusteringHyperparameters(min_cluster_size=int(hp["min_cluster_size"]))
+    metrics_df = pd.DataFrame(raw["metrics_df"])
+    assignments = pd.DataFrame(raw["assignments"])
+
+    def _farr(key: str) -> np.ndarray:
+        return np.asarray(raw[key], dtype=np.float64)
+
+    def _iarr(key: str) -> np.ndarray:
+        return np.asarray(raw[key], dtype=np.int64)
+
+    ari_raw = raw.get("ari")
+    ari: float | None
+    if ari_raw is None:
+        ari = None
+    else:
+        ari = float(ari_raw)
+
+    # Nested CV summaries are not round-tripped here (linker fit reports use ``None``).
+    all_cv: AllScreenerCvResult | None = None
+
+    td_raw = raw.get("training_diagnostics")
+    training_diagnostics = _linker_fit_diagnostics_from_jsonable(td_raw)
+
+    return ModelSelectionReport(
+        hyperparameters=h,
+        best_score=float(raw["best_score"]),
+        number_properties=int(raw["number_properties"]),
+        n_clusters_emergent=int(raw["n_clusters_emergent"]),
+        metrics_df=metrics_df,
+        assignments=assignments,
+        pca_residuals=_farr("pca_residuals"),
+        pca_mahalanobis=_farr("pca_mahalanobis"),
+        pca_spectral_entropy=_farr("pca_spectral_entropy"),
+        oov_label=_iarr("oov_label"),
+        umap_clustering=np.asarray(raw["umap_clustering"], dtype=np.float64),
+        umap_visualization=np.asarray(raw["umap_visualization"], dtype=np.float64),
+        pca_reduced=np.asarray(raw["pca_reduced"], dtype=np.float64),
+        all_screener_cv=all_cv,
+        screener_oos_datapoints=None,
+        ari=ari,
+        training_diagnostics=training_diagnostics,
+    )
 
 
 def _binary_metrics_into_row(

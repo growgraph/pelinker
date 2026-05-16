@@ -220,6 +220,56 @@ class EmbeddingTransformer:
         return self.fit(embeddings).transform(embeddings)
 
 
+def score_transform_artifacts(
+    df: pd.DataFrame,
+    transformer: EmbeddingTransformer,
+    *,
+    embed_column: str = "embed",
+    include_umap: bool = False,
+) -> TransformArtifacts:
+    """
+    Score embeddings with a fitted :class:`EmbeddingTransformer` (no refit).
+
+    When ``include_umap`` is False, UMAP arrays are empty ``(n_rows, 0)`` — use for
+    PCA quality diagnostics on rows outside the manifold fit set.
+    """
+    if embed_column not in df.columns:
+        raise ValueError(f"Column '{embed_column}' not found in DataFrame")
+    if transformer.pca is None:
+        raise ValueError(
+            "Transformer must be fitted before score_transform_artifacts. Call fit() first."
+        )
+
+    embedding_vectors = np.stack(df[embed_column].values).astype(np.float32, copy=False)
+    embedding_vectors_normed = transformer._l2_normalize_rows(embedding_vectors)
+    pca_reduced = transformer.pca.transform(embedding_vectors_normed)
+    pca_residuals, pca_mahalanobis, pca_spectral_entropy = (
+        transformer._compute_pca_metrics(embedding_vectors_normed, pca_reduced)
+    )
+
+    n_rows = len(df)
+    if include_umap:
+        if transformer.umap is None or transformer.umap_viz is None:
+            raise ValueError(
+                "Transformer UMAP heads must be fitted when include_umap=True."
+            )
+        umap_clustering = transformer.umap.transform(pca_reduced)
+        umap_visualization = transformer.umap_viz.transform(pca_reduced)
+    else:
+        umap_clustering = np.empty((n_rows, 0), dtype=np.float64)
+        umap_visualization = np.empty((n_rows, 0), dtype=np.float64)
+
+    return TransformArtifacts(
+        index=df.index.copy(),
+        pca_reduced=pca_reduced,
+        umap_clustering=umap_clustering,
+        umap_visualization=umap_visualization,
+        pca_residuals=pca_residuals,
+        pca_mahalanobis=pca_mahalanobis,
+        pca_spectral_entropy=pca_spectral_entropy,
+    )
+
+
 def compute_transform_artifacts(
     df: pd.DataFrame,
     config: TransformConfig | None = None,
@@ -241,30 +291,9 @@ def compute_transform_artifacts(
 
     config = config or TransformConfig()
 
-    # OPTIMIZATION: convert once to float32 to keep memory usage lower for
-    # large embedding matrices (e.g., tens of thousands of rows).
     embedding_vectors = np.stack(df[embed_column].values).astype(np.float32, copy=False)
-
-    # Apply transformation
     transformer = EmbeddingTransformer(config)
     transformer.fit(embedding_vectors)
-
-    # OPTIMIZATION: compute PCA transform once and reuse it for both UMAP outputs
-    # and exported PCA columns (avoids duplicate PCA transform pass).
-    embedding_vectors_normed = transformer._l2_normalize_rows(embedding_vectors)
-    pca_reduced = transformer.pca.transform(embedding_vectors_normed)
-    pca_residuals, pca_mahalanobis, pca_spectral_entropy = (
-        transformer._compute_pca_metrics(embedding_vectors_normed, pca_reduced)
-    )
-    umap_clustering = transformer.umap.transform(pca_reduced)
-    umap_visualization = transformer.umap_viz.transform(pca_reduced)
-
-    return TransformArtifacts(
-        index=df.index.copy(),
-        pca_reduced=pca_reduced,
-        umap_clustering=umap_clustering,
-        umap_visualization=umap_visualization,
-        pca_residuals=pca_residuals,
-        pca_mahalanobis=pca_mahalanobis,
-        pca_spectral_entropy=pca_spectral_entropy,
+    return score_transform_artifacts(
+        df, transformer, embed_column=embed_column, include_umap=True
     )

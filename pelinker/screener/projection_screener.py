@@ -41,7 +41,7 @@ def make_manifold_rbf_svc(cfg: ManifoldOovScreenerConfig) -> SVC:
     )
 
 
-def pick_manifold_oov_winner_by_mean_f1(
+def pick_projection_winner_by_mean_f1(
     lda_mean: float, svm_mean: float, rbf_mean: float
 ) -> ManifoldOovKind:
     """Argmax mean test F1; ties prefer simpler models (lda, then svm, then rbf)."""
@@ -103,16 +103,19 @@ def _stack_metrics(
     )
 
 
-def build_manifold_oov_training_arrays(
+def build_projection_training_arrays(
     prepared: pd.DataFrame,
     manifold_df: pd.DataFrame,
     transformer: object,
     *,
     negative_label: str,
-) -> tuple[np.ndarray, np.ndarray] | None:
+) -> tuple[np.ndarray, np.ndarray, np.ndarray] | None:
     """
     KB rows (class 0) aligned with ``manifold_df`` order; synthetic negatives (class 1)
     from ``prepared`` projected through ``transformer.transform``.
+
+    Returns ``(X, y, prepared_row_pos)`` where ``prepared_row_pos[i]`` is the integer row
+    index in ``prepared`` (iloc order) for stacked row ``X[i]`` (KB block then negatives).
     """
     neg_mask = prepared["entity"].astype(str).values == negative_label
     n_neg = int(np.sum(neg_mask))
@@ -120,6 +123,10 @@ def build_manifold_oov_training_arrays(
         return None
     if len(manifold_df) == 0:
         return None
+
+    pos_kb = np.flatnonzero(~neg_mask)
+    pos_neg = np.flatnonzero(neg_mask)
+    prepared_row_pos = np.concatenate([pos_kb, pos_neg])
 
     emb_kb = np.stack(manifold_df["embed"].values).astype(np.float32, copy=False)
     t = transformer
@@ -135,7 +142,7 @@ def build_manifold_oov_training_arrays(
 
     X = np.vstack([X0, X1])
     y = np.concatenate([y0, y1])
-    return X, y
+    return X, y, prepared_row_pos
 
 
 def _cv_feasible(y: np.ndarray, n_splits: int) -> int | None:
@@ -157,7 +164,7 @@ def _mean_std(values: list[float]) -> tuple[float, float]:
     return m, s
 
 
-def evaluate_manifold_oov_cv(
+def evaluate_projection_cv(
     X: np.ndarray,
     y: np.ndarray,
     cfg: ManifoldOovScreenerConfig,
@@ -229,7 +236,7 @@ def evaluate_manifold_oov_cv(
     lda_m, lda_s = _mean_std(lda_f1s)
     rbf_m, rbf_s = _mean_std(rbf_f1s)
 
-    winner = pick_manifold_oov_winner_by_mean_f1(lda_m, svm_m, rbf_m)
+    winner = pick_projection_winner_by_mean_f1(lda_m, svm_m, rbf_m)
     winner_f1 = lda_m if winner == "lda" else (svm_m if winner == "svm" else rbf_m)
 
     cv_payload: dict[str, object] = {
@@ -242,7 +249,7 @@ def evaluate_manifold_oov_cv(
     return cv_payload, winner
 
 
-def fit_manifold_oov_lda_no_cv(
+def fit_projection_lda_no_cv(
     X: np.ndarray,
     y: np.ndarray,
 ) -> tuple[ManifoldOovScoreModel, dict[str, object]]:
@@ -266,7 +273,7 @@ def fit_manifold_oov_lda_no_cv(
     return ManifoldOovScoreModel(kind="lda", threshold=0.0, _estimator=est), payload
 
 
-def fit_manifold_oov_score_model(
+def fit_projection_score_model(
     X: np.ndarray,
     y: np.ndarray,
     cfg: ManifoldOovScreenerConfig,
