@@ -5,6 +5,10 @@ import matplotlib
 import numpy as np
 import pandas as pd
 
+from pelinker.grid_export import (
+    select_grid_points_at_chosen_min_cluster_size,
+    has_grid_points_for_dbcv_ari_scatter,
+)
 from pelinker.reporting import LinkerFitDiagnostics
 import seaborn as sns
 
@@ -15,11 +19,6 @@ from matplotlib import pyplot as plt
 from matplotlib.lines import Line2D
 from matplotlib.patches import Ellipse, Patch, Polygon, Rectangle, RegularPolygon, Wedge
 from plotly import express as px, graph_objects as go
-
-# Columns appended in ``run/analysis/model_selection.py`` grid export (per-sample summaries).
-GRID_COL_CHOSEN_MIN_CLUSTER_SIZE = "chosen_min_cluster_size"
-GRID_COL_SAMPLE_BEST_DBCV = "sample_best_dbcv"
-GRID_COL_SAMPLE_ARI = "sample_ari"
 
 # χ²(2) critical value at p≈0.95 for Gaussian 95% contour (no scipy).
 _CHI2_PPF_95_DF2 = 5.991464550106692
@@ -335,33 +334,20 @@ def plot_dbcv_vs_ari_from_grid(
     fill colors = base encoder model(s); text = layer spec only (e.g. fusion ``2+3``).
     95% covariance ellipses when ``n_sample`` ≥ 2.
 
-    Expects ``sample_best_dbcv``, ``sample_ari`` on the grid export.
+    Uses ``(dbcv, ari)`` at ``chosen_min_cluster_size`` for each bootstrap ``sample_idx``
+    (same hyperparameter as the vertical line on per-combination error-bar plots).
     Both axes are fixed to ``[0, _AXIS_MAX]``.
 
     Returns:
         True if a figure was written, False if required data were absent.
     """
-    needed = {
-        "model",
-        "layer",
-        "sample_idx",
-        GRID_COL_SAMPLE_BEST_DBCV,
-        GRID_COL_SAMPLE_ARI,
-    }
-    if not needed.issubset(df_grid.columns):
+    if not has_grid_points_for_dbcv_ari_scatter(df_grid):
         return False
 
-    df = df_grid.loc[
-        :,
-        [
-            "model",
-            "layer",
-            "sample_idx",
-            GRID_COL_SAMPLE_BEST_DBCV,
-            GRID_COL_SAMPLE_ARI,
-        ],
-    ].drop_duplicates(subset=["model", "layer", "sample_idx"], keep="first")
-    df = df[df[GRID_COL_SAMPLE_ARI].notna()].copy()
+    try:
+        df = select_grid_points_at_chosen_min_cluster_size(df_grid)
+    except ValueError:
+        return False
     if df.empty:
         return False
 
@@ -376,8 +362,8 @@ def plot_dbcv_vs_ari_from_grid(
     for (model, layer), g in df.groupby(["model", "layer"], sort=False):
         xy = np.column_stack(
             [
-                g[GRID_COL_SAMPLE_BEST_DBCV].to_numpy(dtype=np.float64),
-                g[GRID_COL_SAMPLE_ARI].to_numpy(dtype=np.float64),
+                g["dbcv"].to_numpy(dtype=np.float64),
+                g["ari"].to_numpy(dtype=np.float64),
             ]
         )
         mean = xy.mean(axis=0)
@@ -433,9 +419,11 @@ def plot_dbcv_vs_ari_from_grid(
     ax.set_xlim(0.0, _AXIS_MAX)
     ax.set_ylim(0.0, _AXIS_MAX)
     ax.set_aspect("equal")
-    ax.set_xlabel("DBCV (per-sample best, mean over samples)")
-    ax.set_ylabel("Adjusted Rand Index (per-sample, mean over samples)")
-    ax.set_title("DBCV vs ARI; dashed ellipse ≈95% (n_sample >= 2)")
+    ax.set_xlabel("DBCV at chosen min_cluster_size (mean over samples)")
+    ax.set_ylabel("ARI at chosen min_cluster_size (mean over samples)")
+    ax.set_title(
+        "DBCV vs ARI at consensus hyperparameter; dashed ellipse ≈95% (n_sample >= 2)"
+    )
 
     order_a = ["singleton", "fusion2", "fusion3"]
     arity_labels = {
@@ -1126,11 +1114,60 @@ def diagnostics_to_pairgrid_dataframe(diag: LinkerFitDiagnostics) -> pd.DataFram
     )
 
 
+_PCA_CLASS_MARKERS: dict[str, str] = {
+    "positive": "o",
+    "negative": "^",
+}
+
+
+def _balanced_subsample_by_class(
+    source: pd.DataFrame,
+    n: int,
+    class_col: str,
+) -> pd.DataFrame:
+    """Cap each class at n // n_classes so minority classes stay visible in plots."""
+    classes = sorted(source[class_col].unique())
+    if not classes:
+        return source.iloc[0:0].copy()
+    if len(source) <= n:
+        return source.copy()
+    n_per = max(1, n // len(classes))
+    parts: list[pd.DataFrame] = []
+    for cls in classes:
+        sub = source.loc[source[class_col] == cls]
+        k = min(len(sub), n_per)
+        if k > 0:
+            parts.append(sub.sample(n=k, random_state=0))
+    if not parts:
+        return source.iloc[0:0].copy()
+    return pd.concat(parts, ignore_index=True)
+
+
+def _pca_pairgrid_title(
+    *,
+    subtitle: str | None,
+    plot_df: pd.DataFrame,
+    class_col: str,
+    scatter_df: pd.DataFrame,
+    kde_df: pd.DataFrame,
+) -> str:
+    raw_counts = plot_df[class_col].value_counts()
+    count_bits = " ".join(
+        f"{cls}={int(raw_counts[cls]):,}" for cls in sorted(raw_counts.index)
+    )
+    head = subtitle if subtitle else "PCA quality"
+    return (
+        f"{head} | {count_bits} | "
+        f"n={len(plot_df):,} plot scatter={len(scatter_df):,} kde={len(kde_df):,}"
+    )
+
+
 def plot_pca_quality_pairgrid(
     df: pd.DataFrame,
     output_path: pathlib.Path,
     *,
     class_col: str = "class_label",
+    subtitle: str | None = None,
     max_scatter_points: int = 4_000,
     max_kde_points: int = 20_000,
 ) -> bool:
@@ -1138,15 +1175,16 @@ def plot_pca_quality_pairgrid(
     PairGrid of PCA quality features (pca_residual, pca_spectral_entropy, pca_mahalanobis)
     with hue for class (negative / positive).
 
-    Upper triangle: scatter on a class-stratified subsample (≤ max_scatter_points total).
-    Lower triangle & diagonal: KDE on a larger stratified subsample (≤ max_kde_points total)
-    so that density estimates remain representative without rendering millions of points.
+    Upper triangle: balanced class subsample (equal cap per class) with distinct markers.
+    Lower triangle & diagonal: KDE per hue with ``common_norm=False`` so each class is
+    normalized on its own scale (not pooled against the majority class).
 
     Args:
         df: DataFrame with feature columns and class_col.
         output_path: PNG path (PDF sibling also written).
         class_col: Column used for hue.
-        max_scatter_points: Cap for upper-triangle scatter layer.
+        subtitle: Combo label for the figure suptitle (e.g. model/layer/sample).
+        max_scatter_points: Cap for upper-triangle scatter layer (split evenly by class).
         max_kde_points: Cap for lower-triangle KDE and diagonal KDE layers.
     """
     feature_cols = ["pca_residual", "pca_spectral_entropy", "pca_mahalanobis"]
@@ -1158,39 +1196,33 @@ def plot_pca_quality_pairgrid(
     if plot_df.empty:
         return False
 
-    def _stratified_subsample(source: pd.DataFrame, n: int) -> pd.DataFrame:
-        """Downsample proportionally per class so class balance is preserved."""
-        if len(source) <= n:
-            return source
-        classes = source[class_col].unique()
-        fracs: list[pd.DataFrame] = []
-        for cls in classes:
-            sub = source[source[class_col] == cls]
-            k = max(1, round(n * len(sub) / len(source)))
-            fracs.append(sub.sample(n=min(k, len(sub)), random_state=0))
-        return pd.concat(fracs, ignore_index=True)
+    scatter_df = _balanced_subsample_by_class(plot_df, max_scatter_points, class_col)
+    kde_df = _balanced_subsample_by_class(plot_df, max_kde_points, class_col)
 
-    scatter_df = _stratified_subsample(plot_df, max_scatter_points)
-    kde_df = _stratified_subsample(plot_df, max_kde_points)
-
-    n_total = len(plot_df)
-    n_scatter = len(scatter_df)
-    n_kde = len(kde_df)
-
-    # Resolve palette once so both layers share the same class→color mapping.
-    classes = sorted(kde_df[class_col].unique())
+    classes = sorted(plot_df[class_col].unique())
     palette = sns.color_palette("Set2", n_colors=len(classes))
     color_map = dict(zip(classes, palette, strict=True))
+    marker_map = {
+        cls: _PCA_CLASS_MARKERS.get(str(cls), ("o", "^")[i % 2])
+        for i, cls in enumerate(classes)
+    }
+    class_sizes = plot_df[class_col].value_counts()
+    # Draw majority first, minority on top in scatter panels.
+    classes_by_size = sorted(classes, key=lambda c: int(class_sizes.get(c, 0)))
 
-    # Build grid using kde_df (larger sample) for lower triangle + diagonal.
     g = sns.PairGrid(
         kde_df, vars=feature_cols, hue=class_col, palette=color_map, diag_sharey=False
     )
-    g.map_lower(sns.kdeplot, fill=True, alpha=0.35, thresh=0.05)
-    g.map_diag(sns.kdeplot, lw=2)
+    g.map_lower(
+        sns.kdeplot,
+        fill=True,
+        alpha=0.4,
+        thresh=0.05,
+        common_norm=False,
+        legend=False,
+    )
+    g.map_diag(sns.kdeplot, lw=2, common_norm=False, fill=False, legend=False)
 
-    # Upper triangle: scatter the smaller subsample by iterating axes directly
-    # so we control which data is rendered without re-initialising the grid.
     n_vars = len(feature_cols)
     for row in range(n_vars):
         for col in range(n_vars):
@@ -1199,25 +1231,52 @@ def plot_pca_quality_pairgrid(
             ax = g.axes[row, col]
             x_col = feature_cols[col]
             y_col = feature_cols[row]
-            for cls in classes:
-                sub = scatter_df[scatter_df[class_col] == cls]
+            for z, cls in enumerate(classes_by_size):
+                sub = scatter_df.loc[scatter_df[class_col] == cls]
+                if sub.empty:
+                    continue
                 ax.scatter(
                     sub[x_col].to_numpy(),
                     sub[y_col].to_numpy(),
                     color=color_map[cls],
-                    alpha=0.45,
-                    s=12,
-                    linewidths=0,
+                    marker=marker_map[cls],
+                    alpha=0.55,
+                    s=16,
+                    linewidths=0.35,
+                    edgecolors="white",
                     rasterized=True,
-                    label=str(cls),
+                    zorder=z + 1,
                 )
 
-    g.add_legend(title="class")
+    legend_handles = [
+        Line2D(
+            [0],
+            [0],
+            marker=marker_map[cls],
+            color="w",
+            markerfacecolor=color_map[cls],
+            markeredgecolor="white",
+            markeredgewidth=0.35,
+            markersize=7,
+            label=str(cls),
+            linestyle="",
+        )
+        for cls in classes
+    ]
+    g.axes[0, 0].legend(
+        handles=legend_handles, title="class", loc="best", framealpha=0.9
+    )
+
     g.figure.suptitle(
-        f"PCA quality diagnostics by class — "
-        f"scatter n={n_scatter:,} / KDE n={n_kde:,} (total {n_total:,})",
+        _pca_pairgrid_title(
+            subtitle=subtitle,
+            plot_df=plot_df,
+            class_col=class_col,
+            scatter_df=scatter_df,
+            kde_df=kde_df,
+        ),
         y=1.02,
-        fontsize=11,
+        fontsize=10,
     )
     g.figure.tight_layout()
     _save_figure_multi_format(g.figure, output_path)

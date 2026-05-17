@@ -11,18 +11,12 @@ from pelinker.clustering_grid import (
     aggregate_grid_metrics,
     solve_optimal_min_cluster_size_from_aggregated,
 )
-from pelinker.plotting import (
-    GRID_COL_CHOSEN_MIN_CLUSTER_SIZE,
-    GRID_COL_SAMPLE_ARI,
-    GRID_COL_SAMPLE_BEST_DBCV,
-)
 from pelinker.embedding_fusion import concat_mention_level_embedding_sources
 from pelinker.reporting import (
     AllScreenerCvResult,
     BinaryClassifierMetrics,
     ClusteringFitMetrics,
     MetricMeanStd,
-    ModelSelectionReport,
     NegativeScreenerInSampleMetrics,
     PerDatapointScores,
     entity_negative_label_mask_01,
@@ -216,39 +210,6 @@ def pooled_min_cluster_size_from_metrics_dfs(
         derivative_rel_tol=config.grid_derivative_rel_tol,
     )
     return solved.chosen_min_cluster_size, solved.score_mean_at_chosen
-
-
-def metrics_df_with_grid_sample_columns(
-    report: ModelSelectionReport,
-    *,
-    model: str,
-    layer: str,
-    sample_idx: int,
-    chosen_min_cluster_size: int | None = None,
-) -> pd.DataFrame:
-    """
-    Per-sample grid rows for ``results_grid_per_sample.csv``.
-
-    ``chosen_min_cluster_size`` defaults to the value used to fit this sample's clusters
-    (per-sample grid argmax). Pass the pooled choice from
-    :func:`pooled_min_cluster_size_from_metrics_dfs` so every row shares one consensus marker.
-    """
-    ari = report.ari
-    h = (
-        chosen_min_cluster_size
-        if chosen_min_cluster_size is not None
-        else report.hyperparameters.min_cluster_size
-    )
-    return report.metrics_df.assign(
-        model=model,
-        layer=layer,
-        sample_idx=sample_idx,
-        **{
-            GRID_COL_CHOSEN_MIN_CLUSTER_SIZE: int(h),
-            GRID_COL_SAMPLE_BEST_DBCV: float(report.best_score),
-            GRID_COL_SAMPLE_ARI: float("nan") if ari is None else float(ari),
-        },
-    )
 
 
 def split_by_negative_label(

@@ -19,7 +19,7 @@ from pelinker.model_selection_checkpoint import DEFAULT_CHECKPOINT_NAME
         "per-combination DBCV/ARI/n_clusters metric plots (PNG+PDF), "
         "DBCV vs ARI scatter, perf/ARI heatmaps, screener LDA & SVM & best AUC, "
         "OOV and combined AUC, grouped AUC bar chart, top-combo ROC curves, "
-        "and PCA quality pair grid. "
+        "and per-combination PCA quality pair grids. "
         "Requires model_selection.state.json.gz (checkpoint); optional "
         "results_grid_per_sample.csv, fine_screener_eval.jsonl.gz, and "
         "fine_metadata.jsonl.gz."

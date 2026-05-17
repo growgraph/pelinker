@@ -19,9 +19,12 @@ from rich.progress import (
 )
 from rich.table import Table
 
-from pelinker.analysis import (
-    metrics_df_with_grid_sample_columns,
-    pooled_min_cluster_size_from_metrics_dfs,
+from pelinker.analysis import pooled_min_cluster_size_from_metrics_dfs
+from pelinker.grid_export import (
+    GRID_COL_CHOSEN_MIN_CLUSTER_SIZE,
+    GRID_EXPORT_ID_COLUMNS,
+    grid_export_column_order,
+    grid_export_rows_from_report,
 )
 from pelinker.sampling import draw_selection_sample
 from pelinker.selection import (
@@ -53,9 +56,6 @@ from pelinker.config import ClusteringOptimizationConfig, NegativeScreenerConfig
 from pelinker.onto import NEGATIVE_LABEL
 from pelinker.ops import parse_model_filename
 from pelinker.plotting import (
-    GRID_COL_CHOSEN_MIN_CLUSTER_SIZE,
-    GRID_COL_SAMPLE_BEST_DBCV,
-    GRID_COL_SAMPLE_ARI,
     plot_dbcv_vs_ari_from_grid,
     plot_heatmap,
     plot_metrics,
@@ -82,7 +82,7 @@ from pelinker.reporting import (
 )
 from pelinker.transform import TransformConfig
 
-id_columns = ["model", "layer", "sample_idx", "min_cluster_size"]
+id_columns = list(GRID_EXPORT_ID_COLUMNS)
 
 
 def _path_by_model_layer(
@@ -218,6 +218,92 @@ def _with_validated_class_label(
     return out
 
 
+def _safe_combo_plot_stem(model: str, layer: str) -> str:
+    safe_layer = str(layer).replace("/", "_").replace("+", "__")
+    return f"{model}_{safe_layer}"
+
+
+def _pca_pairgrid_output_path(
+    report_path: pathlib.Path,
+    *,
+    model: str,
+    layer: str,
+    sample_idx: int,
+) -> pathlib.Path:
+    stem = _safe_combo_plot_stem(model, layer)
+    return report_path / f"{stem}_sample{int(sample_idx)}_pca_quality_pairgrid.png"
+
+
+def _write_pca_quality_pairgrids_from_fine_metadata(
+    fm: pd.DataFrame,
+    report_path: pathlib.Path,
+    *,
+    source_name: str,
+) -> tuple[list[pathlib.Path], list[str]]:
+    """
+    Write one PCA quality pair grid per (model, layer, sample_idx).
+
+    Each slice uses a single transform fit; rows from different combos are never mixed.
+    """
+    if fm.empty:
+        return [], []
+
+    group_cols = ["model", "layer", "sample_idx"]
+    missing_group = [c for c in group_cols if c not in fm.columns]
+    if missing_group:
+        return [], [
+            "PCA quality pair grid: fine metadata missing " + ", ".join(missing_group)
+        ]
+
+    needed = {
+        "pca_residual",
+        "pca_spectral_entropy",
+        "pca_mahalanobis",
+        "oov_label",
+    }
+    if not needed.issubset(fm.columns):
+        return [], [
+            "PCA quality pair grid: missing "
+            + ", ".join(sorted(needed - set(fm.columns)))
+        ]
+
+    written: list[pathlib.Path] = []
+    skipped: list[str] = []
+
+    for keys, combo_df in fm.groupby(group_cols, sort=False):
+        model, layer, sample_idx = keys
+        label = f"{model}/{layer} sample {sample_idx}"
+        combo_source = f"{source_name} [{label}]"
+        try:
+            combo_plot = _with_validated_class_label(combo_df, source_name=combo_source)
+        except ValueError as exc:
+            skipped.append(f"PCA quality pair grid ({label}): {exc}")
+            continue
+
+        out_path = _pca_pairgrid_output_path(
+            report_path,
+            model=str(model),
+            layer=str(layer),
+            sample_idx=int(sample_idx),
+        )
+        if plot_pca_quality_pairgrid(
+            combo_plot,
+            out_path,
+            class_col="class_label",
+            subtitle=label,
+        ):
+            written.append(out_path)
+        else:
+            skipped.append(
+                f"PCA quality pair grid ({label}): no plottable rows after dropna"
+            )
+
+    if not written and not skipped:
+        skipped.append("PCA quality pair grid: no (model, layer, sample_idx) groups")
+
+    return written, skipped
+
+
 def _materialize_best_report(
     top: ClusteringSearchSummaryRow,
     *,
@@ -317,24 +403,8 @@ def _fine_clustering_metadata_df(
     return out
 
 
-def _per_sample_grid_column_order() -> list[str]:
-    return [
-        "model",
-        "layer",
-        "sample_idx",
-        GRID_COL_CHOSEN_MIN_CLUSTER_SIZE,
-        GRID_COL_SAMPLE_BEST_DBCV,
-        GRID_COL_SAMPLE_ARI,
-        "min_cluster_size",
-        "icm",
-        "n_clusters",
-        "dbcv",
-        "ari",
-    ]
-
-
 def _dedupe_per_sample_grid(df: pd.DataFrame) -> pd.DataFrame:
-    grid_cols = _per_sample_grid_column_order()
+    grid_cols = grid_export_column_order()
     ordered = [c for c in grid_cols if c in df.columns]
     tail = [c for c in df.columns if c not in ordered]
     out = df[ordered + tail]
@@ -626,8 +696,8 @@ def render_model_selection_summary_figures(
     Writes the same PNG filenames as ``model_selection`` end-of-run and corresponding
     PDF siblings: ``model.perf.heatmap.png``, ``model.*.heatmap.png`` (scores, ARI,
     screener LDA/SVM/best, OOV, combined), ``model.screener_oov_auc.png``,
-    ``model.roc_curves.png``, ``model.dbcv_vs_ari.png``,
-    ``model.pca_quality_pairgrid.png``.
+    ``model.roc_curves.png``, ``model.dbcv_vs_ari.png``, and per-combination
+    ``{model}_{layer}_sample{n}_pca_quality_pairgrid.png`` files from fine metadata.
     """
     report_path = report_path.expanduser()
     ckpt_file = (
@@ -822,17 +892,13 @@ def render_model_selection_summary_figures(
 
     fm = _read_optional_jsonl_gzip(fm_path)
     if fm is not None and not fm.empty:
-        fm_plot = _with_validated_class_label(
+        pca_written, pca_skipped = _write_pca_quality_pairgrids_from_fine_metadata(
             fm,
+            report_path,
             source_name=f"summary figures ({fm_path})",
         )
-        pca_pair_path = _summary_plot_path(report_path, "model.pca_quality_pairgrid")
-        if plot_pca_quality_pairgrid(fm_plot, pca_pair_path, class_col="class_label"):
-            written.append(pca_pair_path)
-        else:
-            skipped.append(
-                "PCA quality pair grid: missing pca_residual/pca_spectral_entropy/pca_mahalanobis columns"
-            )
+        written.extend(pca_written)
+        skipped.extend(pca_skipped)
     else:
         skipped.append(
             f"PCA quality pair grid: fine metadata missing or empty: {fm_path}"
@@ -1278,7 +1344,7 @@ def main(
                 file_metrics: list[pd.DataFrame] = []
                 file_reports: list[ModelSelectionReport] = []
                 all_metrics_dfs: list[pd.DataFrame] = []
-                grid_batch: list[pd.DataFrame] = []
+                grid_report_samples: list[tuple[int, ModelSelectionReport]] = []
                 combo_screener_frames: list[pd.DataFrame] = []
 
                 optimization_config = _clustering_optimization_config_for_run(
@@ -1359,14 +1425,7 @@ def main(
                     if report is not None:
                         file_metrics.append(report.metrics_df)
                         file_reports.append(report)
-                        grid_batch.append(
-                            metrics_df_with_grid_sample_columns(
-                                report,
-                                model=model,
-                                layer=layer,
-                                sample_idx=sample_idx,
-                            )
-                        )
+                        grid_report_samples.append((sample_idx, report))
                         fine_metadata_frames.append(
                             _fine_clustering_metadata_df(
                                 report,
@@ -1399,8 +1458,16 @@ def main(
                         all_metrics_dfs,
                         optimization_config,
                     )
-                    for _gf in grid_batch:
-                        _gf[GRID_COL_CHOSEN_MIN_CLUSTER_SIZE] = pooled_mcs
+                    grid_batch = [
+                        grid_export_rows_from_report(
+                            report,
+                            model=model,
+                            layer=layer,
+                            sample_idx=sample_idx,
+                            chosen_min_cluster_size=pooled_mcs,
+                        )
+                        for sample_idx, report in grid_report_samples
+                    ]
                     detailed_grid_frames.extend(grid_batch)
 
                     metrics_by_file[(model, layer)] = file_metrics
@@ -1550,7 +1617,9 @@ def main(
                     fusion_metrics: list[pd.DataFrame] = []
                     fusion_reports: list[ModelSelectionReport] = []
                     fusion_all_metrics_dfs: list[pd.DataFrame] = []
-                    fusion_grid_batch: list[pd.DataFrame] = []
+                    fusion_grid_report_samples: list[
+                        tuple[int, ModelSelectionReport]
+                    ] = []
                     fusion_combo_screener_frames: list[pd.DataFrame] = []
 
                     optimization_config = _clustering_optimization_config_for_run(
@@ -1621,14 +1690,7 @@ def main(
                         if report is not None:
                             fusion_metrics.append(report.metrics_df)
                             fusion_reports.append(report)
-                            fusion_grid_batch.append(
-                                metrics_df_with_grid_sample_columns(
-                                    report,
-                                    model=model_label,
-                                    layer=layer_label,
-                                    sample_idx=sample_idx,
-                                )
-                            )
+                            fusion_grid_report_samples.append((sample_idx, report))
                             fine_metadata_frames.append(
                                 _fine_clustering_metadata_df(
                                     report,
@@ -1660,8 +1722,16 @@ def main(
                             fusion_all_metrics_dfs,
                             optimization_config,
                         )
-                        for _gf in fusion_grid_batch:
-                            _gf[GRID_COL_CHOSEN_MIN_CLUSTER_SIZE] = pooled_mcs
+                        fusion_grid_batch = [
+                            grid_export_rows_from_report(
+                                report,
+                                model=model_label,
+                                layer=layer_label,
+                                sample_idx=sample_idx,
+                                chosen_min_cluster_size=pooled_mcs,
+                            )
+                            for sample_idx, report in fusion_grid_report_samples
+                        ]
                         detailed_grid_frames.extend(fusion_grid_batch)
 
                         fusion_summary = summarize_clustering_reports_for_search(
@@ -1910,19 +1980,6 @@ def main(
         console.print(
             f"[green]✓[/green] UMAP visualization saved to: [cyan]{umap_viz_path}[/cyan]"
         )
-        if fm is not None and not fm.empty:
-            pca_pair_path = report_path / "model.pca_quality_pairgrid.png"
-            fm_plot = _with_validated_class_label(
-                fm,
-                source_name=f"model_selection main ({fine_metadata_path})",
-            )
-            if plot_pca_quality_pairgrid(
-                fm_plot, pca_pair_path, class_col="class_label"
-            ):
-                console.print(
-                    "[green]✓[/green] PCA quality pair grid saved to: "
-                    f"[cyan]{pca_pair_path}[/cyan] (and PDF sibling)"
-                )
 
     checkpoint_payload = {
         "path": str(ckpt_path),
