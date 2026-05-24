@@ -43,6 +43,7 @@ from pelinker.analysis import (
     mention_frame_from_embedding_paths,
     split_by_negative_label,
 )
+from pelinker.sampling import stratified_mention_sample
 from pelinker.reporting import (
     ClusteringFitMetrics,
     ClusteringHyperparameters,
@@ -54,11 +55,13 @@ from pelinker.reporting import (
 )
 from pelinker.embedder import embed_kb_corpus
 from pelinker.embedding_fusion import (
+    MENTION_PROVENANCE_COLUMNS,
     fused_property_vectors_from_paths,
     property_fused_dataframe_for_linker_order,
 )
 from pelinker.linker_cluster_training import (
     cluster_composition_from_training_frame,
+    cluster_derived_labels_map,
     consensus_cluster_names,
     provisional_cluster_assignments_from_training_frame as _provisional_cluster_assignments_from_training_frame,
 )
@@ -116,12 +119,31 @@ class _ClusteringFitStepResult:
     fit_metrics: ClusteringFitMetrics
 
 
-def _fit_ambient_screener_step(
+def _screener_training_frame(
     prepared: pd.DataFrame,
+    fit_cfg: LinkerFitConfig,
+    *,
+    negative_label: str,
+) -> pd.DataFrame:
+    """Stratified subsample for screener fitting (aligned with model-selection draws)."""
+    cap = fit_cfg.screener_max_rows
+    if cap is None or len(prepared) <= cap:
+        return prepared
+    return stratified_mention_sample(
+        prepared,
+        n_target=cap,
+        negative_label=negative_label,
+        random_state=fit_cfg.screener_seed,
+    )
+
+
+def _fit_ambient_screener_step(
+    prepared_full: pd.DataFrame,
+    screener_fit_frame: pd.DataFrame,
     ns_cfg: NegativeScreenerConfig,
 ) -> _NegativeScreenerFitStepResult:
-    screener, metrics = fit_ambient_screener_with_metrics(prepared, ns_cfg)
-    x_emb = np.stack(prepared["embed"].values).astype(np.float32, copy=False)
+    screener, metrics = fit_ambient_screener_with_metrics(screener_fit_frame, ns_cfg)
+    x_emb = np.stack(prepared_full["embed"].values).astype(np.float32, copy=False)
     decision = np.asarray(screener.decision_function(x_emb), dtype=np.float64).ravel()
     return _NegativeScreenerFitStepResult(
         screener=screener,
@@ -410,6 +432,7 @@ class Linker:
         self.training_pca_reduced: np.ndarray | None = None
         self.cluster_composition: ClusterCompositionSnapshot | None = None
         self.cluster_consensus_names: dict[int, str] = {}
+        self.cluster_derived_labels_map: dict[str, str] = {}
         self.screener: NegativeClassScreener | None = None
         self.screener_in_sample_metrics: NegativeScreenerInSampleMetrics | None = None
         self.clustering_fit_metrics: ClusteringFitMetrics | None = None
@@ -508,6 +531,8 @@ class Linker:
             pe_model.cluster_composition = None
         if "cluster_consensus_names" not in pe_model.__dict__:
             pe_model.cluster_consensus_names = {}
+        if "cluster_derived_labels_map" not in pe_model.__dict__:
+            pe_model.cluster_derived_labels_map = {}
         if "nlp_model_name" not in pe_model.__dict__:
             pe_model.nlp_model_name = "en_core_web_trf"
         if "_nlp" not in pe_model.__dict__:
@@ -601,10 +626,15 @@ class Linker:
             ]
         )
 
-        assignments = tcf[["entity", "cluster"]].copy()
-        for col in ("pmid", "mention"):
-            if col in tcf.columns:
-                assignments[col] = tcf[col]
+        base_cols = ["entity", "cluster", "pmid", "mention"]
+        optional_cols = [
+            *MENTION_PROVENANCE_COLUMNS,
+            "screener_score",
+            "projection_score",
+            "cluster_score",
+        ]
+        keep = [c for c in base_cols + optional_cols if c in tcf.columns]
+        assignments = tcf[keep].copy()
 
         number_properties = int(tcf["entity"].nunique())
 
@@ -808,15 +838,21 @@ class Linker:
         min_cluster_size: int,
         kb_config: KBConfig | None,
     ) -> None:
-        """Fit negative screener, manifold OOV (optional), then PCA/UMAP + HDBSCAN on KB rows."""
+        """Fit screeners on a stratified cap, then PCA/UMAP + HDBSCAN on all KB rows."""
         ns_cfg = fit_cfg.ambient_screener
         mo_cfg = fit_cfg.projection_screener
+        neg_label = ns_cfg.negative_label
 
-        neg_step = _fit_ambient_screener_step(prepared, ns_cfg)
+        screener_prepared = _screener_training_frame(
+            prepared, fit_cfg, negative_label=neg_label
+        )
+        _, manifold_screener = split_by_negative_label(screener_prepared, neg_label)
+
+        neg_step = _fit_ambient_screener_step(prepared, screener_prepared, ns_cfg)
         self.screener = neg_step.screener
         self.screener_in_sample_metrics = neg_step.in_sample_metrics
 
-        _, manifold_df = split_by_negative_label(prepared, ns_cfg.negative_label)
+        _, manifold_df = split_by_negative_label(prepared, neg_label)
         if len(manifold_df) == 0:
             raise ValueError(
                 "No rows left after excluding negative-label mentions for manifold fit"
@@ -833,8 +869,8 @@ class Linker:
         self.training_pca_reduced = tx_step.pca_reduced
 
         mo_step = _fit_projection_step(
-            prepared,
-            manifold_df,
+            screener_prepared,
+            manifold_screener,
             self.transformer,
             ns_cfg,
             mo_cfg,
@@ -851,12 +887,21 @@ class Linker:
         cluster_labels = cl_step.cluster_labels
         self.clustering_fit_metrics = cl_step.fit_metrics
 
+        built_mo_diag: tuple[np.ndarray, np.ndarray, np.ndarray] | None = None
+        if mo_cfg.enabled:
+            built_mo_diag = build_projection_training_arrays(
+                prepared,
+                manifold_df,
+                self.transformer,
+                negative_label=neg_label,
+            )
+
         full_diag = _linker_fit_diagnostics_full(
             prepared=prepared,
-            negative_label=ns_cfg.negative_label,
+            negative_label=neg_label,
             screener_decision=neg_step.decision,
             transformer=self.transformer,
-            built_mo=mo_step.built_training,
+            built_mo=built_mo_diag,
             mo_model=self.projection,
             sample_random_state=fit_cfg.diagnostics_random_state,
         )
@@ -873,8 +918,23 @@ class Linker:
                 "Prepared mention frame missing columns required for "
                 f"training_cluster_frame: {missing}"
             )
+        neg_mask = prepared["entity"].astype(str).values == neg_label
+        manifold_mask = ~neg_mask
+        _, cluster_probs = approximate_predict(
+            cl_step.clusterer, tx_step.umap_clustering
+        )
+        cluster_scores = np.asarray(cluster_probs, dtype=np.float64).ravel()
+
         self.training_cluster_frame = manifold_df[tc_cols].copy()
+        for col in MENTION_PROVENANCE_COLUMNS:
+            if col in manifold_df.columns:
+                self.training_cluster_frame[col] = manifold_df[col].values
         self.training_cluster_frame["cluster"] = cluster_labels
+        self.training_cluster_frame["screener_score"] = neg_step.decision[manifold_mask]
+        self.training_cluster_frame["projection_score"] = full_diag.projection_score[
+            manifold_mask
+        ]
+        self.training_cluster_frame["cluster_score"] = cluster_scores
 
         self.cluster_composition = cluster_composition_from_training_frame(
             self.training_cluster_frame
@@ -884,6 +944,11 @@ class Linker:
         self.cluster_assignments = _provisional_cluster_assignments_from_training_frame(
             self.labels_map,
             self.training_cluster_frame,
+        )
+        self.cluster_derived_labels_map = cluster_derived_labels_map(
+            self.labels_map,
+            self.cluster_assignments,
+            self.cluster_composition,
         )
         self.vocabulary = sorted(self.cluster_assignments.keys())
         if not self.vocabulary:

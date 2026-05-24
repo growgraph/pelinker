@@ -19,16 +19,20 @@ def _report_from_arrays(
     means: list[float],
     stds: list[float],
     counts: list[int],
+    *,
+    n_clusters: list[float] | None = None,
 ) -> AggregatedGridReport:
+    if n_clusters is None:
+        n_clusters = [float("nan")] * len(sizes)
     points = [
         AggregatedGridPoint(
             min_cluster_size=s,
             dbcv=ScalarMetricAggregate(mean=m, std=sd, count=c),
             icm_mean=float("nan"),
-            n_clusters_mean=float("nan"),
+            n_clusters_mean=float(nc),
             ari=ScalarMetricAggregate(mean=float("nan"), std=0.0, count=0),
         )
-        for s, m, sd, c in zip(sizes, means, stds, counts, strict=True)
+        for s, m, sd, c, nc in zip(sizes, means, stds, counts, n_clusters, strict=True)
     ]
     return AggregatedGridReport(points=tuple(points))
 
@@ -226,6 +230,65 @@ def test_noisy_dbcv_does_not_pick_spurious_early_plateau() -> None:
         precision_weighted_smooth=False,
     )
     assert out.chosen_min_cluster_size == 55
+
+
+def test_cluster_count_reward_prefers_more_clusters_on_flat_dbcv() -> None:
+    """When DBCV is flat, log cluster penalty should favor smaller min_cluster_size (more clusters)."""
+    sizes = [20, 40, 60, 80]
+    means = [0.70, 0.71, 0.69, 0.70]
+    n_clusters = [120.0, 80.0, 60.0, 50.0]
+    r = _report_from_arrays(sizes, means, [0.02] * 4, [5] * 4, n_clusters=n_clusters)
+    without = solve_optimal_min_cluster_size_from_aggregated(
+        r,
+        objective="dbcv",
+        method="mean",
+        smooth_window=1,
+        plateau_fraction=0.5,
+        derivative_rel_tol=1.0,
+        precision_weighted_smooth=False,
+        cluster_count_reward=0.0,
+    )
+    with_reward = solve_optimal_min_cluster_size_from_aggregated(
+        r,
+        objective="dbcv",
+        method="mean",
+        smooth_window=1,
+        plateau_fraction=0.5,
+        derivative_rel_tol=1.0,
+        precision_weighted_smooth=False,
+        cluster_count_reward=0.15,
+    )
+    assert without.chosen_min_cluster_size >= with_reward.chosen_min_cluster_size
+    assert with_reward.chosen_min_cluster_size == 20
+    assert with_reward.y_cluster_term[0] == pytest.approx(0.0)
+    assert all(t <= 0.0 for t in with_reward.y_cluster_term)
+
+
+def test_pooled_grid_solve_from_metrics_dfs_returns_y_objective() -> None:
+    from pelinker.analysis import pooled_grid_solve_from_metrics_dfs
+
+    sizes = [20, 40, 60]
+    df = pd.DataFrame(
+        {
+            "min_cluster_size": sizes,
+            "icm": [0.1, 0.1, 0.1],
+            "n_clusters": [120.0, 80.0, 50.0],
+            "dbcv": [0.70, 0.71, 0.69],
+            "ari": [0.9, 0.91, 0.92],
+        }
+    )
+    solved = pooled_grid_solve_from_metrics_dfs(
+        [df],
+        optimization_config=None,
+    )
+    assert len(solved.y_objective) == len(solved.x)
+    assert solved.chosen_min_cluster_size in sizes
+
+
+def test_cluster_count_reward_negative_raises() -> None:
+    r = _report_from_arrays([10], [1.0], [0.0], [1], n_clusters=[5.0])
+    with pytest.raises(ValueError, match="cluster_count_reward"):
+        solve_optimal_min_cluster_size_from_aggregated(r, cluster_count_reward=-0.1)
 
 
 def test_finite_mask_drops_non_finite_objective() -> None:

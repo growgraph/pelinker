@@ -176,6 +176,19 @@ wheels = [
 ]
 
 [[package]]
+dependencies = [
+  {name = "matplotlib"},
+  {name = "narwhals"}
+]
+name = "bumplot"
+sdist = {hash = "sha256:2e395d35a2df7c0ed8595c32a960d0d6e5dfffabda751194ccf07b6581a6945a", size = 100688, upload-time = "2026-01-28T08:58:59.622Z", url = "https://files.pythonhosted.org/packages/22/8b/584fa73adfa5478e827344e4b20074ed50a4af87f0499cf40e799f18b70c/bumplot-0.2.1.tar.gz"}
+source = {registry = "https://pypi.org/simple"}
+version = "0.2.1"
+wheels = [
+  {hash = "sha256:e99414f2fb402bad4654bb8e31e4873d43316dcf4d067113a160b4dc8ae16b76", size = 8237, upload-time = "2026-01-28T08:58:58.072Z", url = "https://files.pythonhosted.org/packages/1b/e2/70ac5746af9f9ce87742e0e49e53c9f1d35589aaf4a55312d60100601fb4/bumplot-0.2.1-py3-none-any.whl"}
+]
+
+[[package]]
 name = "catalogue"
 sdist = {hash = "sha256:4f56daa940913d3f09d589c191c74e5a6d51762b3a9e37dd53b7437afd6cda15", size = 19561, upload-time = "2023-09-25T06:29:24.962Z", url = "https://files.pythonhosted.org/packages/38/b4/244d58127e1cdf04cf2dc7d9566f0d24ef01d5ce21811bab088ecc62b5ea/catalogue-2.0.10.tar.gz"}
 source = {registry = "https://pypi.org/simple"}
@@ -2766,8 +2779,10 @@ version = "0.2.0"
 provides-extras = ["dev", "docs", "gpu"]
 requires-dist = [
   {extras = ["python"], marker = "extra == 'docs'", name = "mkdocstrings", specifier = ">=0.29.1"},
+  {marker = "extra == 'dev'", name = "bumplot", specifier = ">=0.2.1"},
   {marker = "extra == 'dev'", name = "plotly", specifier = ">=6.2.0,<7"},
   {marker = "extra == 'dev'", name = "pre-commit", specifier = ">=4.0.1,<5"},
+  {marker = "extra == 'dev'", name = "pysankey", specifier = ">=0.0.1"},
   {marker = "extra == 'dev'", name = "pytest", specifier = ">=9.0.2"},
   {marker = "extra == 'dev'", name = "seaborn", specifier = ">=0.13.2,<0.14"},
   {marker = "extra == 'docs'", name = "griffe", specifier = "<2.0.0"},
@@ -2803,8 +2818,10 @@ requires-dist = [
 
 [package.optional-dependencies]
 dev = [
+  {name = "bumplot"},
   {name = "plotly"},
   {name = "pre-commit"},
+  {name = "pysankey"},
   {name = "pytest"},
   {name = "seaborn"}
 ]
@@ -3386,6 +3403,15 @@ source = {registry = "https://pypi.org/simple"}
 version = "3.3.2"
 wheels = [
   {hash = "sha256:850ba148bd908d7e2411587e247a1e4f0327839c40e2e5e6d05a007ecc69911d", size = 122781, upload-time = "2026-01-21T03:57:55.912Z", url = "https://files.pythonhosted.org/packages/10/bd/c038d7cc38edc1aa5bf91ab8068b63d4308c66c4c8bb3cbba7dfbc049f9c/pyparsing-3.3.2-py3-none-any.whl"}
+]
+
+[[package]]
+name = "pysankey"
+sdist = {hash = "sha256:0c50e02242926883ad7a26664b2a79f87111460b6989a8ad090b7d95deb474c0", size = 4757, upload-time = "2018-06-27T02:01:49.118Z", url = "https://files.pythonhosted.org/packages/b3/f2/0a9f3de3ee054fddb1354c5c4a93d72b611d8c5b4dde34f664f1caeeb384/pySankey-0.0.1.tar.gz"}
+source = {registry = "https://pypi.org/simple"}
+version = "0.0.1"
+wheels = [
+  {hash = "sha256:71e5a3cb3c840cf0d8c4056d53f337c7e833f3c98cff05b9e53fbc79f3c5a0b1", size = 4912, upload-time = "2018-06-27T02:01:47.824Z", url = "https://files.pythonhosted.org/packages/ad/fc/c2823db63e0efe3652759a4de2859ed02fe5479bb1ba720605cd789121e5/pySankey-0.0.1-py3-none-any.whl"}
 ]
 
 [[package]]

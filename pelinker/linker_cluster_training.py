@@ -148,6 +148,54 @@ def _disambiguate_consensus_names(names: dict[int, str]) -> dict[int, str]:
     return out
 
 
+def cluster_derived_labels_map(
+    labels_map: dict[str, str],
+    cluster_assignments: dict[str, int],
+    composition: ClusterCompositionSnapshot,
+    *,
+    min_fraction: float = 0.05,
+    top_n: int = 3,
+    noise_label: str = "noise",
+) -> dict[str, str]:
+    """
+    Build a new labels_map where each entity_id maps to a cluster-derived name.
+
+    For each cluster, entities are ranked by their within-cluster fraction.  Only those
+    with ``fraction >= min_fraction`` are kept; at most ``top_n`` survive.  If none
+    survive the threshold the single top entity is used as a fallback.  The selected
+    labels are joined with ``" / "`` to form the cluster name.
+
+    HDBSCAN noise (cluster ``-1``) maps to ``noise_label``.
+
+    Entity ids that have no cluster assignment in ``cluster_assignments`` are omitted.
+    """
+    cluster_names: dict[int, str] = {}
+    for cid, mass_frac in composition.cluster_within_fraction.items():
+        c = int(cid)
+        if c == -1:
+            cluster_names[c] = noise_label
+            continue
+        if not mass_frac:
+            cluster_names[c] = str(c)
+            continue
+        sorted_entities = sorted(mass_frac.items(), key=lambda kv: (-kv[1], kv[0]))
+        significant = [e for e, f in sorted_entities if f >= min_fraction][:top_n]
+        if not significant:
+            significant = [sorted_entities[0][0]]
+        cluster_names[c] = " / ".join(significant)
+
+    result: dict[str, str] = {}
+    for entity_id in labels_map:
+        cid = cluster_assignments.get(str(entity_id))
+        if cid is None:
+            continue
+        name = cluster_names.get(int(cid))
+        if name is None:
+            continue
+        result[str(entity_id)] = name
+    return result
+
+
 def provisional_cluster_assignments_from_training_frame(
     labels_map: dict[str, str],
     training: pd.DataFrame,

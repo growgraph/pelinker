@@ -221,6 +221,8 @@ def evaluate_selection_sample(
         smooth_window=config.grid_smooth_window,
         plateau_fraction=config.grid_plateau_fraction,
         derivative_rel_tol=config.grid_derivative_rel_tol,
+        cluster_count_reward=config.grid_cluster_count_reward,
+        n_entities=config.grid_n_entities,
     )
     best_size = solved_single_sample.chosen_min_cluster_size
     best_score = solved_single_sample.score_mean_at_chosen

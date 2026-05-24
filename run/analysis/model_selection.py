@@ -4,7 +4,7 @@ import math
 import pathlib
 import sys
 from dataclasses import dataclass
-from typing import Literal
+from typing import Any, Literal
 
 import numpy as np
 import pandas as pd
@@ -23,8 +23,11 @@ from pelinker.analysis import pooled_min_cluster_size_from_metrics_dfs
 from pelinker.grid_export import (
     GRID_COL_CHOSEN_MIN_CLUSTER_SIZE,
     GRID_EXPORT_ID_COLUMNS,
+    apply_chosen_min_cluster_size_to_grid,
     grid_export_column_order,
     grid_export_rows_from_report,
+    per_combo_metrics_from_grid,
+    write_grid_chosen_hyperparameters,
 )
 from pelinker.sampling import draw_selection_sample
 from pelinker.selection import (
@@ -57,6 +60,7 @@ from pelinker.onto import NEGATIVE_LABEL
 from pelinker.ops import parse_model_filename
 from pelinker.plotting import (
     plot_dbcv_vs_ari_from_grid,
+    solve_pooled_grid_by_combo_from_grid,
     plot_heatmap,
     plot_metrics,
     plot_metrics_with_error_bars,
@@ -68,17 +72,21 @@ from pelinker.plotting import (
 from pelinker.reporting import (
     MODEL_SELECTION_RUN_REPORT_BASENAME,
     MODEL_SELECTION_RUN_REPORT_SCHEMA,
+    MODEL_SELECTION_SUMMARY_JSON_SCHEMA,
     CLUSTERING_SEARCH_FINE_METADATA_BASENAME,
     FINE_SCREENER_EVAL_BASENAME,
+    CLUSTERING_SEARCH_GRID_CHOSEN_JSON_BASENAME,
     CLUSTERING_SEARCH_GRID_PER_SAMPLE_CSV_BASENAME,
     ModelSelectionRunReport,
     ModelSelectionReport,
     ClusteringSearchSummaryRow,
     model_selection_run_report_path,
+    model_selection_summary_json_path,
     clustering_search_summary_row_from_flat_dict,
     PerDatapointScores,
     summarize_clustering_reports_for_search,
     write_model_selection_run_report_json,
+    write_model_selection_summary_json,
 )
 from pelinker.transform import TransformConfig
 
@@ -234,16 +242,32 @@ def _pca_pairgrid_output_path(
     return report_path / f"{stem}_sample{int(sample_idx)}_pca_quality_pairgrid.png"
 
 
+def _fine_metadata_one_sample_per_combo(fm: pd.DataFrame) -> pd.DataFrame:
+    """Keep all rows for the lowest ``sample_idx`` per (model, layer)."""
+    pick = fm.groupby(["model", "layer"], sort=False)["sample_idx"].min()
+    keyed = fm.merge(
+        pick.rename("_pick_sample_idx"),
+        left_on=["model", "layer"],
+        right_index=True,
+    )
+    return keyed.loc[keyed["sample_idx"] == keyed["_pick_sample_idx"]].drop(
+        columns=["_pick_sample_idx"]
+    )
+
+
 def _write_pca_quality_pairgrids_from_fine_metadata(
     fm: pd.DataFrame,
     report_path: pathlib.Path,
     *,
     source_name: str,
+    all_samples: bool = False,
 ) -> tuple[list[pathlib.Path], list[str]]:
     """
     Write one PCA quality pair grid per (model, layer, sample_idx).
 
-    Each slice uses a single transform fit; rows from different combos are never mixed.
+    When ``all_samples`` is false (default), only the lowest ``sample_idx`` per
+    (model, layer) is plotted. Each slice uses a single transform fit; rows from
+    different combos are never mixed.
     """
     if fm.empty:
         return [], []
@@ -254,6 +278,9 @@ def _write_pca_quality_pairgrids_from_fine_metadata(
         return [], [
             "PCA quality pair grid: fine metadata missing " + ", ".join(missing_group)
         ]
+
+    if not all_samples:
+        fm = _fine_metadata_one_sample_per_combo(fm)
 
     needed = {
         "pca_residual",
@@ -634,6 +661,146 @@ class SummaryFigureRenderResult:
 
     written_paths: tuple[pathlib.Path, ...]
     skipped_messages: tuple[str, ...]
+    chosen_hyperparameters_path: pathlib.Path | None = None
+    chosen_by_combo: tuple[tuple[str, str, int], ...] = ()
+    summary_json_path: pathlib.Path | None = None
+
+
+def _json_float_metric(val: object) -> float | None:
+    if val is None:
+        return None
+    try:
+        f = float(val)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+    if math.isnan(f):
+        return None
+    return f
+
+
+def _summary_combo_entry_from_row(row: pd.Series) -> dict[str, Any]:
+    """One leaderboard row for ``model_selection.summary.json``."""
+    out: dict[str, Any] = {
+        "combo_key": str(row["combo_key"]),
+        "model": str(row["model"]),
+        "layer": str(row["layer"]),
+        "best_score": _json_float_metric(row.get("best_score")),
+        "best_score_std": _json_float_metric(row.get("best_score_std")),
+        "best_size": _json_float_metric(row.get("best_size")),
+        "best_size_std": _json_float_metric(row.get("best_size_std")),
+        "ari": _json_float_metric(row.get("ari")),
+        "ari_std": _json_float_metric(row.get("ari_std")),
+        "screener_auc_mean": _json_float_metric(row.get("screener_auc_mean")),
+        "screener_auc_std": _json_float_metric(row.get("screener_auc_std")),
+        "screener_lda_auc_mean": _json_float_metric(row.get("screener_lda_auc_mean")),
+        "screener_svm_auc_mean": _json_float_metric(row.get("screener_svm_auc_mean")),
+        "combined_auc_mean": _json_float_metric(row.get("combined_auc_mean")),
+        "combined_auc_std": _json_float_metric(row.get("combined_auc_std")),
+        "oov_auc_mean": _json_float_metric(row.get("oov_auc_mean")),
+        "oov_auc_std": _json_float_metric(row.get("oov_auc_std")),
+    }
+    sbk = row.get("screener_best_kind")
+    if isinstance(sbk, str) and sbk:
+        out["screener_best_kind"] = sbk
+    owk = row.get("oov_winner_kind")
+    if isinstance(owk, str) and owk:
+        out["oov_winner_kind"] = owk
+    return out
+
+
+def _ranked_summary_entries(
+    df: pd.DataFrame,
+    metric: str,
+    *,
+    n: int = 3,
+) -> list[dict[str, Any]]:
+    if metric not in df.columns or df.empty:
+        return []
+    ranked = df.dropna(subset=[metric]).nlargest(n, metric)
+    entries: list[dict[str, Any]] = []
+    for rank, (_, row) in enumerate(ranked.iterrows(), start=1):
+        entry = _summary_combo_entry_from_row(row)
+        entry["rank"] = rank
+        entry["rank_metric"] = metric
+        entry["rank_value"] = _json_float_metric(row[metric])
+        entries.append(entry)
+    return entries
+
+
+def build_model_selection_summary_payload(
+    report_path: pathlib.Path,
+    df_results: pd.DataFrame,
+    *,
+    chosen_by_combo: tuple[tuple[str, str, int], ...] = (),
+    chosen_hyperparameters_path: pathlib.Path | None = None,
+    generated_at: str | None = None,
+) -> dict[str, Any]:
+    """
+    Compact top-level summary for replot: top screener/combined AUC combos and best DBCV.
+    """
+    df_heatmap = df_results[~df_results["model"].isin(["fusion2", "fusion3"])].copy()
+    top_screener = _ranked_summary_entries(df_heatmap, "screener_auc_mean", n=3)
+    top_combined = _ranked_summary_entries(df_heatmap, "combined_auc_mean", n=3)
+
+    best_dbcv: dict[str, Any] | None = None
+    if not df_heatmap.empty and "best_score" in df_heatmap.columns:
+        dbcv_ranked = df_heatmap.dropna(subset=["best_score"]).nlargest(1, "best_score")
+        if not dbcv_ranked.empty:
+            best_dbcv = _summary_combo_entry_from_row(dbcv_ranked.iloc[0])
+
+    best_combined: dict[str, Any] | None = None
+    if top_combined:
+        best_combined = dict(top_combined[0])
+        best_combined.pop("rank", None)
+        best_combined.pop("rank_metric", None)
+        best_combined.pop("rank_value", None)
+
+    grid_block: dict[str, Any] | None = None
+    if chosen_by_combo or chosen_hyperparameters_path is not None:
+        grid_block = {
+            "chosen_min_cluster_size_by_combo": [
+                {"model": m, "layer": ly, "min_cluster_size": int(mcs)}
+                for m, ly, mcs in chosen_by_combo
+            ],
+            "chosen_hyperparameters_path": (
+                str(chosen_hyperparameters_path)
+                if chosen_hyperparameters_path is not None
+                else None
+            ),
+        }
+
+    return {
+        "schema": MODEL_SELECTION_SUMMARY_JSON_SCHEMA,
+        "generated_at": generated_at or utc_now_iso(),
+        "report_dir": str(report_path.resolve()),
+        "n_combinations": int(len(df_results)),
+        "n_singleton_combinations": int(len(df_heatmap)),
+        "rankings": {
+            "top_by_screener_auc": top_screener,
+            "top_by_combined_auc": top_combined,
+            "best_by_dbcv": best_dbcv,
+        },
+        "best_combined_auc": best_combined,
+        "grid": grid_block,
+    }
+
+
+def _write_model_selection_summary_from_results(
+    report_path: pathlib.Path,
+    df_results: pd.DataFrame,
+    *,
+    chosen_by_combo: tuple[tuple[str, str, int], ...] = (),
+    chosen_hyperparameters_path: pathlib.Path | None = None,
+) -> pathlib.Path:
+    out_path = model_selection_summary_json_path(report_path)
+    payload = build_model_selection_summary_payload(
+        report_path,
+        df_results,
+        chosen_by_combo=chosen_by_combo,
+        chosen_hyperparameters_path=chosen_hyperparameters_path,
+    )
+    write_model_selection_summary_json(out_path, payload)
+    return out_path
 
 
 def _summary_plot_path(report_path: pathlib.Path, stem: str) -> pathlib.Path:
@@ -652,28 +819,20 @@ def _per_combo_metrics_from_grid(
     ``min_cluster_size``, ``dbcv``, ``ari``, ``n_clusters`` — exactly what
     ``plot_metrics`` / ``plot_metrics_with_error_bars`` expect.
     """
-    metric_cols = [
-        c
-        for c in ("min_cluster_size", "dbcv", "ari", "n_clusters", "icm")
-        if c in df_grid.columns
-    ]
-    if "min_cluster_size" not in metric_cols or "dbcv" not in metric_cols:
-        return {}
-
+    raw = per_combo_metrics_from_grid(df_grid)
     out: dict[tuple[str, str], tuple[list[pd.DataFrame], float | None]] = {}
-    for (model, layer), combo_df in df_grid.groupby(["model", "layer"], sort=False):
+    for combo, metrics_list in raw.items():
         mcs_val: float | None = None
-        if GRID_COL_CHOSEN_MIN_CLUSTER_SIZE in combo_df.columns:
-            vals = combo_df[GRID_COL_CHOSEN_MIN_CLUSTER_SIZE].dropna()
+        if GRID_COL_CHOSEN_MIN_CLUSTER_SIZE in df_grid.columns:
+            model, layer = combo
+            sub = df_grid[
+                (df_grid["model"].astype(str) == model)
+                & (df_grid["layer"].astype(str) == layer)
+            ]
+            vals = sub[GRID_COL_CHOSEN_MIN_CLUSTER_SIZE].dropna()
             if not vals.empty:
                 mcs_val = float(vals.iloc[0])
-
-        metrics_list: list[pd.DataFrame] = []
-        for _sidx, sample_df in combo_df.groupby("sample_idx", sort=True):
-            metrics_list.append(sample_df[metric_cols].reset_index(drop=True))
-
-        if metrics_list:
-            out[(str(model), str(layer))] = (metrics_list, mcs_val)
+        out[combo] = (metrics_list, mcs_val)
     return out
 
 
@@ -684,6 +843,8 @@ def render_model_selection_summary_figures(
     grid_csv_path: pathlib.Path | None = None,
     fine_screener_eval_path: pathlib.Path | None = None,
     fine_metadata_path: pathlib.Path | None = None,
+    optimization_config: ClusteringOptimizationConfig | None = None,
+    all_pca_pairgrid_samples: bool = False,
 ) -> SummaryFigureRenderResult:
     """
     Regenerate aggregate model-selection figures from on-disk artifacts (no parquet re-load).
@@ -696,8 +857,10 @@ def render_model_selection_summary_figures(
     Writes the same PNG filenames as ``model_selection`` end-of-run and corresponding
     PDF siblings: ``model.perf.heatmap.png``, ``model.*.heatmap.png`` (scores, ARI,
     screener LDA/SVM/best, OOV, combined), ``model.screener_oov_auc.png``,
-    ``model.roc_curves.png``, ``model.dbcv_vs_ari.png``, and per-combination
-    ``{model}_{layer}_sample{n}_pca_quality_pairgrid.png`` files from fine metadata.
+    ``model.roc_curves.png``, ``model.roc_best.png`` (best combined-AUC combo),
+    ``model.dbcv_vs_ari.png``, ``model_selection.summary.json``, and per-combination
+    ``{model}_{layer}_sample{n}_pca_quality_pairgrid.png`` from fine metadata (lowest
+    sample index per combo unless ``all_pca_pairgrid_samples`` is true).
     """
     report_path = report_path.expanduser()
     ckpt_file = (
@@ -723,10 +886,43 @@ def render_model_selection_summary_figures(
 
     written: list[pathlib.Path] = []
     skipped: list[str] = []
+    chosen_hyperparameters_path: pathlib.Path | None = None
+    chosen_by_combo_flat: tuple[tuple[str, str, int], ...] = ()
+    summary_json_path: pathlib.Path | None = None
 
     df_grid_detail = _read_optional_csv(detail_path)
     if df_grid_detail is not None and not df_grid_detail.empty:
         df_grid_detail = _dedupe_per_sample_grid(df_grid_detail)
+
+        combo_metrics = _per_combo_metrics_from_grid(df_grid_detail)
+        solver_config = optimization_config or ClusteringOptimizationConfig()
+        solved_by_combo = solve_pooled_grid_by_combo_from_grid(
+            df_grid_detail, solver_config
+        )
+        chosen_by_combo = {
+            combo: result.chosen_min_cluster_size
+            for combo, result in solved_by_combo.items()
+        }
+        if chosen_by_combo:
+            df_grid_detail = apply_chosen_min_cluster_size_to_grid(
+                df_grid_detail, chosen_by_combo
+            )
+            tmp_grid = detail_path.with_suffix(detail_path.suffix + ".tmp")
+            df_grid_detail.to_csv(tmp_grid, index=False)
+            tmp_grid.replace(detail_path)
+            written.append(detail_path)
+
+            chosen_hyperparameters_path = (
+                report_path / CLUSTERING_SEARCH_GRID_CHOSEN_JSON_BASENAME
+            )
+            write_grid_chosen_hyperparameters(
+                chosen_hyperparameters_path, solved_by_combo, solver_config
+            )
+            written.append(chosen_hyperparameters_path)
+            chosen_by_combo_flat = tuple(
+                (model, layer, int(mcs))
+                for (model, layer), mcs in sorted(chosen_by_combo.items())
+            )
 
         scatter_path = _summary_plot_path(report_path, "model.dbcv_vs_ari")
         if plot_dbcv_vs_ari_from_grid(df_grid_detail, scatter_path):
@@ -737,8 +933,10 @@ def render_model_selection_summary_figures(
             )
 
         # Per-combination metric plots (DBCV / ARI / n_clusters vs min_cluster_size).
-        combo_metrics = _per_combo_metrics_from_grid(df_grid_detail)
-        for (model, layer), (metrics_list, chosen_mcs) in combo_metrics.items():
+        for (model, layer), (metrics_list, _stored_mcs) in combo_metrics.items():
+            combo = (model, layer)
+            solve_result = solved_by_combo.get(combo)
+            chosen_mcs = float(chosen_by_combo.get(combo, _stored_mcs or float("nan")))
             safe_layer = layer.replace("/", "_").replace("+", "__")
             if len(metrics_list) > 1:
                 out_p = report_path / f"{model}_{safe_layer}_error_bars.png"
@@ -746,6 +944,7 @@ def render_model_selection_summary_figures(
                     metrics_list,
                     out_p,
                     chosen_min_cluster_size=chosen_mcs,
+                    grid_solve=solve_result,
                 )
             else:
                 out_p = report_path / f"{model}_{safe_layer}.png"
@@ -759,6 +958,9 @@ def render_model_selection_summary_figures(
         return SummaryFigureRenderResult(
             written_paths=tuple(written),
             skipped_messages=tuple(skipped),
+            chosen_hyperparameters_path=chosen_hyperparameters_path,
+            chosen_by_combo=chosen_by_combo_flat,
+            summary_json_path=summary_json_path,
         )
 
     try:
@@ -768,6 +970,9 @@ def render_model_selection_summary_figures(
         return SummaryFigureRenderResult(
             written_paths=tuple(written),
             skipped_messages=tuple(skipped),
+            chosen_hyperparameters_path=chosen_hyperparameters_path,
+            chosen_by_combo=chosen_by_combo_flat,
+            summary_json_path=summary_json_path,
         )
 
     results = _results_from_checkpoint(ckpt)
@@ -776,6 +981,9 @@ def render_model_selection_summary_figures(
         return SummaryFigureRenderResult(
             written_paths=tuple(written),
             skipped_messages=tuple(skipped),
+            chosen_hyperparameters_path=chosen_hyperparameters_path,
+            chosen_by_combo=chosen_by_combo_flat,
+            summary_json_path=summary_json_path,
         )
 
     df_results = pd.DataFrame([r.to_flat_dict() for r in results])
@@ -785,6 +993,17 @@ def render_model_selection_summary_figures(
         [_combo_key_for_results_row(row) for _, row in df_results.iterrows()],
     )
     df_results = df_results.sort_values(["model", "layer"])
+    try:
+        summary_json_path = _write_model_selection_summary_from_results(
+            report_path,
+            df_results,
+            chosen_by_combo=chosen_by_combo_flat,
+            chosen_hyperparameters_path=chosen_hyperparameters_path,
+        )
+        written.append(summary_json_path)
+    except OSError as e:
+        skipped.append(f"Summary JSON: write failed: {e}")
+
     df_heatmap = df_results[~df_results["model"].isin(["fusion2", "fusion3"])].copy()
 
     if len(df_heatmap) > 0:
@@ -883,6 +1102,14 @@ def render_model_selection_summary_figures(
                 skipped.append(
                     "ROC curves: plot_roc_comparison returned False (columns or data)"
                 )
+            best_key = str(top_df["combo_key"].iloc[0])
+            roc_best_out = _summary_plot_path(report_path, "model.roc_best")
+            if plot_roc_comparison(roc_df, roc_best_out, combo_keys=[best_key]):
+                written.append(roc_best_out)
+            else:
+                skipped.append(
+                    "Best-case ROC: plot_roc_comparison returned False (columns or data)"
+                )
         else:
             skipped.append(
                 "ROC curves: empty screener eval or no combined_auc_mean in summaries"
@@ -896,6 +1123,7 @@ def render_model_selection_summary_figures(
             fm,
             report_path,
             source_name=f"summary figures ({fm_path})",
+            all_samples=all_pca_pairgrid_samples,
         )
         written.extend(pca_written)
         skipped.extend(pca_skipped)
@@ -907,6 +1135,9 @@ def render_model_selection_summary_figures(
     return SummaryFigureRenderResult(
         written_paths=tuple(written),
         skipped_messages=tuple(skipped),
+        chosen_hyperparameters_path=chosen_hyperparameters_path,
+        chosen_by_combo=chosen_by_combo_flat,
+        summary_json_path=summary_json_path,
     )
 
 

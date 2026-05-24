@@ -1,13 +1,18 @@
 import colorsys
 import pathlib
+from dataclasses import replace
 
 import matplotlib
 import numpy as np
 import pandas as pd
 
+from pelinker.clustering_grid import SmoothedGridOptimumResult
+from pelinker.config import ClusteringOptimizationConfig, GridObjectiveSpec
 from pelinker.grid_export import (
-    select_grid_points_at_chosen_min_cluster_size,
+    apply_chosen_min_cluster_size_to_grid,
     has_grid_points_for_dbcv_ari_scatter,
+    per_combo_metrics_from_grid,
+    select_grid_points_at_chosen_min_cluster_size,
 )
 from pelinker.reporting import LinkerFitDiagnostics
 import seaborn as sns
@@ -325,9 +330,149 @@ def _draw_arity_marker(
     ax.add_patch(fb)
 
 
+def _grid_solver_config(
+    optimization_config: ClusteringOptimizationConfig | None,
+    *,
+    grid_cluster_count_reward: float | None = None,
+    grid_n_entities: int | None = None,
+    grid_objective: GridObjectiveSpec | None = None,
+    optimization_method: str | None = None,
+) -> ClusteringOptimizationConfig:
+    """Merge optional solver overrides into ``optimization_config`` (or defaults)."""
+    base = optimization_config or ClusteringOptimizationConfig()
+    overrides: dict[str, object] = {}
+    if grid_cluster_count_reward is not None:
+        overrides["grid_cluster_count_reward"] = grid_cluster_count_reward
+    if grid_n_entities is not None:
+        overrides["grid_n_entities"] = grid_n_entities
+    if grid_objective is not None:
+        overrides["grid_objective"] = grid_objective
+    if optimization_method is not None:
+        overrides["optimization_method"] = optimization_method
+    return replace(base, **overrides) if overrides else base
+
+
+def _should_resolve_chosen_min_cluster_size(
+    *,
+    chosen_min_cluster_size: float | None,
+    optimization_config: ClusteringOptimizationConfig | None,
+    grid_cluster_count_reward: float | None,
+    grid_n_entities: int | None,
+    grid_objective: GridObjectiveSpec | None,
+    optimization_method: str | None,
+) -> bool:
+    if chosen_min_cluster_size is not None:
+        return False
+    return any(
+        v is not None
+        for v in (
+            optimization_config,
+            grid_cluster_count_reward,
+            grid_n_entities,
+            grid_objective,
+            optimization_method,
+        )
+    )
+
+
+def resolve_chosen_min_cluster_size_from_metrics_list(
+    metrics_list: list[pd.DataFrame],
+    optimization_config: ClusteringOptimizationConfig | None = None,
+    *,
+    grid_cluster_count_reward: float | None = None,
+    grid_n_entities: int | None = None,
+    grid_objective: GridObjectiveSpec | None = None,
+    optimization_method: str | None = None,
+) -> int:
+    """Re-run pooled grid smoothing on per-sample metric tables (same as model selection)."""
+    solved = solve_pooled_grid_from_metrics_list(
+        metrics_list,
+        optimization_config,
+        grid_cluster_count_reward=grid_cluster_count_reward,
+        grid_n_entities=grid_n_entities,
+        grid_objective=grid_objective,
+        optimization_method=optimization_method,
+    )
+    return solved.chosen_min_cluster_size
+
+
+def solve_pooled_grid_from_metrics_list(
+    metrics_list: list[pd.DataFrame],
+    optimization_config: ClusteringOptimizationConfig | None = None,
+    *,
+    grid_cluster_count_reward: float | None = None,
+    grid_n_entities: int | None = None,
+    grid_objective: GridObjectiveSpec | None = None,
+    optimization_method: str | None = None,
+) -> SmoothedGridOptimumResult:
+    """Pooled grid solve on per-sample metric tables; returns full diagnostics."""
+    from pelinker.analysis import pooled_grid_solve_from_metrics_dfs
+
+    cfg = _grid_solver_config(
+        optimization_config,
+        grid_cluster_count_reward=grid_cluster_count_reward,
+        grid_n_entities=grid_n_entities,
+        grid_objective=grid_objective,
+        optimization_method=optimization_method,
+    )
+    return pooled_grid_solve_from_metrics_dfs(metrics_list, cfg)
+
+
+def solve_pooled_grid_by_combo_from_grid(
+    df_grid: pd.DataFrame,
+    optimization_config: ClusteringOptimizationConfig | None = None,
+    *,
+    grid_cluster_count_reward: float | None = None,
+    grid_n_entities: int | None = None,
+    grid_objective: GridObjectiveSpec | None = None,
+    optimization_method: str | None = None,
+) -> dict[tuple[str, str], SmoothedGridOptimumResult]:
+    """Pooled grid solve per (model, layer) from a grid export CSV frame."""
+    cfg = _grid_solver_config(
+        optimization_config,
+        grid_cluster_count_reward=grid_cluster_count_reward,
+        grid_n_entities=grid_n_entities,
+        grid_objective=grid_objective,
+        optimization_method=optimization_method,
+    )
+    solved: dict[tuple[str, str], SmoothedGridOptimumResult] = {}
+    from pelinker.analysis import pooled_grid_solve_from_metrics_dfs
+
+    for combo, metrics_list in per_combo_metrics_from_grid(df_grid).items():
+        solved[combo] = pooled_grid_solve_from_metrics_dfs(metrics_list, cfg)
+    return solved
+
+
+def resolve_chosen_min_cluster_size_by_combo_from_grid(
+    df_grid: pd.DataFrame,
+    optimization_config: ClusteringOptimizationConfig | None = None,
+    *,
+    grid_cluster_count_reward: float | None = None,
+    grid_n_entities: int | None = None,
+    grid_objective: GridObjectiveSpec | None = None,
+    optimization_method: str | None = None,
+) -> dict[tuple[str, str], int]:
+    """Re-solve ``chosen_min_cluster_size`` per (model, layer) from a grid export CSV frame."""
+    solved = solve_pooled_grid_by_combo_from_grid(
+        df_grid,
+        optimization_config,
+        grid_cluster_count_reward=grid_cluster_count_reward,
+        grid_n_entities=grid_n_entities,
+        grid_objective=grid_objective,
+        optimization_method=optimization_method,
+    )
+    return {combo: result.chosen_min_cluster_size for combo, result in solved.items()}
+
+
 def plot_dbcv_vs_ari_from_grid(
     df_grid: pd.DataFrame,
     output_path: pathlib.Path,
+    *,
+    optimization_config: ClusteringOptimizationConfig | None = None,
+    grid_cluster_count_reward: float | None = None,
+    grid_n_entities: int | None = None,
+    grid_objective: GridObjectiveSpec | None = None,
+    optimization_method: str | None = None,
 ) -> bool:
     """
     Scatter of mean DBCV vs mean ARI per (model, layer); shape = arity (△/□/○),
@@ -338,14 +483,40 @@ def plot_dbcv_vs_ari_from_grid(
     (same hyperparameter as the vertical line on per-combination error-bar plots).
     Both axes are fixed to ``[0, _AXIS_MAX]``.
 
+    When any solver argument is set (``optimization_config`` or grid override kwargs),
+    ``chosen_min_cluster_size`` is re-computed per (model, layer) from the grid metrics
+    instead of using values stored in ``df_grid``.
+
     Returns:
         True if a figure was written, False if required data were absent.
     """
     if not has_grid_points_for_dbcv_ari_scatter(df_grid):
         return False
 
+    df_plot = df_grid
+    if any(
+        v is not None
+        for v in (
+            optimization_config,
+            grid_cluster_count_reward,
+            grid_n_entities,
+            grid_objective,
+            optimization_method,
+        )
+    ):
+        chosen_by_combo = resolve_chosen_min_cluster_size_by_combo_from_grid(
+            df_grid,
+            optimization_config,
+            grid_cluster_count_reward=grid_cluster_count_reward,
+            grid_n_entities=grid_n_entities,
+            grid_objective=grid_objective,
+            optimization_method=optimization_method,
+        )
+        if chosen_by_combo:
+            df_plot = apply_chosen_min_cluster_size_to_grid(df_grid, chosen_by_combo)
+
     try:
-        df = select_grid_points_at_chosen_min_cluster_size(df_grid)
+        df = select_grid_points_at_chosen_min_cluster_size(df_plot)
     except ValueError:
         return False
     if df.empty:
@@ -486,6 +657,12 @@ def plot_metrics_with_error_bars(
     output_path: pathlib.Path,
     *,
     chosen_min_cluster_size: float | None = None,
+    grid_solve: SmoothedGridOptimumResult | None = None,
+    optimization_config: ClusteringOptimizationConfig | None = None,
+    grid_cluster_count_reward: float | None = None,
+    grid_n_entities: int | None = None,
+    grid_objective: GridObjectiveSpec | None = None,
+    optimization_method: str | None = None,
 ):
     """
     Plot metrics across multiple runs with error bars using seaborn lineplot.
@@ -494,7 +671,34 @@ def plot_metrics_with_error_bars(
         metrics_list: List of DataFrames, each with columns: min_cluster_size, icm, n_clusters, dbcv, ari
         output_path: Path to save the figure
         chosen_min_cluster_size: Optional vertical marker for the selected grid value (e.g. from smoother / argmax).
+        grid_solve: Precomputed pooled grid diagnostics (avoids a second solve; drives objective panel).
+        optimization_config: When set (or when any grid override kwarg is set and ``chosen_min_cluster_size``
+            is omitted), re-run the pooled grid solver for the vertical marker.
+        grid_cluster_count_reward: Override :attr:`~pelinker.config.ClusteringOptimizationConfig.grid_cluster_count_reward`.
+        grid_n_entities: Override :attr:`~pelinker.config.ClusteringOptimizationConfig.grid_n_entities`.
+        grid_objective: Override :attr:`~pelinker.config.ClusteringOptimizationConfig.grid_objective`.
+        optimization_method: Override :attr:`~pelinker.config.ClusteringOptimizationConfig.optimization_method`.
     """
+    if grid_solve is None and _should_resolve_chosen_min_cluster_size(
+        chosen_min_cluster_size=chosen_min_cluster_size,
+        optimization_config=optimization_config,
+        grid_cluster_count_reward=grid_cluster_count_reward,
+        grid_n_entities=grid_n_entities,
+        grid_objective=grid_objective,
+        optimization_method=optimization_method,
+    ):
+        grid_solve = solve_pooled_grid_from_metrics_list(
+            metrics_list,
+            optimization_config,
+            grid_cluster_count_reward=grid_cluster_count_reward,
+            grid_n_entities=grid_n_entities,
+            grid_objective=grid_objective,
+            optimization_method=optimization_method,
+        )
+
+    if grid_solve is not None and chosen_min_cluster_size is None:
+        chosen_min_cluster_size = float(grid_solve.chosen_min_cluster_size)
+
     # Combine all metrics DataFrames, adding a run_id column
     combined_metrics = []
     for run_id, df in enumerate(metrics_list):
@@ -514,14 +718,15 @@ def plot_metrics_with_error_bars(
         return
 
     has_ari = "ari" in df_combined.columns and bool(df_combined["ari"].notna().any())
-    colors = ["#2E86AB", "#A23B72", "#C44E52"]  # Blue, Purple, Red
+    colors = ["#2E86AB", "#A23B72", "#C44E52", "#F18F01"]  # Blue, Purple, Red, Orange
 
     if has_ari:
-        fig, axes = plt.subplots(1, 3, figsize=(18, 5))
-        ax_dbcv, ax_ari, ax_k = axes[0], axes[1], axes[2]
+        fig, axes = plt.subplots(1, 4, figsize=(24, 5))
+        ax_dbcv, ax_ari, ax_k, ax_obj = axes[0], axes[1], axes[2], axes[3]
     else:
-        fig, axes = plt.subplots(1, 2, figsize=(12, 5))
-        ax_dbcv, ax_k = axes[0], axes[1]
+        fig, axes = plt.subplots(1, 3, figsize=(18, 5))
+        ax_dbcv, ax_k, ax_obj = axes[0], axes[1], axes[2]
+        ax_ari = None
 
     def _maybe_vline(ax: plt.Axes) -> None:
         if chosen_min_cluster_size is None:
@@ -559,7 +764,7 @@ def plot_metrics_with_error_bars(
     _maybe_vline(ax_dbcv)
     _style_ax(ax_dbcv, "DBCV Score", "DBCV vs. min_cluster_size", colors[0])
 
-    if has_ari:
+    if ax_ari is not None:
         sns.lineplot(
             data=df_combined,
             x="min_cluster_size",
@@ -574,8 +779,6 @@ def plot_metrics_with_error_bars(
         )
         _maybe_vline(ax_ari)
         _style_ax(ax_ari, "ARI", "ARI vs. min_cluster_size", colors[1])
-    else:
-        pass
 
     sns.lineplot(
         data=df_combined,
@@ -591,6 +794,45 @@ def plot_metrics_with_error_bars(
     )
     _maybe_vline(ax_k)
     _style_ax(ax_k, "n clusters", "Number of Clusters vs. min_cluster_size", colors[2])
+
+    obj_color = colors[3]
+    if grid_solve is not None and len(grid_solve.x) > 0:
+        x_obj = np.array(grid_solve.x, dtype=np.float64)
+        y_obj = np.array(grid_solve.y_objective, dtype=np.float64)
+        y_smooth = np.array(grid_solve.y_smooth, dtype=np.float64)
+        ax_obj.plot(
+            x_obj,
+            y_obj,
+            marker="s",
+            color=obj_color,
+            linewidth=2,
+            markersize=7,
+            label="objective",
+            zorder=2,
+        )
+        if np.any(np.isfinite(y_smooth)):
+            ax_obj.plot(
+                x_obj,
+                y_smooth,
+                linestyle="--",
+                color=obj_color,
+                linewidth=1.5,
+                alpha=0.65,
+                label="smoothed",
+                zorder=1,
+            )
+        has_cluster_term = any(
+            abs(v) > 1e-12 for v in grid_solve.y_cluster_term if np.isfinite(v)
+        )
+        obj_title = (
+            "Grid objective (pooled + cluster penalty)"
+            if has_cluster_term
+            else "Grid objective (pooled)"
+        )
+    else:
+        obj_title = "Grid objective (unavailable)"
+    _maybe_vline(ax_obj)
+    _style_ax(ax_obj, "Grid objective", obj_title, obj_color)
 
     plt.tight_layout()
     _save_figure_multi_format(fig, output_path)
@@ -931,6 +1173,9 @@ def plot_umap_viz(
         raise ValueError("plot_umap_viz requires an 'entity' column")
     if "class" not in df.columns:
         raise ValueError("plot_umap_viz requires a 'class' column")
+    if "uviz_00" not in df.columns or "uviz_01" not in df.columns:
+        raise ValueError("plot_umap_viz requires uviz_00 and uviz_01 columns")
+    use_3d = "uviz_02" in df.columns
     label_col = "entity"
     df = df.copy()
     df["show_label"] = df[label_col]
@@ -947,56 +1192,114 @@ def plot_umap_viz(
     axis_title_font = dict(size=15)
     axis_tick_font = dict(size=13)
 
-    fig = px.scatter_3d(
-        df,
-        x="uviz_00",
-        y="uviz_01",
-        z="uviz_02",
-        color="class",
-        color_discrete_map=color_discrete_map,
-        category_orders={"class": class_order},
-        hover_name=label_col,
-        labels={"uviz_00": "Dim 1", "uviz_01": "Dim 2", "uviz_02": "Dim 3"},
-        template="plotly_white",
+    hover_specs: list[tuple[str, str]] = []
+    for col, label in (
+        ("pmid", "PMID"),
+        ("mention", "Mention"),
+        ("a_abs", "a_abs"),
+        ("b_abs", "b_abs"),
+        ("screener_score", "Screener"),
+        ("cluster_score", "Cluster score"),
+    ):
+        if col in df.columns:
+            hover_specs.append((col, label))
+
+    scatter_kwargs: dict[str, object] = {
+        "x": "uviz_00",
+        "y": "uviz_01",
+        "color": "class",
+        "color_discrete_map": color_discrete_map,
+        "category_orders": {"class": class_order},
+        "hover_name": label_col,
+        "labels": {"uviz_00": "Dim 1", "uviz_01": "Dim 2"},
+        "template": "plotly_white",
+    }
+    if hover_specs:
+        scatter_kwargs["custom_data"] = [c for c, _ in hover_specs]
+    if use_3d:
+        scatter_kwargs["z"] = "uviz_02"
+        scatter_kwargs["labels"] = {
+            "uviz_00": "Dim 1",
+            "uviz_01": "Dim 2",
+            "uviz_02": "Dim 3",
+        }
+
+    if use_3d:
+        fig = px.scatter_3d(df, **scatter_kwargs)
+    else:
+        fig = px.scatter(df, **scatter_kwargs)
+
+    dim_z_line = "Dim 3: %{z:.4f}<br>" if use_3d else ""
+    hover_lines = (
+        "<b>%{hovertext}</b><br>"
+        "Cluster: <b>%{fullData.name}</b><br>"
+        f"Dim 1: %{{x:.4f}}<br>Dim 2: %{{y:.4f}}<br>{dim_z_line}"
     )
-    # fullData.name is the cluster label for this colored trace (one trace per class).
+    for i, (_, label) in enumerate(hover_specs):
+        hover_lines += f"{label}: %{{customdata[{i}]}}<br>"
+    hover_lines += "<extra></extra>"
+
     fig.update_traces(
         marker=dict(size=6, opacity=0.82, line=dict(width=0)),
-        hovertemplate=(
-            "<b>%{hovertext}</b><br>"
-            "Cluster: <b>%{fullData.name}</b><br>"
-            "Dim 1: %{x:.4f}<br>Dim 2: %{y:.4f}<br>Dim 3: %{z:.4f}"
-            "<extra></extra>"
-        ),
+        hovertemplate=hover_lines,
         selector=dict(mode="markers"),
     )
 
     df_labels = df[df["show_label"] != ""]
-    text_trace = go.Scatter3d(
-        x=df_labels["uviz_00"],
-        y=df_labels["uviz_01"],
-        z=df_labels["uviz_02"],
-        mode="text",
-        text=df_labels["show_label"],
-        textposition="top center",
-        showlegend=False,
-        hoverinfo="skip",
-        textfont=dict(size=14, color="black"),
-    )
+    if use_3d:
+        text_trace = go.Scatter3d(
+            x=df_labels["uviz_00"],
+            y=df_labels["uviz_01"],
+            z=df_labels["uviz_02"],
+            mode="text",
+            text=df_labels["show_label"],
+            textposition="top center",
+            showlegend=False,
+            hoverinfo="skip",
+            textfont=dict(size=14, color="black"),
+        )
+    else:
+        text_trace = go.Scatter(
+            x=df_labels["uviz_00"],
+            y=df_labels["uviz_01"],
+            mode="text",
+            text=df_labels["show_label"],
+            textposition="top center",
+            showlegend=False,
+            hoverinfo="skip",
+            textfont=dict(size=14, color="black"),
+        )
     fig.add_trace(text_trace)
 
     legend_font = 13 if n_classes > 36 else 14
-    fig.update_layout(
-        font=dict(size=14),
-        title=dict(
-            text=f"3D embedding visualization ({len(df):,} points, {n_classes} clusters)",
+    title_dims = "3D" if use_3d else "2D"
+    layout: dict[str, object] = {
+        "font": dict(size=14),
+        "title": dict(
+            text=(
+                f"{title_dims} embedding visualization "
+                f"({len(df):,} points, {n_classes} clusters)"
+            ),
             x=0.5,
             xanchor="center",
             font=dict(size=18),
         ),
-        hoverlabel=dict(font=dict(size=15)),
-        hovermode="closest",
-        scene=dict(
+        "hoverlabel": dict(font=dict(size=15)),
+        "hovermode": "closest",
+        "legend": dict(
+            title=dict(text="Cluster", font=dict(size=15)),
+            traceorder="normal",
+            itemsizing="constant",
+            font=dict(size=legend_font),
+            yanchor="top",
+            y=0.99,
+            x=1.02,
+            xanchor="left",
+        ),
+        "margin": dict(l=0, r=120, b=0, t=56),
+    }
+    if use_3d:
+        layout["scene"] = dict(
             xaxis=dict(
                 title=dict(text="Dim 1", font=axis_title_font),
                 tickfont=axis_tick_font,
@@ -1010,19 +1313,8 @@ def plot_umap_viz(
                 tickfont=axis_tick_font,
             ),
             bgcolor="rgb(250,250,252)",
-        ),
-        legend=dict(
-            title=dict(text="Cluster", font=dict(size=15)),
-            traceorder="normal",
-            itemsizing="constant",
-            font=dict(size=legend_font),
-            yanchor="top",
-            y=0.99,
-            x=1.02,
-            xanchor="left",
-        ),
-        margin=dict(l=0, r=120, b=0, t=56),
-    )
+        )
+    fig.update_layout(**layout)
 
     fig.write_html(str(output_path))
 
@@ -1282,3 +1574,150 @@ def plot_pca_quality_pairgrid(
     _save_figure_multi_format(g.figure, output_path)
     plt.close(g.figure)
     return True
+
+
+def plot_cluster_entity_sankey(
+    composition_df: pd.DataFrame,
+    *,
+    save_dir: pathlib.Path,
+    basename: str = "fit_cluster_entity_sankey",
+    max_clusters: int | None = None,
+    max_entities: int | None = None,
+) -> list[pathlib.Path]:
+    """
+    Bipartite entity→cluster Sankey from a long composition table (cluster, entity, count).
+    """
+    if composition_df.empty:
+        return []
+    from pelinker.cluster_composition_viz import limit_composition_for_flow_plots
+
+    work = limit_composition_for_flow_plots(
+        composition_df,
+        max_clusters=max_clusters,
+        max_entities=max_entities,
+    )
+    if work.empty:
+        return []
+    work = work.copy()
+    work["entity"] = work["entity"].astype(str)
+    work["cluster"] = work["cluster"].astype(str)
+    left = work["entity"].to_numpy()
+    right = work["cluster"].to_numpy()
+    weights = work["count"].astype(float).to_numpy()
+
+    from pySankey.sankey import sankey
+
+    fig = plt.figure(figsize=(14, max(6, len(work) * 0.08)))
+    sankey(
+        left,
+        right,
+        leftWeight=weights,
+        aspect=12,
+        fontsize=10,
+        figure_name=fig,
+        closePlot=False,
+    )
+    written: list[pathlib.Path] = []
+    for path in _save_figure_multi_format(fig, save_dir / basename):
+        written.append(path)
+    plt.close(fig)
+    return written
+
+
+def plot_cluster_entity_bump(
+    composition_df: pd.DataFrame,
+    *,
+    save_dir: pathlib.Path,
+    basename: str = "fit_cluster_entity_bump",
+    max_clusters: int | None = None,
+    max_entities: int | None = None,
+) -> list[pathlib.Path]:
+    """
+    Bump chart of entity weighted mass across clusters (wide pivot + bumplot).
+    """
+    if composition_df.empty:
+        return []
+    from pelinker.cluster_composition_viz import limit_composition_for_flow_plots
+
+    work = limit_composition_for_flow_plots(
+        composition_df,
+        max_clusters=max_clusters,
+        max_entities=max_entities,
+    )
+    work = work.copy()
+    work = work[~work["entity"].astype(str).str.startswith("Other (")]
+    if work.empty:
+        return []
+    wide = work.pivot_table(
+        index="cluster",
+        columns="entity",
+        values="count",
+        aggfunc="sum",
+        fill_value=0.0,
+    ).reset_index()
+    wide["cluster"] = wide["cluster"].astype(str)
+    entity_cols = [c for c in wide.columns if c != "cluster"]
+    if not entity_cols:
+        return []
+
+    from bumplot import bumplot
+
+    fig, ax = plt.subplots(figsize=(12, max(5, len(entity_cols) * 0.35)))
+    bumplot(
+        x="cluster",
+        y_columns=entity_cols,
+        data=wide,
+        ax=ax,
+        ordinal_labels=False,
+    )
+    ax.set_title("Entity mass rank across clusters (inv-sqrt weighted)")
+    written: list[pathlib.Path] = []
+    for path in _save_figure_multi_format(fig, save_dir / basename):
+        written.append(path)
+    plt.close(fig)
+    return written
+
+
+def build_fit_umap_plot_df(
+    report: object,
+    *,
+    exclude_noise: bool = True,
+) -> pd.DataFrame | None:
+    """Build a :func:`plot_umap_viz` frame from a :class:`~pelinker.reporting.ModelSelectionReport`."""
+    from pelinker.cluster_composition_viz import filter_emergent_assignments
+    from pelinker.reporting import ModelSelectionReport
+
+    if not isinstance(report, ModelSelectionReport):
+        return None
+    umap = report.umap_visualization
+    if umap is None or umap.size == 0 or umap.shape[1] < 1:
+        return None
+    assign = report.assignments.copy()
+    if exclude_noise:
+        assign = filter_emergent_assignments(assign)
+    if len(assign) == 0:
+        return None
+    n_dims = int(umap.shape[1])
+    umap_cols = [f"uviz_{j:02d}" for j in range(n_dims)]
+    umap_df = pd.DataFrame(umap, columns=umap_cols, index=report.assignments.index).loc[
+        assign.index
+    ]
+    assign = assign.copy()
+    rename: dict[str, str] = {}
+    if "cluster" in assign.columns:
+        rename["cluster"] = "class"
+    plot_assign = assign.rename(columns=rename)
+    cols = [c for c in ("entity", "class") if c in plot_assign.columns]
+    extra = [
+        c
+        for c in (
+            "pmid",
+            "mention",
+            "a_abs",
+            "b_abs",
+            "screener_score",
+            "cluster_score",
+        )
+        if c in plot_assign.columns
+    ]
+    return pd.concat([plot_assign[cols + extra], umap_df], axis=1)

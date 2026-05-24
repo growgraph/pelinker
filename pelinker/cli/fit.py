@@ -21,9 +21,21 @@ from pelinker.config import (
 )
 from pelinker.embedder import embed_kb_corpus
 from pelinker.model import Linker
+from pelinker.cluster_composition_viz import (
+    DEFAULT_MAX_CLUSTERS_FOR_PLOTS,
+    build_cluster_composition_df,
+    build_emergent_clusters_catalog,
+    cluster_entity_mass_summary,
+)
 from pelinker.reporting import (
+    linker_fit_cluster_composition_path,
+    linker_fit_cluster_kb_path,
     linker_fit_clustering_report_path,
+    linker_fit_emergent_clusters_path,
+    write_cluster_composition_json,
+    write_cluster_derived_labels_map_json,
     write_clustering_report_json,
+    write_emergent_clusters_json,
 )
 from pelinker.onto import NEGATIVE_LABEL
 from pelinker.util import expand_config_path
@@ -277,8 +289,10 @@ def fit(cfg: FitCliConfig) -> None:
 
     - ``embeddings_parquet``: output path(s) for ``embed_only`` / ``both`` stage (A), or input
       parquet(s) for ``fit_only`` / ``both`` stage (B).
-    - ``report_path``: directory; fit stages write ``linker_fit.clustering_report.json`` there
-      (see :func:`pelinker.reporting.linker_fit_clustering_report_path`).
+    - ``report_path``: directory; fit stages write ``linker_fit.clustering_report.json.gz`` and
+      ``linker_fit.cluster_composition.json.gz`` there (see
+      :func:`pelinker.reporting.linker_fit_clustering_report_path` and
+      :func:`pelinker.reporting.linker_fit_cluster_composition_path`).
     - ``model_path``: filesystem path passed to ``Linker.dump`` for fit stages.
 
     Pipelines:
@@ -470,7 +484,7 @@ def fit(cfg: FitCliConfig) -> None:
 
     logger.info("Fitted Linker model with %s entities", len(linker.vocabulary))
     logger.info(
-        "Number of clusters: %s",
+        "Entity-level provisional clusters: %s distinct ids",
         len(set(linker.cluster_assignments.values())),
     )
 
@@ -481,9 +495,53 @@ def fit(cfg: FitCliConfig) -> None:
     fit_report = linker.take_fit_clustering_report()
     if fit_report is None:
         raise RuntimeError("Linker.fit produced no clustering report to serialize")
+
+    mass_summary = cluster_entity_mass_summary(fit_report.assignments)
+    logger.info(
+        "Emergent HDBSCAN clusters: %s (report n_clusters_emergent=%s, "
+        "noise mentions=%s, noise fraction=%.3f)",
+        mass_summary["n_emergent_clusters"],
+        fit_report.n_clusters_emergent,
+        mass_summary["n_noise_mentions"],
+        mass_summary["noise_fraction"],
+    )
+
     report_json = linker_fit_clustering_report_path(report_path_resolved)
     write_clustering_report_json(report_json, fit_report)
     logger.info("Wrote clustering report to %s", report_json)
+
+    composition_df = build_cluster_composition_df(
+        fit_report.assignments,
+        top_n=3,
+        weight_by_entity=True,
+        exclude_noise=True,
+        max_clusters=DEFAULT_MAX_CLUSTERS_FOR_PLOTS,
+    )
+    composition_json = linker_fit_cluster_composition_path(report_path_resolved)
+    write_cluster_composition_json(
+        composition_json,
+        composition_df,
+        top_n=3,
+        summary=mass_summary,
+        max_clusters_in_rows=DEFAULT_MAX_CLUSTERS_FOR_PLOTS,
+    )
+    logger.info("Wrote cluster composition artifact to %s", composition_json)
+
+    emergent_catalog = build_emergent_clusters_catalog(
+        linker.cluster_composition,
+        linker.cluster_consensus_names,
+        fit_report.assignments,
+        min_cluster_size=cfg.min_cluster_size,
+    )
+    emergent_path = linker_fit_emergent_clusters_path(report_path_resolved)
+    write_emergent_clusters_json(emergent_path, emergent_catalog)
+    logger.info("Wrote emergent cluster catalog to %s", emergent_path)
+
+    cluster_kb_json = linker_fit_cluster_kb_path(report_path_resolved)
+    write_cluster_derived_labels_map_json(
+        cluster_kb_json, linker.cluster_derived_labels_map
+    )
+    logger.info("Wrote cluster-derived KB labels map to %s", cluster_kb_json)
 
     logger.info("Saving model to %s", model_path)
     linker.dump(model_path)

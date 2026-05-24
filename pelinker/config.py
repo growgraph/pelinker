@@ -223,6 +223,10 @@ class LinkerFitConfig:
     projection_screener: ManifoldOovScreenerConfig = field(
         default_factory=ManifoldOovScreenerConfig
     )
+    screener_max_rows: int | None = 100_000
+    """Max rows for ambient + projection screener training (stratified). None = no cap."""
+    screener_seed: int = 0
+    """Random seed for the stratified screener training draw."""
     diagnostics_sample_size: int = 20_000
     """Max rows of :class:`~pelinker.reporting.LinkerFitDiagnostics` stored on the fit report."""
     diagnostics_random_state: int = 0
@@ -235,6 +239,8 @@ class LinkerFitConfig:
             raise ValueError("batch_size must be >= 1")
         if self.n_embedding_batches is not None and self.n_embedding_batches < 1:
             raise ValueError("n_embedding_batches must be >= 1 when provided")
+        if self.screener_max_rows is not None and self.screener_max_rows < 1:
+            raise ValueError("screener_max_rows must be >= 1 when provided")
         if self.diagnostics_sample_size < 1:
             raise ValueError("diagnostics_sample_size must be >= 1")
 
@@ -275,6 +281,10 @@ class ClusteringOptimizationConfig:
     """Plateau threshold on the **smoothed** curve: ``y_min + this * (y_max - y_min)`` (finite values only)."""
     grid_derivative_rel_tol: float = 0.12
     """|df/dx| below this times max|df/dx| counts as “derivative near zero” on the smoothed curve."""
+    grid_cluster_count_reward: float = 0.0
+    """Weight on ``log(n_clusters / n_ref)`` added to the grid objective (0 = disabled)."""
+    grid_n_entities: int | None = None
+    """Reference entity count for the cluster-count term; when ``None``, uses max mean cluster count on the grid."""
     ambient_screener: NegativeScreenerConfig = field(
         default_factory=NegativeScreenerConfig
     )
@@ -322,6 +332,10 @@ class ClusteringOptimizationConfig:
             raise ValueError("grid_plateau_fraction must be in (0, 1]")
         if self.grid_derivative_rel_tol <= 0:
             raise ValueError("grid_derivative_rel_tol must be > 0")
+        if self.grid_cluster_count_reward < 0:
+            raise ValueError("grid_cluster_count_reward must be >= 0")
+        if self.grid_n_entities is not None and self.grid_n_entities < 1:
+            raise ValueError("grid_n_entities must be >= 1 when provided")
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

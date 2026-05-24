@@ -73,3 +73,13 @@ def test_clustering_optimization_rejects_max_below_resolved_min() -> None:
 def test_clustering_optimization_rejects_invalid_eval_max_rows() -> None:
     with pytest.raises(ValueError, match="eval_max_rows"):
         ClusteringOptimizationConfig(eval_max_rows=0)
+
+
+def test_clustering_optimization_rejects_negative_cluster_count_reward() -> None:
+    with pytest.raises(ValueError, match="grid_cluster_count_reward"):
+        ClusteringOptimizationConfig(grid_cluster_count_reward=-0.1)
+
+
+def test_clustering_optimization_rejects_invalid_grid_n_entities() -> None:
+    with pytest.raises(ValueError, match="grid_n_entities"):
+        ClusteringOptimizationConfig(grid_n_entities=0)

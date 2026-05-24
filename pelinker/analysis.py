@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 import torch
 from pelinker.clustering_grid import (
+    SmoothedGridOptimumResult,
     aggregate_grid_metrics,
     solve_optimal_min_cluster_size_from_aggregated,
 )
@@ -187,6 +188,30 @@ def compute_adjusted_rand_index(y_true: np.ndarray, y_pred: np.ndarray) -> float
     return float(ari)
 
 
+def pooled_grid_solve_from_metrics_dfs(
+    metrics_dfs: Sequence[pd.DataFrame],
+    optimization_config: ClusteringOptimizationConfig | None = None,
+) -> SmoothedGridOptimumResult:
+    """
+    After all bootstrap samples have run a min_cluster_size grid, aggregate their metrics
+    once and return full smoothed-grid diagnostics (including ``y_objective`` curve).
+    """
+    if not metrics_dfs:
+        raise ValueError("metrics_dfs must be non-empty")
+    config = optimization_config or ClusteringOptimizationConfig()
+    aggregated = aggregate_grid_metrics(list(metrics_dfs))
+    return solve_optimal_min_cluster_size_from_aggregated(
+        aggregated,
+        objective=config.grid_objective,
+        method=config.optimization_method,
+        smooth_window=config.grid_smooth_window,
+        plateau_fraction=config.grid_plateau_fraction,
+        derivative_rel_tol=config.grid_derivative_rel_tol,
+        cluster_count_reward=config.grid_cluster_count_reward,
+        n_entities=config.grid_n_entities,
+    )
+
+
 def pooled_min_cluster_size_from_metrics_dfs(
     metrics_dfs: Sequence[pd.DataFrame],
     optimization_config: ClusteringOptimizationConfig | None = None,
@@ -197,18 +222,7 @@ def pooled_min_cluster_size_from_metrics_dfs(
     The objective is set by ``ClusteringOptimizationConfig.grid_objective`` (default: pooled
     min–max normalized DBCV and ARI).
     """
-    if not metrics_dfs:
-        raise ValueError("metrics_dfs must be non-empty")
-    config = optimization_config or ClusteringOptimizationConfig()
-    aggregated = aggregate_grid_metrics(list(metrics_dfs))
-    solved = solve_optimal_min_cluster_size_from_aggregated(
-        aggregated,
-        objective=config.grid_objective,
-        method=config.optimization_method,
-        smooth_window=config.grid_smooth_window,
-        plateau_fraction=config.grid_plateau_fraction,
-        derivative_rel_tol=config.grid_derivative_rel_tol,
-    )
+    solved = pooled_grid_solve_from_metrics_dfs(metrics_dfs, optimization_config)
     return solved.chosen_min_cluster_size, solved.score_mean_at_chosen
 
 

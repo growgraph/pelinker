@@ -187,6 +187,9 @@ def test_fit_with_synthetic_negatives_screener_metrics_and_dump_load(tmp_path):
     assert NEGATIVE_LABEL not in set(
         fit_report.assignments["entity"].astype(str).unique()
     )
+    assert "screener_score" in fit_report.assignments.columns
+    assert "cluster_score" in fit_report.assignments.columns
+    assert fit_report.assignments["cluster_score"].between(0.0, 1.0).all()
 
     model_path = tmp_path / "linker_metrics"
     linker.dump(model_path)
@@ -304,7 +307,7 @@ def test_fit_clustering_report_json_roundtrip(tmp_path: Path) -> None:
     write_clustering_report_json(out, report)
     with gzip.open(out, mode="rt", encoding="utf-8") as fh:
         blob = json.load(fh)
-    assert blob["schema"] == "pelinker.clustering_report.v8"
+    assert blob["schema"] == "pelinker.clustering_report.v9"
     n = len(report.assignments)
     assert len(blob["pca_residuals"]) == n
     assert len(blob["pca_mahalanobis"]) == n

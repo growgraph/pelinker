@@ -12,6 +12,7 @@ from pelinker.plotting import (
     plot_pca_quality_pairgrid,
 )
 from run.analysis.model_selection import (
+    _fine_metadata_one_sample_per_combo,
     _pca_pairgrid_output_path,
     _safe_combo_plot_stem,
     _write_pca_quality_pairgrids_from_fine_metadata,
@@ -71,7 +72,22 @@ def test_pca_pairgrid_output_path() -> None:
     assert path.name == "m1_L2_sample1_pca_quality_pairgrid.png"
 
 
-def test_write_pairgrids_one_file_per_combo_sample(tmp_path: pathlib.Path) -> None:
+def test_fine_metadata_one_sample_per_combo_keeps_lowest_index() -> None:
+    fm = pd.concat(
+        [
+            _fine_metadata_frame(model="m1", layer="L1", sample_idx=0),
+            _fine_metadata_frame(model="m1", layer="L1", sample_idx=1),
+            _fine_metadata_frame(model="m2", layer="L2", sample_idx=0),
+        ],
+        ignore_index=True,
+    )
+    slim = _fine_metadata_one_sample_per_combo(fm)
+    assert set(slim["sample_idx"].unique()) == {0}
+    assert len(slim) == 16
+    assert len(slim) < len(fm)
+
+
+def test_write_pairgrids_default_one_sample_per_combo(tmp_path: pathlib.Path) -> None:
     fm = pd.concat(
         [
             _fine_metadata_frame(model="m1", layer="L1", sample_idx=0),
@@ -82,6 +98,26 @@ def test_write_pairgrids_one_file_per_combo_sample(tmp_path: pathlib.Path) -> No
     )
     written, skipped = _write_pca_quality_pairgrids_from_fine_metadata(
         fm, tmp_path, source_name="test"
+    )
+    assert skipped == []
+    assert len(written) == 2
+    assert {p.name for p in written} == {
+        "m1_L1_sample0_pca_quality_pairgrid.png",
+        "m2_L2_sample0_pca_quality_pairgrid.png",
+    }
+
+
+def test_write_pairgrids_all_samples_flag(tmp_path: pathlib.Path) -> None:
+    fm = pd.concat(
+        [
+            _fine_metadata_frame(model="m1", layer="L1", sample_idx=0),
+            _fine_metadata_frame(model="m1", layer="L1", sample_idx=1),
+            _fine_metadata_frame(model="m2", layer="L2", sample_idx=0),
+        ],
+        ignore_index=True,
+    )
+    written, skipped = _write_pca_quality_pairgrids_from_fine_metadata(
+        fm, tmp_path, source_name="test", all_samples=True
     )
     assert skipped == []
     assert len(written) == 3

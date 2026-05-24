@@ -16,11 +16,14 @@ from pelinker.reporting import (
     ModelSelectionReport,
     ClusteringSearchSummaryRow,
     entity_negative_label_mask_01,
+    read_cluster_composition_json,
     read_clustering_report_json,
     subsample_diagnostics_stratified,
     summarize_clustering_reports_for_search,
+    write_cluster_composition_json,
     write_clustering_report_json,
 )
+from pelinker.cluster_composition_viz import build_cluster_composition_df
 
 
 def _minimal_report(
@@ -173,7 +176,7 @@ def test_write_clustering_report_json_includes_pca_arrays(tmp_path: Path) -> Non
     write_clustering_report_json(out, r)
     with gzip.open(out, mode="rt", encoding="utf-8") as fh:
         raw = json.load(fh)
-    assert raw["schema"] == "pelinker.clustering_report.v8"
+    assert raw["schema"] == "pelinker.clustering_report.v9"
     assert raw["pca_residuals"] == [0.1]
     assert raw["pca_mahalanobis"] == [0.2]
     assert raw["pca_spectral_entropy"] == [0.3]
@@ -282,3 +285,49 @@ def test_write_clustering_report_json_labels_negative_entity(tmp_path: Path) -> 
     with gzip.open(out, mode="rt", encoding="utf-8") as fh:
         raw = json.load(fh)
     assert raw["oov_label"] == [1]
+
+
+def test_clustering_report_v9_enriched_assignments_roundtrip(tmp_path: Path) -> None:
+    assignments = pd.DataFrame(
+        {
+            "entity": ["a", "a", "b"],
+            "cluster": [0, 0, 1],
+            "pmid": ["1", "1", "2"],
+            "mention": ["x", "x2", "y"],
+            "a_abs": [10, 11, 20],
+            "screener_score": [0.1, 0.2, -0.5],
+            "projection_score": [0.3, 0.4, 0.1],
+            "cluster_score": [0.9, 0.85, 0.7],
+        }
+    )
+    r = _minimal_report(5, 0.4)
+    r.assignments = assignments
+    out = tmp_path / "v9.json.gz"
+    write_clustering_report_json(out, r)
+    loaded = read_clustering_report_json(out)
+    assert int(loaded.assignments.iloc[0]["a_abs"]) == 10
+    assert float(loaded.assignments.iloc[0]["cluster_score"]) == pytest.approx(0.9)
+
+
+def test_cluster_composition_inv_sqrt_and_other(tmp_path: Path) -> None:
+    assignments = pd.DataFrame(
+        {
+            "entity": ["a", "a", "a", "b", "c", "d"],
+            "cluster": [0, 0, 0, 0, 0, 0],
+        }
+    )
+    comp = build_cluster_composition_df(assignments, top_n=2, weight_by_entity=True)
+    # a has 3 mentions -> weight 1/sqrt(3) each -> total 3/sqrt(3)
+    a_mass = comp.loc[comp["entity"] == "a", "count"].iloc[0]
+    assert a_mass == pytest.approx(3.0 / (3.0**0.5))
+    assert any(comp["entity"].astype(str).str.startswith("Other ("))
+
+
+def test_cluster_composition_json_roundtrip(tmp_path: Path) -> None:
+    df = pd.DataFrame({"cluster": [0, 1], "entity": ["p1", "p2"], "count": [1.5, 2.0]})
+    path = tmp_path / "comp.json.gz"
+    write_cluster_composition_json(path, df, top_n=3)
+    back, meta = read_cluster_composition_json(path)
+    assert len(back) == 2
+    assert float(back.iloc[0]["count"]) == pytest.approx(1.5)
+    assert meta["schema"] == "pelinker.fit_cluster_composition.v2"

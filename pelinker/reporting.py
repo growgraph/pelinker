@@ -13,7 +13,7 @@ import pandas as pd
 
 from pelinker.config import ScreenerKind
 
-_JSON_CLUSTERING_REPORT_SCHEMA = "pelinker.clustering_report.v8"
+_JSON_CLUSTERING_REPORT_SCHEMA = "pelinker.clustering_report.v9"
 MODEL_SELECTION_RUN_REPORT_SCHEMA = "pelinker.model_selection.run_report.v2"
 
 
@@ -364,8 +364,16 @@ def _ndarray_to_jsonable_nested(arr: np.ndarray) -> Any:
 
 # Basenames for artifacts under one report directory (``pelinker-fit`` / clustering search).
 LINKER_FIT_CLUSTERING_REPORT_BASENAME = "linker_fit.clustering_report.json.gz"
+LINKER_FIT_CLUSTER_COMPOSITION_BASENAME = "linker_fit.cluster_composition.json.gz"
+LINKER_FIT_EMERGENT_CLUSTERS_BASENAME = "linker_fit.emergent_clusters.json"
+LINKER_FIT_CLUSTER_KB_BASENAME = "linker_fit.cluster_kb.json"
+_FIT_CLUSTER_COMPOSITION_SCHEMA = "pelinker.fit_cluster_composition.v2"
+_EMERGENT_CLUSTERS_SCHEMA = "pelinker.emergent_clusters.v1"
 MODEL_SELECTION_RUN_REPORT_BASENAME = "model_selection.run_report.json.gz"
+MODEL_SELECTION_SUMMARY_JSON_SCHEMA = "pelinker.model_selection.summary.v1"
+MODEL_SELECTION_SUMMARY_JSON_BASENAME = "model_selection.summary.json"
 CLUSTERING_SEARCH_GRID_PER_SAMPLE_CSV_BASENAME = "results_grid_per_sample.csv"
+CLUSTERING_SEARCH_GRID_CHOSEN_JSON_BASENAME = "grid_chosen_hyperparameters.json"
 CLUSTERING_SEARCH_FINE_METADATA_BASENAME = "fine_clustering_metadata.jsonl.gz"
 FINE_SCREENER_EVAL_BASENAME = "fine_screener_eval.jsonl.gz"
 MODEL_SELECTION_CHECKPOINT_BASENAME = "model_selection.state.json.gz"
@@ -376,9 +384,138 @@ def linker_fit_clustering_report_path(report_dir: str | pathlib.Path) -> pathlib
     return pathlib.Path(report_dir).expanduser() / LINKER_FIT_CLUSTERING_REPORT_BASENAME
 
 
+def linker_fit_cluster_kb_path(report_dir: str | pathlib.Path) -> pathlib.Path:
+    """Filesystem path for the cluster-derived KB labels-map JSON under ``report_dir``."""
+    return pathlib.Path(report_dir).expanduser() / LINKER_FIT_CLUSTER_KB_BASENAME
+
+
+def linker_fit_cluster_composition_path(
+    report_dir: str | pathlib.Path,
+) -> pathlib.Path:
+    """Filesystem path for the entity-weighted cluster composition artifact."""
+    return (
+        pathlib.Path(report_dir).expanduser() / LINKER_FIT_CLUSTER_COMPOSITION_BASENAME
+    )
+
+
+def linker_fit_emergent_clusters_path(report_dir: str | pathlib.Path) -> pathlib.Path:
+    """Filesystem path for the emergent-cluster catalog JSON under ``report_dir``."""
+    return pathlib.Path(report_dir).expanduser() / LINKER_FIT_EMERGENT_CLUSTERS_BASENAME
+
+
+def write_cluster_composition_json(
+    path: str | pathlib.Path,
+    composition_df: pd.DataFrame,
+    *,
+    top_n: int = 3,
+    weighting: str = "inv_sqrt_mention_count",
+    summary: dict[str, int | float] | None = None,
+    max_clusters_in_rows: int | None = None,
+    indent: int = 2,
+) -> None:
+    """Serialize a processed cluster-composition table written at fit time."""
+    from pelinker.cluster_composition_viz import ENTITY_WEIGHTING_INV_SQRT
+
+    p = pathlib.Path(path).expanduser()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    payload: dict[str, Any] = {
+        "schema": _FIT_CLUSTER_COMPOSITION_SCHEMA,
+        "top_n": int(top_n),
+        "weighting": weighting or ENTITY_WEIGHTING_INV_SQRT,
+        "exclude_noise": True,
+        "rows": _dataframe_to_jsonable_records(composition_df),
+    }
+    if summary is not None:
+        payload["summary"] = _json_normalize(summary)
+    if max_clusters_in_rows is not None:
+        payload["max_clusters_in_rows"] = int(max_clusters_in_rows)
+    with gzip.open(p, mode="wt", encoding="utf-8", compresslevel=9) as f:
+        json.dump(payload, f, indent=indent)
+
+
+def read_cluster_composition_json(
+    path: str | pathlib.Path,
+) -> tuple[pd.DataFrame, dict[str, Any]]:
+    """Load a composition table and metadata written by :func:`write_cluster_composition_json`."""
+    p = pathlib.Path(path).expanduser()
+    with gzip.open(p, mode="rt", encoding="utf-8") as f:
+        raw: dict[str, Any] = json.load(f)
+    schema = str(raw.get("schema", ""))
+    if schema not in (
+        "pelinker.fit_cluster_composition.v1",
+        _FIT_CLUSTER_COMPOSITION_SCHEMA,
+    ):
+        raise ValueError(f"Unsupported cluster composition schema: {schema!r}")
+    meta = {k: v for k, v in raw.items() if k != "rows"}
+    return pd.DataFrame(raw["rows"]), meta
+
+
+def write_emergent_clusters_json(
+    path: str | pathlib.Path,
+    payload: dict[str, Any],
+    *,
+    indent: int = 2,
+) -> None:
+    """Write :func:`~pelinker.cluster_composition_viz.build_emergent_clusters_catalog` output."""
+    p = pathlib.Path(path).expanduser()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    if str(payload.get("schema", "")) != _EMERGENT_CLUSTERS_SCHEMA:
+        raise ValueError(
+            f"Expected schema {_EMERGENT_CLUSTERS_SCHEMA!r}, got {payload.get('schema')!r}"
+        )
+    with p.open("w", encoding="utf-8") as f:
+        json.dump(_json_normalize(payload), f, indent=indent, ensure_ascii=False)
+
+
+def read_emergent_clusters_json(path: str | pathlib.Path) -> dict[str, Any]:
+    """Load emergent-cluster catalog JSON."""
+    p = pathlib.Path(path).expanduser()
+    with p.open(encoding="utf-8") as f:
+        raw: dict[str, Any] = json.load(f)
+    if str(raw.get("schema", "")) != _EMERGENT_CLUSTERS_SCHEMA:
+        raise ValueError(f"Unsupported emergent clusters schema: {raw.get('schema')!r}")
+    return raw
+
+
+def write_cluster_derived_labels_map_json(
+    path: str | pathlib.Path,
+    labels_map: dict[str, str],
+    *,
+    indent: int = 2,
+) -> None:
+    """
+    Write a cluster-derived labels map (``entity_id`` → ``cluster_name``) to a plain JSON file.
+
+    The file is human-readable and can be passed directly to a subsequent fit as a new KB
+    ``labels_map``.  Parent directories are created when missing.
+    """
+    p = pathlib.Path(path).expanduser()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    with p.open("w", encoding="utf-8") as f:
+        json.dump(labels_map, f, indent=indent, ensure_ascii=False)
+
+
 def model_selection_run_report_path(report_dir: str | pathlib.Path) -> pathlib.Path:
     """Filesystem path for the standardized model-selection aggregate report."""
     return pathlib.Path(report_dir).expanduser() / MODEL_SELECTION_RUN_REPORT_BASENAME
+
+
+def model_selection_summary_json_path(report_dir: str | pathlib.Path) -> pathlib.Path:
+    """Top-level replot summary (rankings, best combos) as plain JSON."""
+    return pathlib.Path(report_dir).expanduser() / MODEL_SELECTION_SUMMARY_JSON_BASENAME
+
+
+def write_model_selection_summary_json(
+    path: str | pathlib.Path,
+    payload: dict[str, Any],
+    *,
+    indent: int = 2,
+) -> None:
+    p = pathlib.Path(path).expanduser()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    body = cast(dict[str, Any], _json_normalize(payload))
+    with p.open("w", encoding="utf-8") as f:
+        json.dump(body, f, indent=indent, ensure_ascii=False)
 
 
 def _linker_fit_diagnostics_to_jsonable(d: LinkerFitDiagnostics) -> dict[str, Any]:
@@ -504,7 +641,8 @@ def read_clustering_report_json(path: str | pathlib.Path) -> ModelSelectionRepor
     """
     Load a :class:`ModelSelectionReport` written by :func:`write_clustering_report_json`.
 
-    Supports schema ``pelinker.clustering_report.v7`` and ``v8`` (``training_diagnostics``).
+    Supports schema ``pelinker.clustering_report.v7`` through ``v9`` (v9 adds per-mention
+    provenance and screener/cluster scores on ``assignments``).
     """
     p = pathlib.Path(path).expanduser()
     with gzip.open(p, mode="rt", encoding="utf-8") as f:
@@ -514,6 +652,7 @@ def read_clustering_report_json(path: str | pathlib.Path) -> ModelSelectionRepor
     if schema not in (
         "pelinker.clustering_report.v7",
         "pelinker.clustering_report.v8",
+        "pelinker.clustering_report.v9",
     ):
         raise ValueError(f"Unsupported clustering report schema: {schema!r}")
 

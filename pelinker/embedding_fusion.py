@@ -136,6 +136,15 @@ REQUIRED_MENTION_COLUMNS: frozenset[str] = frozenset(
     {"pmid", "entity", "mention", "embed"}
 )
 
+MENTION_PROVENANCE_COLUMNS: tuple[str, ...] = (
+    "a",
+    "b",
+    "a_abs",
+    "b_abs",
+    "itext",
+    "ichunk",
+)
+
 
 def _normalize_entity_column(df: pd.DataFrame) -> pd.DataFrame:
     if "entity" not in df.columns:
@@ -148,11 +157,25 @@ def _to_embed_array(v: list | np.ndarray) -> np.ndarray:
     return arr.reshape(-1) if arr.ndim > 1 and arr.shape[0] == 1 else arr.squeeze()
 
 
+def provenance_columns_in(df: pd.DataFrame) -> list[str]:
+    """Return provenance column names present in ``df``."""
+    return [c for c in MENTION_PROVENANCE_COLUMNS if c in df.columns]
+
+
+def _first_non_null(series: pd.Series) -> object:
+    for v in series:
+        if pd.notna(v):
+            return v
+    return pd.NA
+
+
 def dedupe_mean_embed_by_keys(
     df: pd.DataFrame, *, keys: Sequence[str] = JOIN_KEYS
 ) -> pd.DataFrame:
     """
     Collapse duplicate rows sharing the same join keys by averaging embed vectors.
+
+    Optional :data:`MENTION_PROVENANCE_COLUMNS` are kept via first non-null per group.
     """
     missing = [c for c in keys if c not in df.columns]
     if missing:
@@ -162,11 +185,11 @@ def dedupe_mean_embed_by_keys(
         vecs = np.stack([_to_embed_array(x) for x in embed_series.values])
         return np.mean(vecs, axis=0)
 
-    grouped = (
-        df.groupby(list(keys), sort=False)
-        .agg(embed=("embed", _mean_group))
-        .reset_index()
-    )
+    agg: dict[str, tuple[str, object]] = {"embed": ("embed", _mean_group)}
+    for col in provenance_columns_in(df):
+        agg[col] = (col, _first_non_null)
+
+    grouped = df.groupby(list(keys), sort=False).agg(**agg).reset_index()
     return grouped
 
 
@@ -186,7 +209,10 @@ def mention_level_concat_frames(dfs: Sequence[pd.DataFrame]) -> pd.DataFrame:
         if not REQUIRED_MENTION_COLUMNS.issubset(cols):
             missing = REQUIRED_MENTION_COLUMNS - cols
             raise ValueError(f"Frame {i} missing columns: {sorted(missing)}")
-        sub = df[list(JOIN_KEYS) + ["embed"]].copy()
+        keep = list(JOIN_KEYS) + ["embed"]
+        if i == 0:
+            keep.extend(provenance_columns_in(df))
+        sub = df[keep].copy()
         sub = dedupe_mean_embed_by_keys(sub)
         sub = sub.rename(columns={"embed": f"_e{i}"})
         prepared.append(sub)
