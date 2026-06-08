@@ -1,5 +1,6 @@
 import colorsys
 import pathlib
+import re
 from dataclasses import replace
 
 import matplotlib
@@ -1196,6 +1197,7 @@ def plot_umap_viz(
     for col, label in (
         ("pmid", "PMID"),
         ("mention", "Mention"),
+        ("context", "Context"),
         ("a_abs", "a_abs"),
         ("b_abs", "b_abs"),
         ("screener_score", "Screener"),
@@ -1676,6 +1678,148 @@ def plot_cluster_entity_bump(
         written.append(path)
     plt.close(fig)
     return written
+
+
+_WORD_SPAN_RE = re.compile(r"\S+")
+
+
+def _word_spans(text: str) -> list[tuple[int, int]]:
+    return [(m.start(), m.end()) for m in _WORD_SPAN_RE.finditer(text)]
+
+
+def mention_context_window(
+    text: str,
+    a_abs: int,
+    b_abs: int,
+    *,
+    words_before: int = 5,
+    words_after: int = 5,
+) -> str:
+    """Return a short phrase around ``[a_abs, b_abs)`` with the mention marked «…»."""
+    spans = _word_spans(text)
+    if not spans:
+        return ""
+
+    start_word: int | None = None
+    end_word: int | None = None
+    for i, (wa, wb) in enumerate(spans):
+        if wb <= a_abs:
+            continue
+        if wa >= b_abs:
+            break
+        if start_word is None:
+            start_word = i
+        end_word = i
+
+    if start_word is None:
+        for i, (wa, _wb) in enumerate(spans):
+            if wa >= a_abs:
+                start_word = i
+                end_word = i
+                break
+        if start_word is None:
+            return ""
+
+    assert end_word is not None
+    win_start = max(0, start_word - words_before)
+    win_end = min(len(spans) - 1, end_word + words_after)
+    parts: list[str] = []
+    for i in range(win_start, win_end + 1):
+        wa, wb = spans[i]
+        word = text[wa:wb]
+        if start_word <= i <= end_word:
+            parts.append(f"«{word}»")
+        else:
+            parts.append(word)
+    return " ".join(parts)
+
+
+def load_pmid_texts(
+    table_path: str | pathlib.Path,
+    pmids: set[str],
+    *,
+    chunk_size: int = 10_000,
+) -> dict[str, str]:
+    """Stream a PMID/text table and return rows for the requested ``pmids`` only."""
+    from pelinker.ops import _detect_file_format, _detect_headers_and_columns
+
+    path = pathlib.Path(table_path).expanduser().resolve()
+    if not path.exists():
+        raise FileNotFoundError(f"PMID text table not found: {path}")
+
+    need = {str(p) for p in pmids}
+    if not need:
+        return {}
+
+    file_format = _detect_file_format(path)
+    has_header, pmid_col, text_col = _detect_headers_and_columns(path, file_format)
+    compression = "gzip" if path.suffix.endswith(".gz") else None
+    sep = "\t" if file_format == "tsv" else ","
+
+    found: dict[str, str] = {}
+    reader = pd.read_csv(
+        path,
+        sep=sep,
+        header=0 if has_header else None,
+        compression=compression,
+        chunksize=chunk_size,
+    )
+    for chunk in reader:
+        pmid_series = chunk[pmid_col].astype(str)
+        mask = pmid_series.isin(need)
+        if not mask.any():
+            continue
+        for pmid, text in zip(
+            pmid_series[mask],
+            chunk.loc[mask, text_col].astype(str),
+            strict=True,
+        ):
+            found[str(pmid)] = text
+        if len(found) >= len(need):
+            break
+    return found
+
+
+def enrich_fit_umap_plot_df_with_context(
+    plot_df: pd.DataFrame,
+    pmid_text_table_path: str | pathlib.Path,
+    *,
+    words_before: int = 5,
+    words_after: int = 5,
+) -> pd.DataFrame:
+    """Add a ``context`` column: five words before/after each mention (from ``a_abs``/``b_abs``)."""
+    required = {"pmid", "a_abs", "b_abs"}
+    if not required.issubset(plot_df.columns):
+        return plot_df
+
+    pmid_texts = load_pmid_texts(
+        pmid_text_table_path,
+        {str(p) for p in plot_df["pmid"].astype(str).unique()},
+    )
+    contexts: list[str] = []
+    for pmid, a_abs, b_abs in zip(
+        plot_df["pmid"].astype(str),
+        plot_df["a_abs"],
+        plot_df["b_abs"],
+        strict=True,
+    ):
+        text = pmid_texts.get(pmid)
+        if text is None or pd.isna(a_abs) or pd.isna(b_abs):
+            contexts.append("")
+            continue
+        contexts.append(
+            mention_context_window(
+                text,
+                int(a_abs),
+                int(b_abs),
+                words_before=words_before,
+                words_after=words_after,
+            )
+        )
+
+    out = plot_df.copy()
+    out["context"] = contexts
+    return out
 
 
 def build_fit_umap_plot_df(

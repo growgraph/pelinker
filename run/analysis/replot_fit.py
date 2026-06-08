@@ -10,6 +10,9 @@ Produces figures per report directory (emergent clusters only; HDBSCAN noise ``-
 
 Reads ``linker_fit.clustering_report.json.gz``, ``linker_fit.cluster_composition.json.gz``,
 and ``linker_fit.emergent_clusters.json`` when present.
+
+With ``--pmid-text-table``, UMAP hover text includes a five-word context window around
+each mention (resolved via ``pmid``, ``a_abs``, and ``b_abs`` provenance).
 """
 
 from __future__ import annotations
@@ -35,6 +38,7 @@ from pelinker.cluster_composition_viz import (
 
 from pelinker.plotting import (
     build_fit_umap_plot_df,
+    enrich_fit_umap_plot_df_with_context,
     plot_cluster_entity_bump,
     plot_cluster_entity_sankey,
     plot_umap_viz,
@@ -261,12 +265,22 @@ def _load_composition_df(
     default=False,
     help="Also display figures interactively (plt.show).",
 )
+@click.option(
+    "--pmid-text-table",
+    type=click.Path(path_type=pathlib.Path, dir_okay=False),
+    default=None,
+    help=(
+        "TSV/CSV (optional gzip) with PMID and full text columns. "
+        "Used to add a 5-word context window around each mention in the UMAP hover."
+    ),
+)
 def main(
     report_dir: pathlib.Path,
     top_n: int,
     max_clusters: int,
     max_entities: int,
     show: bool,
+    pmid_text_table: pathlib.Path | None,
 ) -> None:
     report_dir = report_dir.expanduser().resolve()
 
@@ -320,6 +334,11 @@ def main(
     )
 
     plot_df = build_fit_umap_plot_df(report, exclude_noise=True)
+    if plot_df is not None and pmid_text_table is not None:
+        plot_df = enrich_fit_umap_plot_df_with_context(
+            plot_df,
+            pmid_text_table,
+        )
     if plot_df is not None and "uviz_00" in plot_df.columns:
         umap_path = report_dir / "fit_umap_viz.html"
         plot_umap_viz(plot_df, output_path=str(umap_path))
