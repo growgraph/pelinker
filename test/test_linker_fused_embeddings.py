@@ -95,7 +95,7 @@ def test_fused_fit_two_parquets_stacks_embedding_dim(tmp_path):
     linker.fit(
         [p1, p2],
         transform_config=TransformConfig(
-            pca_components=4, umap_components=2, umap_viz_components=2
+            pca_components=4, umap_components=2, cluster_viz_components=2
         ),
         min_cluster_size=2,
         fit_config=fit_cfg,
@@ -161,7 +161,7 @@ def test_fit_with_synthetic_negatives_screener_metrics_and_dump_load(tmp_path):
     linker.fit(
         [p1, p2],
         transform_config=TransformConfig(
-            pca_components=4, umap_components=2, umap_viz_components=2
+            pca_components=4, umap_components=2, cluster_viz_components=2
         ),
         min_cluster_size=2,
         fit_config=fit_cfg,
@@ -224,7 +224,7 @@ def test_evaluate_selection_from_paths_multi_file_paths(tmp_path):
 
     report = evaluate_selection_from_paths(
         transform_config=TransformConfig(
-            pca_components=4, umap_components=2, umap_viz_components=2
+            pca_components=4, umap_components=2, cluster_viz_components=2
         ),
         file_paths=[p1, p2],
         optimization_config=ClusteringOptimizationConfig(
@@ -259,7 +259,7 @@ def test_fit_stores_and_serializes_training_pca_metrics(tmp_path):
     linker.fit(
         [p1, p2],
         transform_config=TransformConfig(
-            pca_components=4, umap_components=2, umap_viz_components=2
+            pca_components=4, umap_components=2, cluster_viz_components=2
         ),
         min_cluster_size=2,
         fit_config=LinkerFitConfig(min_class_size=1, batch_size=500),
@@ -296,7 +296,7 @@ def test_fit_clustering_report_json_roundtrip(tmp_path: Path) -> None:
     linker.fit(
         [p1, p2],
         transform_config=TransformConfig(
-            pca_components=4, umap_components=2, umap_viz_components=2
+            pca_components=4, umap_components=2, cluster_viz_components=2
         ),
         min_cluster_size=2,
         fit_config=LinkerFitConfig(min_class_size=1, batch_size=500),
@@ -307,7 +307,7 @@ def test_fit_clustering_report_json_roundtrip(tmp_path: Path) -> None:
     write_clustering_report_json(out, report)
     with gzip.open(out, mode="rt", encoding="utf-8") as fh:
         blob = json.load(fh)
-    assert blob["schema"] == "pelinker.clustering_report.v9"
+    assert blob["schema"] == "pelinker.clustering_report.v10"
     n = len(report.assignments)
     assert len(blob["pca_residuals"]) == n
     assert len(blob["pca_mahalanobis"]) == n

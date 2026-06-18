@@ -55,7 +55,8 @@ def _minimal_report(
         pca_spectral_entropy=ent,
         oov_label=y_neg,
         umap_clustering=np.array([[0.0, 0.1]], dtype=np.float64),
-        umap_visualization=np.array([[0.0, 0.1]], dtype=np.float64),
+        cluster_viz=np.array([[0.0, 0.1]], dtype=np.float64),
+        cluster_viz_method="pca",
         pca_reduced=np.array([[0.0, 0.1]], dtype=np.float64),
         ari=ari,
     )
@@ -128,7 +129,8 @@ def test_summarize_with_pooled_min_cluster_size_uses_consensus_and_per_sample_db
         pca_spectral_entropy=r1_ent,
         oov_label=r1_y,
         umap_clustering=np.array([[0.0, 0.1]], dtype=np.float64),
-        umap_visualization=np.array([[0.0, 0.1]], dtype=np.float64),
+        cluster_viz=np.array([[0.0, 0.1]], dtype=np.float64),
+        cluster_viz_method="pca",
         pca_reduced=np.array([[0.0, 0.1]], dtype=np.float64),
         ari=0.8,
     )
@@ -154,7 +156,8 @@ def test_summarize_with_pooled_min_cluster_size_uses_consensus_and_per_sample_db
         pca_spectral_entropy=r2_ent,
         oov_label=r2_y,
         umap_clustering=np.array([[0.0, 0.1]], dtype=np.float64),
-        umap_visualization=np.array([[0.0, 0.1]], dtype=np.float64),
+        cluster_viz=np.array([[0.0, 0.1]], dtype=np.float64),
+        cluster_viz_method="pca",
         pca_reduced=np.array([[0.0, 0.1]], dtype=np.float64),
         ari=0.85,
     )
@@ -176,7 +179,7 @@ def test_write_clustering_report_json_includes_pca_arrays(tmp_path: Path) -> Non
     write_clustering_report_json(out, r)
     with gzip.open(out, mode="rt", encoding="utf-8") as fh:
         raw = json.load(fh)
-    assert raw["schema"] == "pelinker.clustering_report.v9"
+    assert raw["schema"] == "pelinker.clustering_report.v10"
     assert raw["pca_residuals"] == [0.1]
     assert raw["pca_mahalanobis"] == [0.2]
     assert raw["pca_spectral_entropy"] == [0.3]

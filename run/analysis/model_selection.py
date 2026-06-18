@@ -67,7 +67,7 @@ from pelinker.plotting import (
     plot_pca_quality_pairgrid,
     plot_roc_comparison,
     plot_screener_oov_bar,
-    plot_umap_viz,
+    plot_cluster_viz,
 )
 from pelinker.reporting import (
     MODEL_SELECTION_RUN_REPORT_BASENAME,
@@ -1180,6 +1180,13 @@ def _json_ready_flat_row(row: ClusteringSearchSummaryRow) -> dict[str, object]:
     help="Number of PCA components for dimensionality reduction",
 )
 @click.option(
+    "--cluster-viz-method",
+    type=click.Choice(["pca", "umap"], case_sensitive=False),
+    default="pca",
+    show_default=True,
+    help="Reducer for cluster-space visualization (PCA or UMAP on clustering coords).",
+)
+@click.option(
     "--min-class-size",
     type=click.INT,
     default=20,
@@ -1200,11 +1207,11 @@ def _json_ready_flat_row(row: ClusteringSearchSummaryRow) -> dict[str, object]:
 @click.option(
     "--eval-max-rows",
     type=click.INT,
-    default=100_000,
+    default=0,
     show_default=True,
     help=(
         "Stratified cap on mention rows per bootstrap draw (after --frac). "
-        "Pass 0 to disable the cap (frac only)."
+        "Default 0 = no cap (frac only)."
     ),
 )
 @click.option(
@@ -1325,6 +1332,7 @@ def main(
     report_path: pathlib.Path,
     umap_dim: int,
     pca_components: int,
+    cluster_viz_method: str,
     min_class_size: int,
     seed: int,
     frac: float,
@@ -1411,6 +1419,7 @@ def main(
         input_dir=input_dir,
         umap_dim=umap_dim,
         pca_components=pca_components,
+        cluster_viz_method=cluster_viz_method.lower(),
         min_class_size=min_class_size,
         seed=seed,
         frac=frac,
@@ -1485,6 +1494,8 @@ def main(
     transform_config = TransformConfig(
         pca_components=pca_components,
         umap_components=umap_dim,
+        cluster_viz_method=cluster_viz_method.lower(),
+        seed=seed,
     )
 
     parquet_files = sorted(input_dir.glob(f"{prefix}*.parquet"))
@@ -2181,15 +2192,14 @@ def main(
         )
 
     if best_report is not None:
-        umap_viz_path = report_path / "umap_best.html"
+        cluster_viz_path = report_path / "cluster_viz_best.html"
         console.print(
-            "[green]✓[/green] Generating UMAP visualization for best model..."
+            "[green]✓[/green] Generating cluster-space visualization for best model..."
         )
-        umap_viz_df = pd.DataFrame(
-            best_report.umap_visualization,
+        cluster_viz_df = pd.DataFrame(
+            best_report.cluster_viz,
             columns=[
-                f"uviz_{j:02d}"
-                for j in range(int(best_report.umap_visualization.shape[1]))
+                f"cviz_{j:02d}" for j in range(int(best_report.cluster_viz.shape[1]))
             ],
             index=best_report.assignments.index,
         )
@@ -2203,13 +2213,18 @@ def main(
                 best_report.assignments[assign_cols].rename(
                     columns={"cluster": "class"}
                 ),
-                umap_viz_df,
+                cluster_viz_df,
             ],
             axis=1,
         )
-        plot_umap_viz(plot_df, output_path=str(umap_viz_path))
+        plot_cluster_viz(
+            plot_df,
+            output_path=str(cluster_viz_path),
+            viz_method=best_report.cluster_viz_method,
+        )
         console.print(
-            f"[green]✓[/green] UMAP visualization saved to: [cyan]{umap_viz_path}[/cyan]"
+            "[green]✓[/green] Cluster visualization saved to: "
+            f"[cyan]{cluster_viz_path}[/cyan]"
         )
 
     checkpoint_payload = {

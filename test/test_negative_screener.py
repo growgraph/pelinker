@@ -85,7 +85,7 @@ def test_evaluate_selection_sample_ambient_screener_cv_and_manifold_only_positiv
             cv_random_state=0,
         ),
     )
-    tc = TransformConfig(pca_components=6, umap_components=3, umap_viz_components=3)
+    tc = TransformConfig(pca_components=6, umap_components=3, cluster_viz_components=3)
     report = evaluate_selection_sample(
         dfr,
         tc,

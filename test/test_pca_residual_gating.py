@@ -79,20 +79,20 @@ def test_embedding_transformer_transform_returns_dual_pca_metrics() -> None:
     rng = np.random.default_rng(0)
     embeddings = rng.normal(size=(12, 8)).astype(np.float32)
     transformer = EmbeddingTransformer(
-        TransformConfig(pca_components=4, umap_components=2, umap_viz_components=2)
+        TransformConfig(pca_components=4, umap_components=2, cluster_viz_components=2)
     )
     transformer.fit(embeddings)
 
     (
         umap_clustering,
-        umap_visualization,
+        cluster_viz,
         pca_residuals,
         pca_mahalanobis,
         pca_spectral_entropy,
     ) = transformer.transform(embeddings)
 
     assert umap_clustering.shape == (12, 2)
-    assert umap_visualization.shape == (12, 2)
+    assert cluster_viz.shape == (12, 2)
     assert pca_residuals.shape == (12,)
     assert pca_mahalanobis.shape == (12,)
     assert pca_spectral_entropy.shape == (12,)
@@ -112,7 +112,7 @@ def test_compute_transform_artifacts_exposes_pca_metric_arrays() -> None:
     artifacts = compute_transform_artifacts(
         df,
         config=TransformConfig(
-            pca_components=3, umap_components=2, umap_viz_components=2
+            pca_components=3, umap_components=2, cluster_viz_components=2
         ),
     )
 
@@ -131,7 +131,7 @@ def test_score_transform_artifacts_matches_compute_pca_metrics() -> None:
             "embed": [row for row in rng.normal(size=(10, 6)).astype(np.float32)],
         }
     )
-    cfg = TransformConfig(pca_components=3, umap_components=2, umap_viz_components=2)
+    cfg = TransformConfig(pca_components=3, umap_components=2, cluster_viz_components=2)
     fitted = compute_transform_artifacts(df, config=cfg)
     emb = np.stack(df["embed"].values).astype(np.float32, copy=False)
     transformer = EmbeddingTransformer(cfg).fit(emb)
@@ -147,7 +147,7 @@ def test_score_transform_artifacts_is_stable_for_same_transformer() -> None:
     df = pd.DataFrame(
         {"embed": [row for row in rng.normal(size=(10, 6)).astype(np.float32)]}
     )
-    cfg = TransformConfig(pca_components=3, umap_components=2, umap_viz_components=2)
+    cfg = TransformConfig(pca_components=3, umap_components=2, cluster_viz_components=2)
     emb = np.stack(df["embed"].values).astype(np.float32, copy=False)
     transformer = EmbeddingTransformer(cfg).fit(emb)
     a = score_transform_artifacts(df, transformer, include_umap=True)
@@ -166,22 +166,25 @@ def test_score_transform_artifacts_scores_extra_rows_without_umap() -> None:
     score_df = pd.DataFrame(
         {"embed": [row for row in rng.normal(size=(12, 5)).astype(np.float32)]}
     )
-    cfg = TransformConfig(pca_components=3, umap_components=2, umap_viz_components=2)
+    cfg = TransformConfig(pca_components=3, umap_components=2, cluster_viz_components=2)
     emb_fit = np.stack(fit_df["embed"].values).astype(np.float32, copy=False)
     transformer = EmbeddingTransformer(cfg).fit(emb_fit)
     scored = score_transform_artifacts(score_df, transformer, include_umap=False)
 
     assert scored.pca_residuals.shape == (12,)
     assert scored.umap_clustering.shape == (12, 0)
-    assert scored.umap_visualization.shape == (12, 0)
+    assert scored.cluster_viz.shape == (12, 0)
 
 
 class _DummyTransformer:
-    class _UmapStub:
+    class _VizStub:
         n_components = 2
 
-    umap = _UmapStub()
-    umap_viz = _UmapStub()
+    umap = _VizStub()
+    cluster_viz_pca = _VizStub()
+    config = TransformConfig(
+        pca_components=2, umap_components=2, cluster_viz_components=2
+    )
 
     def transform(
         self, embeddings: np.ndarray

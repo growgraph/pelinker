@@ -7,6 +7,7 @@ import matplotlib
 import numpy as np
 import pandas as pd
 
+from pySankey.sankey import sankey
 from pelinker.clustering_grid import SmoothedGridOptimumResult
 from pelinker.config import ClusteringOptimizationConfig, GridObjectiveSpec
 from pelinker.grid_export import (
@@ -1166,17 +1167,19 @@ def _distinct_category_hex_colors(n: int) -> list[str]:
     return colors_hex
 
 
-def plot_umap_viz(
+def plot_cluster_viz(
     df: pd.DataFrame,
-    output_path: str | pathlib.Path = "umap.html",
+    output_path: str | pathlib.Path = "cluster_viz.html",
+    *,
+    viz_method: str = "pca",
 ) -> None:
     if "entity" not in df.columns:
-        raise ValueError("plot_umap_viz requires an 'entity' column")
+        raise ValueError("plot_cluster_viz requires an 'entity' column")
     if "class" not in df.columns:
-        raise ValueError("plot_umap_viz requires a 'class' column")
-    if "uviz_00" not in df.columns or "uviz_01" not in df.columns:
-        raise ValueError("plot_umap_viz requires uviz_00 and uviz_01 columns")
-    use_3d = "uviz_02" in df.columns
+        raise ValueError("plot_cluster_viz requires a 'class' column")
+    if "cviz_00" not in df.columns or "cviz_01" not in df.columns:
+        raise ValueError("plot_cluster_viz requires cviz_00 and cviz_01 columns")
+    use_3d = "cviz_02" in df.columns
     label_col = "entity"
     df = df.copy()
     df["show_label"] = df[label_col]
@@ -1207,23 +1210,23 @@ def plot_umap_viz(
             hover_specs.append((col, label))
 
     scatter_kwargs: dict[str, object] = {
-        "x": "uviz_00",
-        "y": "uviz_01",
+        "x": "cviz_00",
+        "y": "cviz_01",
         "color": "class",
         "color_discrete_map": color_discrete_map,
         "category_orders": {"class": class_order},
         "hover_name": label_col,
-        "labels": {"uviz_00": "Dim 1", "uviz_01": "Dim 2"},
+        "labels": {"cviz_00": "Dim 1", "cviz_01": "Dim 2"},
         "template": "plotly_white",
     }
     if hover_specs:
         scatter_kwargs["custom_data"] = [c for c, _ in hover_specs]
     if use_3d:
-        scatter_kwargs["z"] = "uviz_02"
+        scatter_kwargs["z"] = "cviz_02"
         scatter_kwargs["labels"] = {
-            "uviz_00": "Dim 1",
-            "uviz_01": "Dim 2",
-            "uviz_02": "Dim 3",
+            "cviz_00": "Dim 1",
+            "cviz_01": "Dim 2",
+            "cviz_02": "Dim 3",
         }
 
     if use_3d:
@@ -1250,9 +1253,9 @@ def plot_umap_viz(
     df_labels = df[df["show_label"] != ""]
     if use_3d:
         text_trace = go.Scatter3d(
-            x=df_labels["uviz_00"],
-            y=df_labels["uviz_01"],
-            z=df_labels["uviz_02"],
+            x=df_labels["cviz_00"],
+            y=df_labels["cviz_01"],
+            z=df_labels["cviz_02"],
             mode="text",
             text=df_labels["show_label"],
             textposition="top center",
@@ -1262,8 +1265,8 @@ def plot_umap_viz(
         )
     else:
         text_trace = go.Scatter(
-            x=df_labels["uviz_00"],
-            y=df_labels["uviz_01"],
+            x=df_labels["cviz_00"],
+            y=df_labels["cviz_01"],
             mode="text",
             text=df_labels["show_label"],
             textposition="top center",
@@ -1275,11 +1278,12 @@ def plot_umap_viz(
 
     legend_font = 13 if n_classes > 36 else 14
     title_dims = "3D" if use_3d else "2D"
+    method_label = viz_method.upper() if viz_method == "pca" else "UMAP"
     layout: dict[str, object] = {
         "font": dict(size=14),
         "title": dict(
             text=(
-                f"{title_dims} embedding visualization "
+                f"{title_dims} cluster {method_label} view "
                 f"({len(df):,} points, {n_classes} clusters)"
             ),
             x=0.5,
@@ -1578,6 +1582,38 @@ def plot_pca_quality_pairgrid(
     return True
 
 
+_SANKEY_DEFAULT_INCHES_PER_LABEL = 0.4
+_SANKEY_DEFAULT_MIN_FIG_HEIGHT = 6.0
+_SANKEY_DEFAULT_MIN_BAND_HEIGHT = 0.15
+
+
+def _scale_sankey_weights_for_min_band(
+    work: pd.DataFrame,
+    weights: np.ndarray,
+    *,
+    min_band_height: float,
+) -> np.ndarray:
+    """
+    Uniformly scale flow weights so the thinnest node band meets a minimum height.
+
+    pySankey band thickness is proportional to mass; small totals cram labels even
+    when the figure is tall. Scaling preserves relative flow widths.
+    """
+    if min_band_height <= 0:
+        return weights
+    left_totals = work.groupby("entity", sort=False)["count"].sum()
+    right_totals = work.groupby("cluster", sort=False)["count"].sum()
+    if left_totals.empty or right_totals.empty:
+        return weights
+    min_band = float(min(left_totals.min(), right_totals.min()))
+    if min_band <= 0:
+        return weights
+    scale = max(1.0, min_band_height / min_band)
+    if scale <= 1.0:
+        return weights
+    return weights * scale
+
+
 def plot_cluster_entity_sankey(
     composition_df: pd.DataFrame,
     *,
@@ -1585,9 +1621,16 @@ def plot_cluster_entity_sankey(
     basename: str = "fit_cluster_entity_sankey",
     max_clusters: int | None = None,
     max_entities: int | None = None,
+    inches_per_label: float = _SANKEY_DEFAULT_INCHES_PER_LABEL,
+    min_fig_height: float = _SANKEY_DEFAULT_MIN_FIG_HEIGHT,
+    min_band_height: float = _SANKEY_DEFAULT_MIN_BAND_HEIGHT,
 ) -> list[pathlib.Path]:
     """
     Bipartite entity→cluster Sankey from a long composition table (cluster, entity, count).
+
+    pySankey sizes bands by weight only (no per-label height knob). ``inches_per_label``
+    sets figure height from the larger of the two label columns; ``min_band_height``
+    uniformly scales weights so the thinnest band is readable without changing ratios.
     """
     if composition_df.empty:
         return []
@@ -1606,73 +1649,26 @@ def plot_cluster_entity_sankey(
     left = work["entity"].to_numpy()
     right = work["cluster"].to_numpy()
     weights = work["count"].astype(float).to_numpy()
+    weights = _scale_sankey_weights_for_min_band(
+        work,
+        weights,
+        min_band_height=min_band_height,
+    )
 
-    from pySankey.sankey import sankey
+    n_labels = max(work["entity"].nunique(), work["cluster"].nunique())
+    fig_height = max(min_fig_height, n_labels * inches_per_label)
 
-    fig = plt.figure(figsize=(14, max(6, len(work) * 0.08)))
+    # pySankey always calls plt.figure() internally; figure_name is a path string, not a Figure.
     sankey(
         left,
         right,
         leftWeight=weights,
         aspect=12,
         fontsize=10,
-        figure_name=fig,
         closePlot=False,
     )
-    written: list[pathlib.Path] = []
-    for path in _save_figure_multi_format(fig, save_dir / basename):
-        written.append(path)
-    plt.close(fig)
-    return written
-
-
-def plot_cluster_entity_bump(
-    composition_df: pd.DataFrame,
-    *,
-    save_dir: pathlib.Path,
-    basename: str = "fit_cluster_entity_bump",
-    max_clusters: int | None = None,
-    max_entities: int | None = None,
-) -> list[pathlib.Path]:
-    """
-    Bump chart of entity weighted mass across clusters (wide pivot + bumplot).
-    """
-    if composition_df.empty:
-        return []
-    from pelinker.cluster_composition_viz import limit_composition_for_flow_plots
-
-    work = limit_composition_for_flow_plots(
-        composition_df,
-        max_clusters=max_clusters,
-        max_entities=max_entities,
-    )
-    work = work.copy()
-    work = work[~work["entity"].astype(str).str.startswith("Other (")]
-    if work.empty:
-        return []
-    wide = work.pivot_table(
-        index="cluster",
-        columns="entity",
-        values="count",
-        aggfunc="sum",
-        fill_value=0.0,
-    ).reset_index()
-    wide["cluster"] = wide["cluster"].astype(str)
-    entity_cols = [c for c in wide.columns if c != "cluster"]
-    if not entity_cols:
-        return []
-
-    from bumplot import bumplot
-
-    fig, ax = plt.subplots(figsize=(12, max(5, len(entity_cols) * 0.35)))
-    bumplot(
-        x="cluster",
-        y_columns=entity_cols,
-        data=wide,
-        ax=ax,
-        ordinal_labels=False,
-    )
-    ax.set_title("Entity mass rank across clusters (inv-sqrt weighted)")
+    fig = plt.gcf()
+    fig.set_size_inches(14, fig_height)
     written: list[pathlib.Path] = []
     for path in _save_figure_multi_format(fig, save_dir / basename):
         written.append(path)
@@ -1780,7 +1776,7 @@ def load_pmid_texts(
     return found
 
 
-def enrich_fit_umap_plot_df_with_context(
+def enrich_fit_cluster_viz_plot_df_with_context(
     plot_df: pd.DataFrame,
     pmid_text_table_path: str | pathlib.Path,
     *,
@@ -1822,30 +1818,30 @@ def enrich_fit_umap_plot_df_with_context(
     return out
 
 
-def build_fit_umap_plot_df(
+def build_fit_cluster_viz_plot_df(
     report: object,
     *,
     exclude_noise: bool = True,
-) -> pd.DataFrame | None:
-    """Build a :func:`plot_umap_viz` frame from a :class:`~pelinker.reporting.ModelSelectionReport`."""
+) -> tuple[pd.DataFrame | None, str]:
+    """Build a :func:`plot_cluster_viz` frame from a :class:`~pelinker.reporting.ModelSelectionReport`."""
     from pelinker.cluster_composition_viz import filter_emergent_assignments
     from pelinker.reporting import ModelSelectionReport
 
     if not isinstance(report, ModelSelectionReport):
-        return None
-    umap = report.umap_visualization
-    if umap is None or umap.size == 0 or umap.shape[1] < 1:
-        return None
+        return None, "pca"
+    cluster_viz = report.cluster_viz
+    if cluster_viz is None or cluster_viz.size == 0 or cluster_viz.shape[1] < 1:
+        return None, report.cluster_viz_method
     assign = report.assignments.copy()
     if exclude_noise:
         assign = filter_emergent_assignments(assign)
     if len(assign) == 0:
-        return None
-    n_dims = int(umap.shape[1])
-    umap_cols = [f"uviz_{j:02d}" for j in range(n_dims)]
-    umap_df = pd.DataFrame(umap, columns=umap_cols, index=report.assignments.index).loc[
-        assign.index
-    ]
+        return None, report.cluster_viz_method
+    n_dims = int(cluster_viz.shape[1])
+    viz_cols = [f"cviz_{j:02d}" for j in range(n_dims)]
+    viz_df = pd.DataFrame(
+        cluster_viz, columns=viz_cols, index=report.assignments.index
+    ).loc[assign.index]
     assign = assign.copy()
     rename: dict[str, str] = {}
     if "cluster" in assign.columns:
@@ -1864,4 +1860,6 @@ def build_fit_umap_plot_df(
         )
         if c in plot_assign.columns
     ]
-    return pd.concat([plot_assign[cols + extra], umap_df], axis=1)
+    return pd.concat(
+        [plot_assign[cols + extra], viz_df], axis=1
+    ), report.cluster_viz_method

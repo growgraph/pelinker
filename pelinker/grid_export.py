@@ -178,6 +178,9 @@ def _solver_config_snapshot(
     config: ClusteringOptimizationConfig,
 ) -> dict[str, object]:
     return {
+        "frac": config.frac,
+        "eval_max_rows": config.eval_max_rows,
+        "base_seed": config.base_seed,
         "grid_objective": config.grid_objective,
         "optimization_method": config.optimization_method,
         "grid_cluster_count_reward": config.grid_cluster_count_reward,

@@ -13,7 +13,7 @@ import pandas as pd
 
 from pelinker.config import ScreenerKind
 
-_JSON_CLUSTERING_REPORT_SCHEMA = "pelinker.clustering_report.v9"
+_JSON_CLUSTERING_REPORT_SCHEMA = "pelinker.clustering_report.v10"
 MODEL_SELECTION_RUN_REPORT_SCHEMA = "pelinker.model_selection.run_report.v2"
 
 
@@ -320,7 +320,8 @@ class ModelSelectionReport:
     oov_label: np.ndarray
     """Per-row OOV mask: ``1`` iff ``entity == negative_label`` (same length as ``pca_residuals``)."""
     umap_clustering: np.ndarray
-    umap_visualization: np.ndarray
+    cluster_viz: np.ndarray
+    cluster_viz_method: str
     pca_reduced: np.ndarray
     all_screener_cv: AllScreenerCvResult | None = None
     """Unified stratified CV for embedding screener, manifold OOV, and stacked score."""
@@ -603,7 +604,8 @@ def clustering_report_to_jsonable_dict(report: ModelSelectionReport) -> dict[str
         ),
         "oov_label": _ndarray_to_jsonable_nested(report.oov_label),
         "umap_clustering": _ndarray_to_jsonable_nested(report.umap_clustering),
-        "umap_visualization": _ndarray_to_jsonable_nested(report.umap_visualization),
+        "cluster_viz": _ndarray_to_jsonable_nested(report.cluster_viz),
+        "cluster_viz_method": str(report.cluster_viz_method),
         "pca_reduced": _ndarray_to_jsonable_nested(report.pca_reduced),
         "ari": ari_out,
         "all_screener_cv": (
@@ -641,19 +643,14 @@ def read_clustering_report_json(path: str | pathlib.Path) -> ModelSelectionRepor
     """
     Load a :class:`ModelSelectionReport` written by :func:`write_clustering_report_json`.
 
-    Supports schema ``pelinker.clustering_report.v7`` through ``v9`` (v9 adds per-mention
-    provenance and screener/cluster scores on ``assignments``).
+    Supports schema ``pelinker.clustering_report.v10`` (cluster-space viz coords).
     """
     p = pathlib.Path(path).expanduser()
     with gzip.open(p, mode="rt", encoding="utf-8") as f:
         raw: dict[str, Any] = json.load(f)
 
     schema = str(raw.get("schema", ""))
-    if schema not in (
-        "pelinker.clustering_report.v7",
-        "pelinker.clustering_report.v8",
-        "pelinker.clustering_report.v9",
-    ):
+    if schema != "pelinker.clustering_report.v10":
         raise ValueError(f"Unsupported clustering report schema: {schema!r}")
 
     hp = raw["hyperparameters"]
@@ -692,7 +689,8 @@ def read_clustering_report_json(path: str | pathlib.Path) -> ModelSelectionRepor
         pca_spectral_entropy=_farr("pca_spectral_entropy"),
         oov_label=_iarr("oov_label"),
         umap_clustering=np.asarray(raw["umap_clustering"], dtype=np.float64),
-        umap_visualization=np.asarray(raw["umap_visualization"], dtype=np.float64),
+        cluster_viz=np.asarray(raw["cluster_viz"], dtype=np.float64),
+        cluster_viz_method=str(raw["cluster_viz_method"]),
         pca_reduced=np.asarray(raw["pca_reduced"], dtype=np.float64),
         all_screener_cv=all_cv,
         screener_oos_datapoints=None,

@@ -1,8 +1,8 @@
 """
 Model-selection evaluation: load embeddings, draw stratified samples, evaluate screeners + clustering.
 
-Contrast with :meth:`~pelinker.model.Linker.fit`, which trains on the full mention corpus and
-persists a single production artifact (no ``frac`` / ``eval_max_rows`` subsampling).
+Production :meth:`~pelinker.model.Linker.fit` uses the same clustering subsample contract when
+``LinkerFitConfig.frac`` / ``base_seed`` / ``clustering_sample_index`` match the selection run.
 """
 
 from __future__ import annotations
@@ -11,16 +11,18 @@ import pathlib
 from collections.abc import Callable, Sequence
 from typing import Literal
 
-import hdbscan
 import numpy as np
 import pandas as pd
 
 from pelinker.analysis import (
     _mention_quality_frame,
-    compute_clustering_fit_metrics,
     drop_entities_with_few_mentions,
     evaluate_all_screeners_cv,
     split_by_negative_label,
+)
+from pelinker.clustering_fit import (
+    fit_hdbscan_on_umap,
+    fit_transformer_on_manifold,
 )
 from pelinker.clustering_grid import (
     aggregate_grid_metrics,
@@ -37,7 +39,7 @@ from pelinker.reporting import (
     entity_negative_label_mask_01,
 )
 from pelinker.sampling import draw_selection_sample
-from pelinker.transform import EmbeddingTransformer, score_transform_artifacts
+from pelinker.transform import score_transform_artifacts
 
 
 def load_selection_frame(
@@ -147,13 +149,10 @@ def evaluate_selection_sample(
 
     number_properties = int(dfr_manifold["entity"].nunique())
 
-    embeddings_manifold = np.stack(dfr_manifold["embed"].values).astype(
-        np.float32, copy=False
-    )
-    transformer = EmbeddingTransformer(transform_config).fit(embeddings_manifold)
-    manifold_artifacts = score_transform_artifacts(
+    tx_result = fit_transformer_on_manifold(dfr_manifold, transform_config)
+    artifacts = score_transform_artifacts(
         dfr_manifold,
-        transformer,
+        tx_result.transformer,
         include_umap=True,
     )
 
@@ -164,7 +163,7 @@ def evaluate_selection_sample(
     projection_cfg = config.projection_screener
     full_quality_artifacts = score_transform_artifacts(
         dfr,
-        transformer,
+        tx_result.transformer,
         include_umap=False,
     )
     X_manifold_full = np.column_stack(
@@ -190,7 +189,6 @@ def evaluate_selection_sample(
     if unified is not None:
         all_screener_cv, screener_oos_dp = unified
 
-    artifacts = manifold_artifacts
     umap_clustering_df = artifacts.umap_clustering_df().assign(
         entity=dfr_manifold["entity"].values
     )
@@ -227,14 +225,14 @@ def evaluate_selection_sample(
     best_size = solved_single_sample.chosen_min_cluster_size
     best_score = solved_single_sample.score_mean_at_chosen
 
-    clusterer = hdbscan.HDBSCAN(min_cluster_size=best_size, gen_min_span_tree=True)
-    labels = clusterer.fit_predict(artifacts.umap_clustering)
-    fit_metrics = compute_clustering_fit_metrics(
-        clusterer,
+    cl_result = fit_hdbscan_on_umap(
+        artifacts.umap_clustering,
         dfr_manifold,
-        min_cluster_size=best_size,
-        cluster_labels=labels,
+        best_size,
+        prediction_data=False,
     )
+    labels = cl_result.cluster_labels
+    fit_metrics = cl_result.fit_metrics
     assignments = dfr_manifold[["entity"]].copy()
     for optional_col in ["pmid", "mention"]:
         if optional_col in dfr_manifold.columns:
@@ -267,7 +265,8 @@ def evaluate_selection_sample(
         pca_spectral_entropy=ent_a,
         oov_label=y_neg,
         umap_clustering=artifacts.umap_clustering,
-        umap_visualization=artifacts.umap_visualization,
+        cluster_viz=artifacts.cluster_viz,
+        cluster_viz_method=transform_config.cluster_viz_method,
         pca_reduced=artifacts.pca_reduced,
         all_screener_cv=all_screener_cv,
         screener_oos_datapoints=screener_oos_dp,

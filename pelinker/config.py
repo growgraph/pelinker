@@ -224,13 +224,34 @@ class LinkerFitConfig:
         default_factory=ManifoldOovScreenerConfig
     )
     screener_max_rows: int | None = 100_000
-    """Max rows for ambient + projection screener training (stratified). None = no cap."""
-    screener_seed: int = 0
-    """Random seed for the stratified screener training draw."""
+    """Max rows for ambient + projection screener training when ``frac=1`` (stratified). None = no cap."""
+    screener_seed: int = 13
+    """Random seed for the stratified screener training draw when ``frac=1``."""
+    frac: float = 1.0
+    """Stratified mention fraction for clustering (and screener when ``frac < 1``). Match model selection."""
+    eval_max_rows: int | None = None
+    """Cap rows per clustering draw after ``frac``. None = no cap beyond ``frac``."""
+    base_seed: int = 13
+    """Seed for stratified clustering draws; draw seed is ``base_seed + clustering_sample_index``."""
+    clustering_sample_index: int = 0
+    """Bootstrap index for the clustering subsample (same contract as model selection ``sample_idx``)."""
     diagnostics_sample_size: int = 20_000
     """Max rows of :class:`~pelinker.reporting.LinkerFitDiagnostics` stored on the fit report."""
     diagnostics_random_state: int = 0
     """Stratified subsample seed for training diagnostics."""
+
+    def to_clustering_sample_config(self) -> ClusteringOptimizationConfig:
+        """Build a :class:`ClusteringOptimizationConfig` for :func:`~pelinker.sampling.draw_selection_sample`."""
+        return ClusteringOptimizationConfig(
+            min_class_size=self.min_class_size,
+            base_seed=self.base_seed,
+            frac=self.frac,
+            eval_max_rows=self.eval_max_rows,
+            batch_size=self.batch_size,
+            n_embedding_batches=self.n_embedding_batches,
+            ambient_screener=self.ambient_screener,
+            projection_screener=self.projection_screener,
+        )
 
     def __post_init__(self) -> None:
         if self.min_class_size < 1:
@@ -241,6 +262,12 @@ class LinkerFitConfig:
             raise ValueError("n_embedding_batches must be >= 1 when provided")
         if self.screener_max_rows is not None and self.screener_max_rows < 1:
             raise ValueError("screener_max_rows must be >= 1 when provided")
+        if not 0 < self.frac <= 1:
+            raise ValueError("frac must be in range (0, 1]")
+        if self.eval_max_rows is not None and self.eval_max_rows < 1:
+            raise ValueError("eval_max_rows must be >= 1 when provided")
+        if self.clustering_sample_index < 0:
+            raise ValueError("clustering_sample_index must be >= 0")
         if self.diagnostics_sample_size < 1:
             raise ValueError("diagnostics_sample_size must be >= 1")
 
@@ -265,7 +292,7 @@ class ClusteringOptimizationConfig:
     base_seed: int = 13
     """Seed for stratified selection draws; per-bootstrap seed is ``base_seed + sample_index``."""
     frac: float = 1.0
-    eval_max_rows: int | None = 100_000
+    eval_max_rows: int | None = None
     """Cap rows per selection draw after frac (stratified). None = no cap beyond frac."""
     n_embedding_batches: int | None = None
     """Cap parquet reads at this many batches (`batch_size` rows each); None = read all."""
@@ -355,11 +382,16 @@ class TransformConfig:
     umap_metric: str = "cosine"
     """Distance metric for UMAP (default: 'cosine')."""
 
-    # Visualization UMAP configuration
-    umap_viz_components: int = 3
-    """Number of UMAP dimensions for visualization (default: 3)."""
-    umap_viz_metric: str = "cosine"
-    """Distance metric for visualization UMAP (default: 'cosine')."""
+    # Cluster-space visualization (reduces umap_clustering coords for plotting)
+    cluster_viz_components: int = 3
+    """Number of dimensions for cluster-space visualization (default: 3)."""
+    cluster_viz_method: Literal["pca", "umap"] = "pca"
+    """Reducer applied to clustering UMAP coords: ``pca`` (linear) or ``umap``."""
+    cluster_viz_umap_metric: str = "euclidean"
+    """Distance metric for cluster-space UMAP viz (only when ``cluster_viz_method='umap'``)."""
+
+    seed: int = 13
+    """Random seed for PCA and UMAP (cluster viz UMAP uses ``seed + 1``)."""
 
     def __post_init__(self):
         """Validate configuration parameters."""
@@ -367,5 +399,15 @@ class TransformConfig:
             raise ValueError("pca_components must be >= 1")
         if self.umap_components < 2:
             raise ValueError("umap_components must be >= 2")
-        if self.umap_viz_components < 2:
-            raise ValueError("umap_viz_components must be >= 2")
+        if self.cluster_viz_components < 2:
+            raise ValueError("cluster_viz_components must be >= 2")
+        if self.cluster_viz_components > self.umap_components:
+            raise ValueError(
+                "cluster_viz_components must be <= umap_components "
+                f"(got {self.cluster_viz_components} > {self.umap_components})"
+            )
+        if self.cluster_viz_method not in ("pca", "umap"):
+            raise ValueError(
+                "cluster_viz_method must be 'pca' or 'umap', "
+                f"got {self.cluster_viz_method!r}"
+            )

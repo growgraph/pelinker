@@ -47,7 +47,8 @@ def _minimal_report(
         pca_spectral_entropy=np.array([0.3], dtype=np.float64),
         oov_label=y,
         umap_clustering=z,
-        umap_visualization=z,
+        cluster_viz=z,
+        cluster_viz_method="pca",
         pca_reduced=z,
         ari=0.8,
     )

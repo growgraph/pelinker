@@ -37,13 +37,14 @@ from pelinker.screener.projection_screener import (
 )
 from pelinker.screener.ambient_screener import NegativeClassScreener
 from pelinker.analysis import (
-    compute_clustering_fit_metrics,
     drop_entities_with_few_mentions,
     fit_ambient_screener_with_metrics,
     mention_frame_from_embedding_paths,
     split_by_negative_label,
 )
-from pelinker.sampling import stratified_mention_sample
+from pelinker.clustering_fit import fit_manifold_clustering
+from pelinker.sampling import draw_selection_sample, stratified_mention_sample
+from pelinker.transform import score_transform_artifacts
 from pelinker.reporting import (
     ClusteringFitMetrics,
     ClusteringHyperparameters,
@@ -95,28 +96,10 @@ class _NegativeScreenerFitStepResult:
 
 
 @dataclass(frozen=True, slots=True)
-class _TransformerFitStepResult:
-    transformer: EmbeddingTransformer
-    umap_clustering: np.ndarray
-    umap_visualization: np.ndarray
-    pca_residuals: np.ndarray
-    pca_mahalanobis: np.ndarray
-    pca_spectral_entropy: np.ndarray
-    pca_reduced: np.ndarray
-
-
-@dataclass(frozen=True, slots=True)
 class _ManifoldOovFitStepResult:
     model: ManifoldOovScoreModel | None
     cv_payload: dict[str, object] | None
     built_training: tuple[np.ndarray, np.ndarray, np.ndarray] | None
-
-
-@dataclass(frozen=True, slots=True)
-class _ClusteringFitStepResult:
-    clusterer: hdbscan.HDBSCAN
-    cluster_labels: np.ndarray
-    fit_metrics: ClusteringFitMetrics
 
 
 def _screener_training_frame(
@@ -124,8 +107,11 @@ def _screener_training_frame(
     fit_cfg: LinkerFitConfig,
     *,
     negative_label: str,
+    clustering_prepared: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """Stratified subsample for screener fitting (aligned with model-selection draws)."""
+    if clustering_prepared is not None and fit_cfg.frac < 1.0:
+        return clustering_prepared
     cap = fit_cfg.screener_max_rows
     if cap is None or len(prepared) <= cap:
         return prepared
@@ -149,26 +135,6 @@ def _fit_ambient_screener_step(
         screener=screener,
         in_sample_metrics=metrics,
         decision=decision,
-    )
-
-
-def _fit_transformer_on_manifold(
-    manifold_df: pd.DataFrame,
-    transform_config: TransformConfig,
-) -> _TransformerFitStepResult:
-    embeddings = np.stack(manifold_df["embed"].values).astype(np.float32, copy=False)
-    transformer = EmbeddingTransformer(transform_config)
-    umap_c, umap_v, pca_r, pca_m, pca_e = transformer.fit_transform(embeddings)
-    embeddings_normed = transformer._l2_normalize_rows(embeddings)
-    pca_reduced = transformer.pca.transform(embeddings_normed)
-    return _TransformerFitStepResult(
-        transformer=transformer,
-        umap_clustering=np.asarray(umap_c, dtype=np.float32),
-        umap_visualization=np.asarray(umap_v, dtype=np.float32),
-        pca_residuals=np.asarray(pca_r, dtype=np.float32),
-        pca_mahalanobis=np.asarray(pca_m, dtype=np.float32),
-        pca_spectral_entropy=np.asarray(pca_e, dtype=np.float32),
-        pca_reduced=np.asarray(pca_reduced, dtype=np.float32),
     )
 
 
@@ -214,31 +180,6 @@ def _fit_projection_step(
     )
     return _ManifoldOovFitStepResult(
         model=model, cv_payload=cv_pl, built_training=built
-    )
-
-
-def _fit_clustering_step(
-    umap_clustering: np.ndarray,
-    manifold_df: pd.DataFrame,
-    min_cluster_size: int,
-) -> _ClusteringFitStepResult:
-    clusterer = hdbscan.HDBSCAN(
-        min_cluster_size=min_cluster_size,
-        gen_min_span_tree=True,
-        prediction_data=True,
-    )
-    cluster_labels_arr = clusterer.fit_predict(umap_clustering)
-    cluster_labels = cluster_labels_arr.astype(int, copy=False)
-    fit_metrics = compute_clustering_fit_metrics(
-        clusterer,
-        manifold_df,
-        min_cluster_size=min_cluster_size,
-        cluster_labels=cluster_labels,
-    )
-    return _ClusteringFitStepResult(
-        clusterer=clusterer,
-        cluster_labels=cluster_labels,
-        fit_metrics=fit_metrics,
     )
 
 
@@ -428,7 +369,7 @@ class Linker:
         self.training_pca_mahalanobis: np.ndarray | None = None
         self.training_pca_spectral_entropy: np.ndarray | None = None
         self.training_umap_clustering: np.ndarray | None = None
-        self.training_umap_visualization: np.ndarray | None = None
+        self.training_cluster_viz: np.ndarray | None = None
         self.training_pca_reduced: np.ndarray | None = None
         self.cluster_composition: ClusterCompositionSnapshot | None = None
         self.cluster_consensus_names: dict[int, str] = {}
@@ -523,8 +464,8 @@ class Linker:
             pe_model.projection = None
         if "training_umap_clustering" not in pe_model.__dict__:
             pe_model.training_umap_clustering = None
-        if "training_umap_visualization" not in pe_model.__dict__:
-            pe_model.training_umap_visualization = None
+        if "training_cluster_viz" not in pe_model.__dict__:
+            pe_model.training_cluster_viz = None
         if "training_pca_reduced" not in pe_model.__dict__:
             pe_model.training_pca_reduced = None
         if "cluster_composition" not in pe_model.__dict__:
@@ -566,7 +507,7 @@ class Linker:
         self.training_pca_mahalanobis = None
         self.training_pca_spectral_entropy = None
         self.training_umap_clustering = None
-        self.training_umap_visualization = None
+        self.training_cluster_viz = None
         self.training_pca_reduced = None
         self._projection_cv_payload = None
 
@@ -595,7 +536,7 @@ class Linker:
             or self.training_pca_mahalanobis is None
             or self.training_pca_spectral_entropy is None
             or self.training_umap_clustering is None
-            or self.training_umap_visualization is None
+            or self.training_cluster_viz is None
             or self.training_pca_reduced is None
             or self.clustering_fit_metrics is None
         ):
@@ -606,7 +547,7 @@ class Linker:
             or len(self.training_pca_mahalanobis) != n
             or len(self.training_pca_spectral_entropy) != n
             or self.training_umap_clustering.shape[0] != n
-            or self.training_umap_visualization.shape[0] != n
+            or self.training_cluster_viz.shape[0] != n
             or self.training_pca_reduced.shape[0] != n
         ):
             return None
@@ -663,8 +604,11 @@ class Linker:
             pca_spectral_entropy=ent_f,
             oov_label=y_neg,
             umap_clustering=np.asarray(self.training_umap_clustering, dtype=np.float64),
-            umap_visualization=np.asarray(
-                self.training_umap_visualization, dtype=np.float64
+            cluster_viz=np.asarray(self.training_cluster_viz, dtype=np.float64),
+            cluster_viz_method=(
+                self.transform_config.cluster_viz_method
+                if self.transform_config is not None
+                else "pca"
             ),
             pca_reduced=np.asarray(self.training_pca_reduced, dtype=np.float64),
             all_screener_cv=None,
@@ -838,13 +782,23 @@ class Linker:
         min_cluster_size: int,
         kb_config: KBConfig | None,
     ) -> None:
-        """Fit screeners on a stratified cap, then PCA/UMAP + HDBSCAN on all KB rows."""
+        """Fit screeners, then PCA/UMAP + HDBSCAN on the clustering subsample; label full KB via predict."""
         ns_cfg = fit_cfg.ambient_screener
         mo_cfg = fit_cfg.projection_screener
         neg_label = ns_cfg.negative_label
 
+        sample_cfg = fit_cfg.to_clustering_sample_config()
+        clustering_prepared = draw_selection_sample(
+            prepared,
+            sample_cfg,
+            sample_index=fit_cfg.clustering_sample_index,
+        )
+
         screener_prepared = _screener_training_frame(
-            prepared, fit_cfg, negative_label=neg_label
+            prepared,
+            fit_cfg,
+            negative_label=neg_label,
+            clustering_prepared=clustering_prepared,
         )
         _, manifold_screener = split_by_negative_label(screener_prepared, neg_label)
 
@@ -852,21 +806,52 @@ class Linker:
         self.screener = neg_step.screener
         self.screener_in_sample_metrics = neg_step.in_sample_metrics
 
-        _, manifold_df = split_by_negative_label(prepared, neg_label)
-        if len(manifold_df) == 0:
+        _, manifold_fit = split_by_negative_label(clustering_prepared, neg_label)
+        if len(manifold_fit) == 0:
+            raise ValueError(
+                "No rows left after excluding negative-label mentions for manifold fit"
+            )
+
+        _, manifold_full = split_by_negative_label(prepared, neg_label)
+        if len(manifold_full) == 0:
             raise ValueError(
                 "No rows left after excluding negative-label mentions for manifold fit"
             )
 
         self.transform_config = transform_config
-        tx_step = _fit_transformer_on_manifold(manifold_df, transform_config)
-        self.transformer = tx_step.transformer
-        self.training_pca_residuals = tx_step.pca_residuals
-        self.training_pca_mahalanobis = tx_step.pca_mahalanobis
-        self.training_pca_spectral_entropy = tx_step.pca_spectral_entropy
-        self.training_umap_clustering = tx_step.umap_clustering
-        self.training_umap_visualization = tx_step.umap_visualization
-        self.training_pca_reduced = tx_step.pca_reduced
+        cl_result = fit_manifold_clustering(
+            manifold_fit,
+            transform_config=transform_config,
+            min_cluster_size=min_cluster_size,
+            prediction_data=True,
+        )
+        self.transformer = cl_result.transformer
+        self.clusterer = cl_result.clusterer
+        self.clustering_fit_metrics = cl_result.fit_metrics
+
+        full_artifacts = score_transform_artifacts(
+            manifold_full,
+            cl_result.transformer,
+            include_umap=True,
+        )
+        self.training_pca_residuals = np.asarray(
+            full_artifacts.pca_residuals, dtype=np.float32
+        )
+        self.training_pca_mahalanobis = np.asarray(
+            full_artifacts.pca_mahalanobis, dtype=np.float32
+        )
+        self.training_pca_spectral_entropy = np.asarray(
+            full_artifacts.pca_spectral_entropy, dtype=np.float32
+        )
+        self.training_umap_clustering = np.asarray(
+            full_artifacts.umap_clustering, dtype=np.float32
+        )
+        self.training_cluster_viz = np.asarray(
+            full_artifacts.cluster_viz, dtype=np.float32
+        )
+        self.training_pca_reduced = np.asarray(
+            full_artifacts.pca_reduced, dtype=np.float32
+        )
 
         mo_step = _fit_projection_step(
             screener_prepared,
@@ -878,20 +863,11 @@ class Linker:
         self.projection = mo_step.model
         self._projection_cv_payload = mo_step.cv_payload
 
-        cl_step = _fit_clustering_step(
-            tx_step.umap_clustering,
-            manifold_df,
-            min_cluster_size,
-        )
-        self.clusterer = cl_step.clusterer
-        cluster_labels = cl_step.cluster_labels
-        self.clustering_fit_metrics = cl_step.fit_metrics
-
         built_mo_diag: tuple[np.ndarray, np.ndarray, np.ndarray] | None = None
         if mo_cfg.enabled:
             built_mo_diag = build_projection_training_arrays(
                 prepared,
-                manifold_df,
+                manifold_full,
                 self.transformer,
                 negative_label=neg_label,
             )
@@ -912,7 +888,7 @@ class Linker:
         )
 
         tc_cols = ["pmid", "entity", "mention"]
-        missing = [c for c in tc_cols if c not in manifold_df.columns]
+        missing = [c for c in tc_cols if c not in manifold_full.columns]
         if missing:
             raise ValueError(
                 "Prepared mention frame missing columns required for "
@@ -920,15 +896,36 @@ class Linker:
             )
         neg_mask = prepared["entity"].astype(str).values == neg_label
         manifold_mask = ~neg_mask
-        _, cluster_probs = approximate_predict(
-            cl_step.clusterer, tx_step.umap_clustering
+        fit_keys = list(
+            zip(
+                manifold_fit["pmid"].astype(str),
+                manifold_fit["entity"].astype(str),
+                manifold_fit["mention"].astype(str),
+            )
         )
+        full_keys = list(
+            zip(
+                manifold_full["pmid"].astype(str),
+                manifold_full["entity"].astype(str),
+                manifold_full["mention"].astype(str),
+            )
+        )
+        fit_key_to_label = dict(
+            zip(fit_keys, cl_result.cluster_labels.astype(int).tolist())
+        )
+        cluster_labels_arr, cluster_probs = approximate_predict(
+            cl_result.clusterer, full_artifacts.umap_clustering
+        )
+        cluster_labels = np.asarray(cluster_labels_arr, dtype=np.int64)
         cluster_scores = np.asarray(cluster_probs, dtype=np.float64).ravel()
+        for i, key in enumerate(full_keys):
+            if key in fit_key_to_label:
+                cluster_labels[i] = fit_key_to_label[key]
 
-        self.training_cluster_frame = manifold_df[tc_cols].copy()
+        self.training_cluster_frame = manifold_full[tc_cols].copy()
         for col in MENTION_PROVENANCE_COLUMNS:
-            if col in manifold_df.columns:
-                self.training_cluster_frame[col] = manifold_df[col].values
+            if col in manifold_full.columns:
+                self.training_cluster_frame[col] = manifold_full[col].values
         self.training_cluster_frame["cluster"] = cluster_labels
         self.training_cluster_frame["screener_score"] = neg_step.decision[manifold_mask]
         self.training_cluster_frame["projection_score"] = full_diag.projection_score[

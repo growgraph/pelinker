@@ -65,7 +65,16 @@ class FitCliConfig:
     kb_path: str = MISSING
     pca_components: int = 100
     umap_dim: int = 8
+    cluster_viz_method: str = "pca"
     min_class_size: int = 20
+    seed: int = 13
+    """PCA/UMAP seed and ``LinkerFitConfig.base_seed`` for clustering subsample draws."""
+    frac: float = 1.0
+    """Stratified mention fraction for clustering; match model-selection ``--frac``."""
+    eval_max_rows: int | None = None
+    """Cap rows per clustering draw after ``frac``; None or 0 = frac only (no row cap)."""
+    clustering_sample_index: int = 0
+    """Bootstrap index for clustering subsample (match model-selection ``sample_idx``)."""
     # Stage-B HDBSCAN ``min_cluster_size`` (choose upstream, e.g. ``run/analysis/model_selection.py``).
     min_cluster_size: int = 20
     # Filesystem base path for ``Linker.dump`` (``.gz`` added by the linker).
@@ -114,8 +123,16 @@ class FitCliConfig:
             raise ValueError(
                 f"screener_kind must be 'lda' or 'svm', got {self.screener_kind!r}"
             )
+        if self.cluster_viz_method not in ("pca", "umap"):
+            raise ValueError(
+                f"cluster_viz_method must be 'pca' or 'umap', got {self.cluster_viz_method!r}"
+            )
         if self.min_cluster_size < 2:
             raise ValueError("min_cluster_size must be >= 2")
+        if not 0 < self.frac <= 1:
+            raise ValueError("frac must be in range (0, 1]")
+        if self.clustering_sample_index < 0:
+            raise ValueError("clustering_sample_index must be >= 0")
 
 
 def _coerce_str_list(val: object) -> list[str]:
@@ -340,6 +357,8 @@ def fit(cfg: FitCliConfig) -> None:
     transform_config = TransformConfig(
         pca_components=cfg.pca_components,
         umap_components=cfg.umap_dim,
+        cluster_viz_method=cfg.cluster_viz_method,
+        seed=cfg.seed,
     )
 
     input_text_table_path = expand_config_path(cfg.input_text_table_path)
@@ -444,6 +463,15 @@ def fit(cfg: FitCliConfig) -> None:
         min_class_size=cfg.min_class_size,
         batch_size=cfg.batch_size,
         n_embedding_batches=cfg.n_embedding_batches,
+        frac=cfg.frac,
+        eval_max_rows=(
+            None
+            if cfg.eval_max_rows is None or cfg.eval_max_rows <= 0
+            else int(cfg.eval_max_rows)
+        ),
+        base_seed=cfg.seed,
+        clustering_sample_index=cfg.clustering_sample_index,
+        screener_seed=cfg.seed,
         ambient_screener=NegativeScreenerConfig(
             kind=cfg.screener_kind,
             negative_label=cfg.negative_label,
