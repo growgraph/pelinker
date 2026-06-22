@@ -147,7 +147,7 @@ class EmbeddingTransformer:
 
         # PCA allows at most min(n_samples, n_features) components (svd_solver='full').
         pca_n = min(self.config.pca_components, n_samples, n_features)
-        self.pca = PCA(n_components=pca_n, random_state=self.config.seed)
+        self.pca = PCA(n_components=pca_n, random_state=self.config.pca_seed)
         embeddings_normed = self._l2_normalize_rows(embeddings)
         pca_reduced = self.pca.fit_transform(embeddings_normed)
 
@@ -161,7 +161,7 @@ class EmbeddingTransformer:
             n_neighbors=n_neighbors,
             n_components=self.config.umap_components,
             metric=self.config.umap_metric,
-            random_state=self.config.seed,
+            random_state=self.config.umap_seed,
         )
         self.umap.fit(pca_reduced)
 
@@ -174,9 +174,12 @@ class EmbeddingTransformer:
 
         self.cluster_viz_pca = None
         self.cluster_viz_umap = None
+        viz_umap_seed = (
+            None if self.config.umap_seed is None else self.config.umap_seed + 1
+        )
         if self.config.cluster_viz_method == "pca":
             self.cluster_viz_pca = PCA(
-                n_components=n_viz, random_state=self.config.seed
+                n_components=n_viz, random_state=self.config.pca_seed
             )
             self.cluster_viz_pca.fit(umap_clustering_train)
         else:
@@ -184,7 +187,7 @@ class EmbeddingTransformer:
                 n_neighbors=n_neighbors,
                 n_components=n_viz,
                 metric=self.config.cluster_viz_umap_metric,
-                random_state=self.config.seed + 1,
+                random_state=viz_umap_seed,
             )
             self.cluster_viz_umap.fit(umap_clustering_train)
 

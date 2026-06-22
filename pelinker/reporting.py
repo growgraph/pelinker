@@ -1,17 +1,21 @@
 from __future__ import annotations
 
 import gzip
+import json
+import logging
+import math
+import pathlib
 from collections import Counter
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-import json
-import math
-import pathlib
 from typing import Any, cast
+
 import numpy as np
 import pandas as pd
 
 from pelinker.config import ScreenerKind
+
+logger = logging.getLogger(__name__)
 
 _JSON_CLUSTERING_REPORT_SCHEMA = "pelinker.clustering_report.v10"
 MODEL_SELECTION_RUN_REPORT_SCHEMA = "pelinker.model_selection.run_report.v2"
@@ -32,6 +36,41 @@ def entity_negative_label_mask_01(
     if s.size == 0:
         return np.zeros(0, dtype=np.int64)
     return (s == negative_label).astype(np.int64, copy=False)
+
+
+def mention_quality_frame(
+    dfr: pd.DataFrame,
+    *,
+    neg_mask: np.ndarray,
+    cluster_kb: np.ndarray,
+    pca_residuals: np.ndarray,
+    pca_mahalanobis: np.ndarray,
+    pca_spectral_entropy: np.ndarray,
+    negative_label: str,
+) -> pd.DataFrame:
+    """Per-mention PCA quality and labels for all rows (KB clustered; negatives cluster=-1)."""
+    optional = ["pmid", "mention"]
+    optional_cols = [c for c in optional if c in dfr.columns]
+    out = dfr[["entity", *optional_cols]].copy()
+    cluster_full = np.full(len(dfr), -1, dtype=np.int64)
+    cluster_full[~neg_mask] = np.asarray(cluster_kb, dtype=np.int64).ravel()
+    out["cluster"] = cluster_full
+    out["oov_label"] = entity_negative_label_mask_01(dfr["entity"], negative_label)
+    out["pca_residual"] = np.asarray(pca_residuals, dtype=np.float64).ravel()
+    out["pca_mahalanobis"] = np.asarray(pca_mahalanobis, dtype=np.float64).ravel()
+    out["pca_spectral_entropy"] = np.asarray(
+        pca_spectral_entropy, dtype=np.float64
+    ).ravel()
+    ordered = [
+        "entity",
+        *optional_cols,
+        "cluster",
+        "oov_label",
+        "pca_residual",
+        "pca_mahalanobis",
+        "pca_spectral_entropy",
+    ]
+    return out[ordered]
 
 
 @dataclass(frozen=True)
@@ -112,6 +151,9 @@ class ClusteringFitMetrics:
     n_clusters_emergent: int
     noise_fraction: float
     n_samples: int
+
+
+# --- flat row ↔ BinaryClassifierMetrics (symmetric pair) ---
 
 
 def _binary_metrics_to_jsonable(
@@ -226,6 +268,42 @@ class LinkerFitDiagnostics:
     """RNG seed used for stratified subsampling (or configured seed when no subsample)."""
 
 
+def _copy_linker_fit_diagnostics(
+    full: LinkerFitDiagnostics, random_state: int
+) -> LinkerFitDiagnostics:
+    return LinkerFitDiagnostics(
+        pca_residual=np.asarray(full.pca_residual, dtype=np.float64).copy(),
+        pca_mahalanobis=np.asarray(full.pca_mahalanobis, dtype=np.float64).copy(),
+        pca_spectral_entropy=np.asarray(
+            full.pca_spectral_entropy, dtype=np.float64
+        ).copy(),
+        oov_label=np.asarray(full.oov_label, dtype=np.int64).copy(),
+        screener_decision=np.asarray(full.screener_decision, dtype=np.float64).copy(),
+        projection_score=np.asarray(full.projection_score, dtype=np.float64).copy(),
+        n_total=full.n_total,
+        sample_random_state=random_state,
+    )
+
+
+def _slice_linker_fit_diagnostics(
+    full: LinkerFitDiagnostics,
+    indices: np.ndarray,
+    random_state: int,
+) -> LinkerFitDiagnostics:
+    return LinkerFitDiagnostics(
+        pca_residual=np.asarray(full.pca_residual, dtype=np.float64)[indices],
+        pca_mahalanobis=np.asarray(full.pca_mahalanobis, dtype=np.float64)[indices],
+        pca_spectral_entropy=np.asarray(full.pca_spectral_entropy, dtype=np.float64)[
+            indices
+        ],
+        oov_label=np.asarray(full.oov_label, dtype=np.int64)[indices],
+        screener_decision=np.asarray(full.screener_decision, dtype=np.float64)[indices],
+        projection_score=np.asarray(full.projection_score, dtype=np.float64)[indices],
+        n_total=full.n_total,
+        sample_random_state=random_state,
+    )
+
+
 def subsample_diagnostics_stratified(
     full: LinkerFitDiagnostics,
     *,
@@ -246,20 +324,7 @@ def subsample_diagnostics_stratified(
         )
 
     def _copy_same() -> LinkerFitDiagnostics:
-        return LinkerFitDiagnostics(
-            pca_residual=np.asarray(full.pca_residual, dtype=np.float64).copy(),
-            pca_mahalanobis=np.asarray(full.pca_mahalanobis, dtype=np.float64).copy(),
-            pca_spectral_entropy=np.asarray(
-                full.pca_spectral_entropy, dtype=np.float64
-            ).copy(),
-            oov_label=np.asarray(full.oov_label, dtype=np.int64).copy(),
-            screener_decision=np.asarray(
-                full.screener_decision, dtype=np.float64
-            ).copy(),
-            projection_score=np.asarray(full.projection_score, dtype=np.float64).copy(),
-            n_total=n_total,
-            sample_random_state=random_state,
-        )
+        return _copy_linker_fit_diagnostics(full, random_state)
 
     if n <= max_rows:
         return _copy_same()
@@ -284,18 +349,7 @@ def subsample_diagnostics_stratified(
             chosen = rng.choice(chosen, size=max_rows, replace=False)
 
     chosen = np.sort(chosen.astype(np.int64, copy=False))
-    return LinkerFitDiagnostics(
-        pca_residual=np.asarray(full.pca_residual, dtype=np.float64)[chosen],
-        pca_mahalanobis=np.asarray(full.pca_mahalanobis, dtype=np.float64)[chosen],
-        pca_spectral_entropy=np.asarray(full.pca_spectral_entropy, dtype=np.float64)[
-            chosen
-        ],
-        oov_label=np.asarray(full.oov_label, dtype=np.int64)[chosen],
-        screener_decision=np.asarray(full.screener_decision, dtype=np.float64)[chosen],
-        projection_score=np.asarray(full.projection_score, dtype=np.float64)[chosen],
-        n_total=n_total,
-        sample_random_state=random_state,
-    )
+    return _slice_linker_fit_diagnostics(full, chosen, random_state)
 
 
 @dataclass
@@ -310,7 +364,12 @@ class ModelSelectionReport:
     """Count of distinct KB ``entity`` labels in the frame used for PCA→UMAP (excludes ``pelinker.onto.NEGATIVE_LABEL`` when screening)."""
 
     n_clusters_emergent: int
-    """Number of HDBSCAN clusters at the chosen ``min_cluster_size`` (noise label -1 excluded)."""
+    """HDBSCAN emergent cluster count at :attr:`hyperparameters` ``min_cluster_size``.
+
+    In model-selection this is the grid-optimal ``best_size``, not an arbitrary MCS.
+    To compare with ``Linker.fit`` at a fixed MCS, use
+    :func:`n_clusters_at_min_cluster_size` on :attr:`metrics_df` instead.
+    """
 
     metrics_df: pd.DataFrame
     assignments: pd.DataFrame
@@ -334,6 +393,24 @@ class ModelSelectionReport:
     """All mentions (pos+neg) with PCA quality scores and oov_label; cluster=-1 for negatives."""
 
 
+def n_clusters_at_min_cluster_size(
+    metrics_df: pd.DataFrame,
+    min_cluster_size: int,
+) -> int | None:
+    """``n_clusters`` from a grid ``metrics_df`` row at ``min_cluster_size`` (for fit parity)."""
+    if (
+        "min_cluster_size" not in metrics_df.columns
+        or "n_clusters" not in metrics_df.columns
+    ):
+        return None
+    hit = metrics_df.loc[
+        metrics_df["min_cluster_size"] == min_cluster_size, "n_clusters"
+    ]
+    if hit.empty:
+        return None
+    return int(hit.iloc[0])
+
+
 def _json_normalize(obj: object) -> object:
     """Map values to types accepted by :func:`json.dumps` (no NaN/Inf; no numpy scalars)."""
     if obj is None or isinstance(obj, (str, bool)):
@@ -349,6 +426,9 @@ def _json_normalize(obj: object) -> object:
         return {str(k): _json_normalize(v) for k, v in obj.items()}
     if isinstance(obj, (list, tuple)):
         return [_json_normalize(x) for x in obj]
+    logger.warning(
+        "json_normalize: coercing unexpected type %s to str", type(obj).__name__
+    )
     return str(obj)
 
 
@@ -718,6 +798,8 @@ def _binary_metrics_from_flat_row(
     row: dict[str, str | float | None],
     prefix: str,
 ) -> BinaryClassifierMetrics:
+    """Inverse of :func:`_binary_metrics_into_row` / JSON branch of :func:`_binary_metrics_to_jsonable`."""
+
     def _m(field: str) -> MetricMeanStd:
         mk = f"{prefix}_{field}_mean"
         sk = f"{prefix}_{field}_std"
@@ -867,6 +949,8 @@ def summarize_clustering_reports_for_search(
     When ``pooled_min_cluster_size`` is set (after aggregating grid curves across samples),
     ``best_size`` / ``best_size_std`` report that single consensus hyperparameter (std is 0)
     and ``dbcv`` is the mean (and std) of each sample's DBCV **at that grid point**.
+    ``n_clusters_emergent`` remains the mean of per-sample fits at each sample's grid-optimal
+    size; use :func:`n_clusters_at_min_cluster_size` on pooled grid CSV rows for a fixed MCS.
 
     Otherwise (independent runs or legacy callers) ``best_size`` is the mean of per-report
     chosen sizes and ``dbcv`` is the mean of each report's ``best_score``.

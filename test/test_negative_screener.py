@@ -75,7 +75,8 @@ def test_evaluate_selection_sample_ambient_screener_cv_and_manifold_only_positiv
 ):
     dfr = _tiny_frame(n_pos=80)
     opt = ClusteringOptimizationConfig(
-        min_class_size=5,
+        drop_rare_entities=True,
+        min_mentions_per_entity=5,
         max_scale=30,
         min_scale=5,
         clustering_grid_step=5,
@@ -85,7 +86,13 @@ def test_evaluate_selection_sample_ambient_screener_cv_and_manifold_only_positiv
             cv_random_state=0,
         ),
     )
-    tc = TransformConfig(pca_components=6, umap_components=3, cluster_viz_components=3)
+    tc = TransformConfig(
+        pca_components=6,
+        umap_components=3,
+        cluster_viz_components=3,
+        pca_seed=0,
+        umap_seed=0,
+    )
     report = evaluate_selection_sample(
         dfr,
         tc,

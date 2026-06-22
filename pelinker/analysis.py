@@ -1,8 +1,7 @@
 from __future__ import annotations
 
 import math
-import pathlib
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 
 import numpy as np
 import pandas as pd
@@ -12,7 +11,6 @@ from pelinker.clustering_grid import (
     aggregate_grid_metrics,
     solve_optimal_min_cluster_size_from_aggregated,
 )
-from pelinker.embedding_fusion import concat_mention_level_embedding_sources
 from pelinker.reporting import (
     AllScreenerCvResult,
     BinaryClassifierMetrics,
@@ -20,7 +18,6 @@ from pelinker.reporting import (
     MetricMeanStd,
     NegativeScreenerInSampleMetrics,
     PerDatapointScores,
-    entity_negative_label_mask_01,
 )
 from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
 from sklearn.metrics import (
@@ -239,38 +236,328 @@ def split_by_negative_label(
     return neg_mask, manifold_df
 
 
-def _mention_quality_frame(
-    dfr: pd.DataFrame,
-    *,
-    neg_mask: np.ndarray,
-    cluster_kb: np.ndarray,
-    pca_residuals: np.ndarray,
-    pca_mahalanobis: np.ndarray,
-    pca_spectral_entropy: np.ndarray,
-    negative_label: str,
-) -> pd.DataFrame:
-    """Per-mention PCA quality and labels for all rows (KB clustered; negatives cluster=-1)."""
-    optional = [c for c in ("pmid", "mention") if c in dfr.columns]
-    out = dfr[["entity", *optional]].copy()
-    cluster_full = np.full(len(dfr), -1, dtype=np.int64)
-    cluster_full[~neg_mask] = np.asarray(cluster_kb, dtype=np.int64).ravel()
-    out["cluster"] = cluster_full
-    out["oov_label"] = entity_negative_label_mask_01(dfr["entity"], negative_label)
-    out["pca_residual"] = np.asarray(pca_residuals, dtype=np.float64).ravel()
-    out["pca_mahalanobis"] = np.asarray(pca_mahalanobis, dtype=np.float64).ravel()
-    out["pca_spectral_entropy"] = np.asarray(
-        pca_spectral_entropy, dtype=np.float64
-    ).ravel()
-    ordered = [
-        "entity",
-        *optional,
-        "cluster",
-        "oov_label",
-        "pca_residual",
-        "pca_mahalanobis",
-        "pca_spectral_entropy",
+def _pick_oov_winner_by_cv_folds(
+    fold_pairs: list[tuple[np.ndarray, np.ndarray]],
+    Xm: np.ndarray,
+    y_i: np.ndarray,
+    oov_cfg: ManifoldOovScreenerConfig,
+) -> tuple[bool, ManifoldOovKind | str]:
+    svm_oov_fold: list[float] = []
+    lda_oov_fold: list[float] = []
+    rbf_oov_fold: list[float] = []
+
+    for train_idx, test_idx in fold_pairs:
+        Xtr_m, Xtst_m = Xm[train_idx], Xm[test_idx]
+        ytr_m, ytst_m = y_i[train_idx], y_i[test_idx]
+        if len(np.unique(ytst_m)) < 2:
+            continue
+        xm64 = Xtr_m.astype(np.float64, copy=False)
+        xt64 = Xtst_m.astype(np.float64, copy=False)
+
+        lin_o = make_manifold_linear_svc(xm64, oov_cfg)
+        lin_o.fit(xm64, ytr_m)
+        svm_oov_fold.append(
+            float(
+                f1_score(
+                    ytst_m,
+                    lin_o.predict(xt64),
+                    pos_label=1,
+                    zero_division=0,
+                )
+            )
+        )
+
+        rbf_o = make_manifold_rbf_svc(oov_cfg)
+        rbf_o.fit(xm64, ytr_m)
+        rbf_oov_fold.append(
+            float(
+                f1_score(
+                    ytst_m,
+                    rbf_o.predict(xt64),
+                    pos_label=1,
+                    zero_division=0,
+                )
+            )
+        )
+
+        lda_est_o = LinearDiscriminantAnalysis(solver="svd")
+        lda_est_o.fit(xm64, ytr_m)
+        lda_oov_fold.append(
+            float(
+                f1_score(
+                    ytst_m,
+                    lda_est_o.predict(xt64),
+                    pos_label=1,
+                    zero_division=0,
+                )
+            )
+        )
+
+    if not lda_oov_fold:
+        return False, "lda"
+    svm_m_o = float(np.mean(svm_oov_fold))
+    lda_m_o = float(np.mean(lda_oov_fold))
+    rbf_m_o = float(np.mean(rbf_oov_fold))
+    return True, pick_projection_winner_by_mean_f1(lda_m_o, svm_m_o, rbf_m_o)
+
+
+def _collect_embedding_cv_folds(
+    fold_pairs: list[tuple[np.ndarray, np.ndarray]],
+    Xe: np.ndarray,
+    y_i: np.ndarray,
+    rs_emb: int,
+) -> (
+    tuple[
+        list[tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]],
+        str,
     ]
-    return out[ordered]
+    | None
+):
+    embed_fold_rows: list[
+        tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]
+    ] = []
+    pool_y_pooled: list[int] = []
+    pool_lda_pooled: list[float] = []
+    pool_svm_pooled: list[float] = []
+    for train_idx, test_idx in fold_pairs:
+        Xtr_e, Xtst_e = Xe[train_idx], Xe[test_idx]
+        ytr_e, ytst_e = y_i[train_idx], y_i[test_idx]
+        if len(np.unique(ytst_e)) < 2:
+            continue
+
+        lda_emb = LinearDiscriminantAnalysis(solver="svd")
+        lda_emb.fit(Xtr_e, ytr_e)
+        sc_lda = np.asarray(lda_emb.transform(Xtst_e), dtype=np.float64).ravel()
+        svm_emb = _linear_svc_for_embeddings(Xtr_e, random_state=rs_emb)
+        svm_emb.fit(Xtr_e, ytr_e)
+        sc_svm = np.asarray(
+            svm_emb.decision_function(Xtst_e),
+            dtype=np.float64,
+        ).ravel()
+        embed_fold_rows.append((train_idx, test_idx, ytst_e, sc_lda, sc_svm))
+        for j in range(int(ytst_e.shape[0])):
+            pool_y_pooled.append(int(ytst_e[j]))
+            pool_lda_pooled.append(float(sc_lda[j]))
+            pool_svm_pooled.append(float(sc_svm[j]))
+
+    if not pool_y_pooled:
+        return None
+
+    y_p = np.asarray(pool_y_pooled, dtype=np.int64)
+    s_ld_p = np.asarray(pool_lda_pooled, dtype=np.float64)
+    s_sv_p = np.asarray(pool_svm_pooled, dtype=np.float64)
+    auc_lda_g = float(roc_auc_score(y_p, s_ld_p))
+    auc_svm_g = float(roc_auc_score(y_p, s_sv_p))
+    screener_best_kind = "lda" if auc_lda_g >= auc_svm_g else "svm"
+    return embed_fold_rows, screener_best_kind
+
+
+def _oov_scores_for_fold(
+    winner_kind_oov: ManifoldOovKind | str,
+    Xm: np.ndarray,
+    train_idx: np.ndarray,
+    test_idx: np.ndarray,
+    y_i: np.ndarray,
+    oov_cfg: ManifoldOovScreenerConfig,
+) -> np.ndarray:
+    Xtr_m, Xtst_m = Xm[train_idx], Xm[test_idx]
+    ytr_e = y_i[train_idx]
+    xm_tr = Xtr_m.astype(np.float64, copy=False)
+    xm_ts = Xtst_m.astype(np.float64, copy=False)
+    if winner_kind_oov == "svm":
+        svm_w = make_manifold_linear_svc(xm_tr, oov_cfg)
+        svm_w.fit(xm_tr, ytr_e)
+        return oov_estimator_scores(svm_w, xm_ts)
+    if winner_kind_oov == "rbf":
+        rbf_w = make_manifold_rbf_svc(oov_cfg)
+        rbf_w.fit(xm_tr, ytr_e)
+        return oov_estimator_scores(rbf_w, xm_ts)
+    lda_w = LinearDiscriminantAnalysis(solver="svd")
+    lda_w.fit(xm_tr, ytr_e)
+    return oov_estimator_scores(lda_w, xm_ts)
+
+
+def _score_folds_with_oov_and_pool(
+    embed_fold_rows: list[
+        tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]
+    ],
+    *,
+    screener_best_kind: str,
+    oov_disabled: bool,
+    winner_kind_oov: ManifoldOovKind | str,
+    Xm: np.ndarray | None,
+    y_i: np.ndarray,
+    entity: np.ndarray,
+    orig_idx: np.ndarray,
+    oov_cfg: ManifoldOovScreenerConfig,
+) -> (
+    tuple[
+        list[int],
+        list[str],
+        list[int],
+        list[float],
+        list[float],
+        list[float],
+        list[float],
+        list[float],
+        list[list[float]],
+    ]
+    | None
+):
+    pool_orig: list[int] = []
+    pool_ent: list[str] = []
+    pool_y: list[int] = []
+    pool_lda_s: list[float] = []
+    pool_svm_s: list[float] = []
+    pool_sb: list[float] = []
+    pool_oov: list[float] = []
+    pool_comb: list[float] = []
+
+    lda_p, lda_r, lda_f1, lda_auc_l = [], [], [], []
+    svm_p, svm_r, svm_f1, svm_auc_l = [], [], [], []
+    sb_p, sb_r, sb_f1, sb_a = [], [], [], []
+    oov_p, oov_r, oov_f1, oov_a = [], [], [], []
+    cb_p, cb_r, cb_f1, cb_a = [], [], [], []
+
+    for train_idx, test_idx, ytst_e, sc_lda, sc_svm in embed_fold_rows:
+        sb_scores = sc_lda if screener_best_kind == "lda" else sc_svm
+
+        if not oov_disabled and Xm is not None:
+            o_scores = _oov_scores_for_fold(
+                winner_kind_oov, Xm, train_idx, test_idx, y_i, oov_cfg
+            )
+            mn_s = _minmax01_fold(sb_scores)
+            mn_o = _minmax01_fold(o_scores)
+            comb_scores = 0.5 * mn_s + 0.5 * mn_o
+        else:
+            o_scores = np.zeros_like(sb_scores, dtype=np.float64)
+            comb_scores = sb_scores.astype(np.float64, copy=False)
+
+        oi_fold = np.asarray(orig_idx[test_idx], dtype=np.int64).ravel()
+        ent_fold = entity[test_idx]
+        yt = ytst_e.astype(np.int64, copy=False)
+
+        for j in range(int(yt.shape[0])):
+            pool_orig.append(int(oi_fold[j]))
+            pool_ent.append(str(ent_fold[j]))
+            pool_y.append(int(yt[j]))
+            pool_lda_s.append(float(sc_lda[j]))
+            pool_svm_s.append(float(sc_svm[j]))
+            pool_sb.append(float(sb_scores[j]))
+            pool_oov.append(float(o_scores[j]))
+            pool_comb.append(float(comb_scores[j]))
+
+        p0, r0, f00, a0 = _fold_prfa(ytst_e, sc_lda)
+        lda_p.append(p0)
+        lda_r.append(r0)
+        lda_f1.append(f00)
+        lda_auc_l.append(a0)
+        p1, r1, f01, a1 = _fold_prfa(ytst_e, sc_svm)
+        svm_p.append(p1)
+        svm_r.append(r1)
+        svm_f1.append(f01)
+        svm_auc_l.append(a1)
+        p2, r2, f02, a2 = _fold_prfa(ytst_e, sb_scores)
+        sb_p.append(p2)
+        sb_r.append(r2)
+        sb_f1.append(f02)
+        sb_a.append(a2)
+        p3, r3, f03, a3 = _fold_prfa(ytst_e, o_scores)
+        oov_p.append(p3)
+        oov_r.append(r3)
+        oov_f1.append(f03)
+        oov_a.append(a3)
+        p4, r4, f04, a4 = _fold_prfa(ytst_e, comb_scores)
+        cb_p.append(p4)
+        cb_r.append(r4)
+        cb_f1.append(f04)
+        cb_a.append(a4)
+
+    if not lda_p:
+        return None
+
+    fold_lists = [
+        lda_p,
+        lda_r,
+        lda_f1,
+        lda_auc_l,
+        svm_p,
+        svm_r,
+        svm_f1,
+        svm_auc_l,
+        sb_p,
+        sb_r,
+        sb_f1,
+        sb_a,
+        oov_p,
+        oov_r,
+        oov_f1,
+        oov_a,
+        cb_p,
+        cb_r,
+        cb_f1,
+        cb_a,
+    ]
+    return (
+        pool_orig,
+        pool_ent,
+        pool_y,
+        pool_lda_s,
+        pool_svm_s,
+        pool_sb,
+        pool_oov,
+        pool_comb,
+        fold_lists,
+    )
+
+
+def _build_all_screener_cv_result(
+    fold_lists: list[list[float]],
+    *,
+    screener_best_kind: str,
+    oov_kind_disp: str,
+    oov_disabled: bool,
+) -> AllScreenerCvResult:
+    (
+        lda_p,
+        lda_r,
+        lda_f1,
+        lda_auc_l,
+        svm_p,
+        svm_r,
+        svm_f1,
+        svm_auc_l,
+        sb_p,
+        sb_r,
+        sb_f1,
+        sb_a,
+        oov_p,
+        oov_r,
+        oov_f1,
+        oov_a,
+        cb_p,
+        cb_r,
+        cb_f1,
+        cb_a,
+    ) = fold_lists
+    lda_mets = _metrics_from_fold_lists(lda_p, lda_r, lda_f1, lda_auc_l)
+    svm_mets = _metrics_from_fold_lists(svm_p, svm_r, svm_f1, svm_auc_l)
+    sb_mets = _metrics_from_fold_lists(sb_p, sb_r, sb_f1, sb_a)
+    if oov_disabled:
+        oov_mets = _zero_binary_metrics()
+        comb_mets = sb_mets
+    else:
+        oov_mets = _metrics_from_fold_lists(oov_p, oov_r, oov_f1, oov_a)
+        comb_mets = _metrics_from_fold_lists(cb_p, cb_r, cb_f1, cb_a)
+    return AllScreenerCvResult(
+        screener_lda=lda_mets,
+        screener_svm=svm_mets,
+        screener_best_kind=screener_best_kind,
+        screener_best=sb_mets,
+        oov_winner_kind=oov_kind_disp,
+        oov=oov_mets,
+        combined=comb_mets,
+    )
 
 
 def _unified_cv_fold_count(y: np.ndarray, n_splits_requested: int) -> int | None:
@@ -376,212 +663,50 @@ def evaluate_all_screeners_cv(
     winner_kind_oov: ManifoldOovKind | str = "lda"
 
     if oov_run and Xm is not None:
-        svm_oov_fold: list[float] = []
-        lda_oov_fold: list[float] = []
-        rbf_oov_fold: list[float] = []
-
-        for train_idx, test_idx in fold_pairs:
-            Xtr_m, Xtst_m = Xm[train_idx], Xm[test_idx]
-            ytr_m, ytst_m = y_i[train_idx], y_i[test_idx]
-            if len(np.unique(ytst_m)) < 2:
-                continue
-            xm64 = Xtr_m.astype(np.float64, copy=False)
-            xt64 = Xtst_m.astype(np.float64, copy=False)
-
-            lin_o = make_manifold_linear_svc(xm64, oov_cfg)
-            lin_o.fit(xm64, ytr_m)
-            svm_oov_fold.append(
-                float(
-                    f1_score(
-                        ytst_m,
-                        lin_o.predict(xt64),
-                        pos_label=1,
-                        zero_division=0,
-                    )
-                )
-            )
-
-            rbf_o = make_manifold_rbf_svc(oov_cfg)
-            rbf_o.fit(xm64, ytr_m)
-            rbf_oov_fold.append(
-                float(
-                    f1_score(
-                        ytst_m,
-                        rbf_o.predict(xt64),
-                        pos_label=1,
-                        zero_division=0,
-                    )
-                )
-            )
-
-            lda_est_o = LinearDiscriminantAnalysis(solver="svd")
-            lda_est_o.fit(xm64, ytr_m)
-            lda_oov_fold.append(
-                float(
-                    f1_score(
-                        ytst_m,
-                        lda_est_o.predict(xt64),
-                        pos_label=1,
-                        zero_division=0,
-                    )
-                )
-            )
-
-        if not lda_oov_fold:
-            oov_run = False
+        oov_run, winner_kind_oov = _pick_oov_winner_by_cv_folds(
+            fold_pairs, Xm, y_i, oov_cfg
+        )
+        if not oov_run:
             Xm = None
-        else:
-            svm_m_o = float(np.mean(svm_oov_fold))
-            lda_m_o = float(np.mean(lda_oov_fold))
-            rbf_m_o = float(np.mean(rbf_oov_fold))
-            winner_kind_oov = pick_projection_winner_by_mean_f1(
-                lda_m_o, svm_m_o, rbf_m_o
-            )
 
-    embed_fold_rows: list[
-        tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]
-    ] = []
-    pool_y_pooled: list[int] = []
-    pool_lda_pooled: list[float] = []
-    pool_svm_pooled: list[float] = []
-    for train_idx, test_idx in fold_pairs:
-        Xtr_e, Xtst_e = Xe[train_idx], Xe[test_idx]
-        ytr_e, ytst_e = y_i[train_idx], y_i[test_idx]
-        if len(np.unique(ytst_e)) < 2:
-            continue
-
-        lda_emb = LinearDiscriminantAnalysis(solver="svd")
-        lda_emb.fit(Xtr_e, ytr_e)
-        sc_lda = np.asarray(lda_emb.transform(Xtst_e), dtype=np.float64).ravel()
-        svm_emb = _linear_svc_for_embeddings(Xtr_e, random_state=rs_emb)
-        svm_emb.fit(Xtr_e, ytr_e)
-        sc_svm = np.asarray(
-            svm_emb.decision_function(Xtst_e),
-            dtype=np.float64,
-        ).ravel()
-        embed_fold_rows.append((train_idx, test_idx, ytst_e, sc_lda, sc_svm))
-        for j in range(int(ytst_e.shape[0])):
-            pool_y_pooled.append(int(ytst_e[j]))
-            pool_lda_pooled.append(float(sc_lda[j]))
-            pool_svm_pooled.append(float(sc_svm[j]))
-
-    if not pool_y_pooled:
+    collected = _collect_embedding_cv_folds(fold_pairs, Xe, y_i, rs_emb)
+    if collected is None:
         return None
-
-    y_p = np.asarray(pool_y_pooled, dtype=np.int64)
-    s_ld_p = np.asarray(pool_lda_pooled, dtype=np.float64)
-    s_sv_p = np.asarray(pool_svm_pooled, dtype=np.float64)
-    auc_lda_g = float(roc_auc_score(y_p, s_ld_p))
-    auc_svm_g = float(roc_auc_score(y_p, s_sv_p))
-    screener_best_kind: str = "lda" if auc_lda_g >= auc_svm_g else "svm"
-
-    pool_orig: list[int] = []
-    pool_ent: list[str] = []
-    pool_y: list[int] = []
-    pool_lda_s: list[float] = []
-    pool_svm_s: list[float] = []
-    pool_sb: list[float] = []
-    pool_oov: list[float] = []
-    pool_comb: list[float] = []
-
-    lda_p, lda_r, lda_f1, lda_auc_l = [], [], [], []
-    svm_p, svm_r, svm_f1, svm_auc_l = [], [], [], []
-    sb_p, sb_r, sb_f1, sb_a = [], [], [], []
-    oov_p, oov_r, oov_f1, oov_a = [], [], [], []
-    cb_p, cb_r, cb_f1, cb_a = [], [], [], []
+    embed_fold_rows, screener_best_kind = collected
 
     oov_disabled = not oov_run or Xm is None
-    oov_kind_disp: str = "disabled" if oov_disabled else str(winner_kind_oov)
+    oov_kind_disp = "disabled" if oov_disabled else str(winner_kind_oov)
 
-    for train_idx, test_idx, ytst_e, sc_lda, sc_svm in embed_fold_rows:
-        sb_scores = sc_lda if screener_best_kind == "lda" else sc_svm
-
-        if not oov_disabled and Xm is not None:
-            Xtr_m, Xtst_m = Xm[train_idx], Xm[test_idx]
-            ytr_e = y_i[train_idx]
-            xm_tr = Xtr_m.astype(np.float64, copy=False)
-            xm_ts = Xtst_m.astype(np.float64, copy=False)
-            if winner_kind_oov == "svm":
-                svm_w = make_manifold_linear_svc(xm_tr, oov_cfg)
-                svm_w.fit(xm_tr, ytr_e)
-                o_scores = oov_estimator_scores(svm_w, xm_ts)
-            elif winner_kind_oov == "rbf":
-                rbf_w = make_manifold_rbf_svc(oov_cfg)
-                rbf_w.fit(xm_tr, ytr_e)
-                o_scores = oov_estimator_scores(rbf_w, xm_ts)
-            else:
-                lda_w = LinearDiscriminantAnalysis(solver="svd")
-                lda_w.fit(xm_tr, ytr_e)
-                o_scores = oov_estimator_scores(lda_w, xm_ts)
-            mn_s = _minmax01_fold(sb_scores)
-            mn_o = _minmax01_fold(o_scores)
-            comb_scores = 0.5 * mn_s + 0.5 * mn_o
-        else:
-            o_scores = np.zeros_like(sb_scores, dtype=np.float64)
-            comb_scores = sb_scores.astype(np.float64, copy=False)
-
-        oi_fold = np.asarray(orig_idx[test_idx], dtype=np.int64).ravel()
-        ent_fold = entity[test_idx]
-        yt = ytst_e.astype(np.int64, copy=False)
-
-        for j in range(int(yt.shape[0])):
-            pool_orig.append(int(oi_fold[j]))
-            pool_ent.append(str(ent_fold[j]))
-            pool_y.append(int(yt[j]))
-            pool_lda_s.append(float(sc_lda[j]))
-            pool_svm_s.append(float(sc_svm[j]))
-            pool_sb.append(float(sb_scores[j]))
-            pool_oov.append(float(o_scores[j]))
-            pool_comb.append(float(comb_scores[j]))
-
-        p0, r0, f00, a0 = _fold_prfa(ytst_e, sc_lda)
-        lda_p.append(p0)
-        lda_r.append(r0)
-        lda_f1.append(f00)
-        lda_auc_l.append(a0)
-        p1, r1, f01, a1 = _fold_prfa(ytst_e, sc_svm)
-        svm_p.append(p1)
-        svm_r.append(r1)
-        svm_f1.append(f01)
-        svm_auc_l.append(a1)
-        p2, r2, f02, a2 = _fold_prfa(ytst_e, sb_scores)
-        sb_p.append(p2)
-        sb_r.append(r2)
-        sb_f1.append(f02)
-        sb_a.append(a2)
-        p3, r3, f03, a3 = _fold_prfa(ytst_e, o_scores)
-        oov_p.append(p3)
-        oov_r.append(r3)
-        oov_f1.append(f03)
-        oov_a.append(a3)
-        p4, r4, f04, a4 = _fold_prfa(ytst_e, comb_scores)
-        cb_p.append(p4)
-        cb_r.append(r4)
-        cb_f1.append(f04)
-        cb_a.append(a4)
-
-    if not lda_p:
-        return None
-
-    lda_mets = _metrics_from_fold_lists(lda_p, lda_r, lda_f1, lda_auc_l)
-    svm_mets = _metrics_from_fold_lists(svm_p, svm_r, svm_f1, svm_auc_l)
-    sb_mets = _metrics_from_fold_lists(sb_p, sb_r, sb_f1, sb_a)
-
-    if oov_disabled:
-        oov_mets = _zero_binary_metrics()
-        comb_mets = sb_mets
-    else:
-        oov_mets = _metrics_from_fold_lists(oov_p, oov_r, oov_f1, oov_a)
-        comb_mets = _metrics_from_fold_lists(cb_p, cb_r, cb_f1, cb_a)
-
-    result = AllScreenerCvResult(
-        screener_lda=lda_mets,
-        screener_svm=svm_mets,
+    scored = _score_folds_with_oov_and_pool(
+        embed_fold_rows,
         screener_best_kind=screener_best_kind,
-        screener_best=sb_mets,
-        oov_winner_kind=oov_kind_disp,
-        oov=oov_mets,
-        combined=comb_mets,
+        oov_disabled=oov_disabled,
+        winner_kind_oov=winner_kind_oov,
+        Xm=Xm,
+        y_i=y_i,
+        entity=entity,
+        orig_idx=orig_idx,
+        oov_cfg=oov_cfg,
+    )
+    if scored is None:
+        return None
+    (
+        pool_orig,
+        pool_ent,
+        pool_y,
+        pool_lda_s,
+        pool_svm_s,
+        pool_sb,
+        pool_oov,
+        pool_comb,
+        fold_lists,
+    ) = scored
+
+    result = _build_all_screener_cv_result(
+        fold_lists,
+        screener_best_kind=screener_best_kind,
+        oov_kind_disp=oov_kind_disp,
+        oov_disabled=oov_disabled,
     )
 
     datapoints = PerDatapointScores(
@@ -668,27 +793,6 @@ def compute_clustering_fit_metrics(
         n_clusters_emergent=n_clusters_emergent,
         noise_fraction=noise_fraction,
         n_samples=n,
-    )
-
-
-def mention_frame_from_embedding_paths(
-    paths: Sequence[pathlib.Path],
-    *,
-    optimization_config: ClusteringOptimizationConfig | None = None,
-    read_status: Callable[[str], None] | None = None,
-    show_read_progress: bool = False,
-) -> pd.DataFrame | None:
-    """
-    Load mention-level rows from parquet file(s) like :func:`~pelinker.selection.load_selection_frame`
-    (batched read, optional multi-source inner join on keys), without subsampling.
-    """
-    cfg = optimization_config or ClusteringOptimizationConfig()
-    return concat_mention_level_embedding_sources(
-        paths,
-        batch_size=cfg.batch_size,
-        n_embedding_batches=cfg.n_embedding_batches,
-        read_status=read_status,
-        show_read_progress=show_read_progress,
     )
 
 

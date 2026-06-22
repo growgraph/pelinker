@@ -11,11 +11,11 @@ from pelinker.plotting import (
     _balanced_subsample_by_class,
     plot_pca_quality_pairgrid,
 )
-from run.analysis.model_selection import (
-    _fine_metadata_one_sample_per_combo,
-    _pca_pairgrid_output_path,
-    _safe_combo_plot_stem,
-    _write_pca_quality_pairgrids_from_fine_metadata,
+from pelinker.model_selection.fine_metadata import (
+    fine_metadata_one_sample_per_combo,
+    pca_pairgrid_output_path,
+    safe_combo_plot_stem,
+    write_pca_quality_pairgrids_from_fine_metadata,
 )
 
 
@@ -59,11 +59,11 @@ def test_balanced_subsample_equal_per_class() -> None:
 
 
 def test_safe_combo_plot_stem_escapes_layer() -> None:
-    assert _safe_combo_plot_stem("fusion2", "a/2+b/3") == "fusion2_a_2__b_3"
+    assert safe_combo_plot_stem("fusion2", "a/2+b/3") == "fusion2_a_2__b_3"
 
 
 def test_pca_pairgrid_output_path() -> None:
-    path = _pca_pairgrid_output_path(
+    path = pca_pairgrid_output_path(
         pathlib.Path("/tmp/out"),
         model="m1",
         layer="L2",
@@ -81,7 +81,7 @@ def test_fine_metadata_one_sample_per_combo_keeps_lowest_index() -> None:
         ],
         ignore_index=True,
     )
-    slim = _fine_metadata_one_sample_per_combo(fm)
+    slim = fine_metadata_one_sample_per_combo(fm)
     assert set(slim["sample_idx"].unique()) == {0}
     assert len(slim) == 16
     assert len(slim) < len(fm)
@@ -96,7 +96,7 @@ def test_write_pairgrids_default_one_sample_per_combo(tmp_path: pathlib.Path) ->
         ],
         ignore_index=True,
     )
-    written, skipped = _write_pca_quality_pairgrids_from_fine_metadata(
+    written, skipped = write_pca_quality_pairgrids_from_fine_metadata(
         fm, tmp_path, source_name="test"
     )
     assert skipped == []
@@ -116,7 +116,7 @@ def test_write_pairgrids_all_samples_flag(tmp_path: pathlib.Path) -> None:
         ],
         ignore_index=True,
     )
-    written, skipped = _write_pca_quality_pairgrids_from_fine_metadata(
+    written, skipped = write_pca_quality_pairgrids_from_fine_metadata(
         fm, tmp_path, source_name="test", all_samples=True
     )
     assert skipped == []
@@ -132,7 +132,7 @@ def test_write_pairgrids_all_samples_flag(tmp_path: pathlib.Path) -> None:
 def test_write_pairgrids_skips_trivial_oov_mask(tmp_path: pathlib.Path) -> None:
     fm = _fine_metadata_frame()
     fm["oov_label"] = 0
-    written, skipped = _write_pca_quality_pairgrids_from_fine_metadata(
+    written, skipped = write_pca_quality_pairgrids_from_fine_metadata(
         fm, tmp_path, source_name="test"
     )
     assert written == []
@@ -142,7 +142,7 @@ def test_write_pairgrids_skips_trivial_oov_mask(tmp_path: pathlib.Path) -> None:
 
 def test_write_pairgrids_missing_group_columns(tmp_path: pathlib.Path) -> None:
     fm = _fine_metadata_frame().drop(columns=["sample_idx"])
-    written, skipped = _write_pca_quality_pairgrids_from_fine_metadata(
+    written, skipped = write_pca_quality_pairgrids_from_fine_metadata(
         fm, tmp_path, source_name="test"
     )
     assert written == []

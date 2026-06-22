@@ -6,7 +6,7 @@ import pathlib
 
 import pandas as pd
 
-from run.analysis import model_selection as ms
+from pelinker.model_selection import build_model_selection_summary_payload
 
 
 def test_build_model_selection_summary_payload_rankings() -> None:
@@ -68,7 +68,7 @@ def test_build_model_selection_summary_payload_rankings() -> None:
             },
         ]
     )
-    payload = ms.build_model_selection_summary_payload(
+    payload = build_model_selection_summary_payload(
         pathlib.Path("/tmp/report"),
         df,
         chosen_by_combo=(("a", "l1", 10),),

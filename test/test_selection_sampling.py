@@ -8,6 +8,7 @@ import pandas as pd
 from pelinker.config import ClusteringOptimizationConfig
 from pelinker.onto import NEGATIVE_LABEL
 from pelinker.sampling import (
+    cap_mentions_per_entity,
     draw_selection_sample,
     selection_sample_target_size,
     stratified_mention_sample,
@@ -38,15 +39,15 @@ def _synthetic_frame(n_kb: int, n_neg: int) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def test_selection_sample_target_size_frac_and_cap() -> None:
+def test_selection_sample_target_size_clustering_sample_rows() -> None:
     assert (
-        selection_sample_target_size(1_000_000, frac=0.1, eval_max_rows=100_000)
+        selection_sample_target_size(1_000_000, clustering_sample_rows=100_000)
         == 100_000
     )
     assert (
-        selection_sample_target_size(500_000, frac=0.1, eval_max_rows=100_000) == 50_000
+        selection_sample_target_size(500_000, clustering_sample_rows=100_000) == 100_000
     )
-    assert selection_sample_target_size(10_000, frac=0.5, eval_max_rows=None) == 5_000
+    assert selection_sample_target_size(10_000, clustering_sample_rows=None) == 10_000
 
 
 def test_stratified_mention_sample_preserves_both_classes() -> None:
@@ -65,8 +66,7 @@ def test_stratified_mention_sample_preserves_both_classes() -> None:
 def test_draw_selection_sample_deterministic() -> None:
     frame = _synthetic_frame(n_kb=800, n_neg=300)
     cfg = ClusteringOptimizationConfig(
-        frac=0.2,
-        eval_max_rows=200,
+        clustering_sample_rows=200,
         base_seed=7,
     )
     a = draw_selection_sample(frame, cfg, sample_index=0)
@@ -77,11 +77,71 @@ def test_draw_selection_sample_deterministic() -> None:
 def test_draw_selection_sample_distinct_bootstrap_indices() -> None:
     frame = _synthetic_frame(n_kb=2000, n_neg=800)
     cfg = ClusteringOptimizationConfig(
-        frac=0.5,
-        eval_max_rows=500,
+        clustering_sample_rows=500,
         base_seed=99,
     )
     s0 = draw_selection_sample(frame, cfg, sample_index=0)
     s1 = draw_selection_sample(frame, cfg, sample_index=1)
     assert len(s0) == len(s1) == 500
     assert set(s0["pmid"].tolist()) != set(s1["pmid"].tolist())
+
+
+def _multi_entity_frame() -> pd.DataFrame:
+    rng = np.random.default_rng(1)
+    rows: list[dict[str, object]] = []
+    for ent, n in [("a", 30), ("b", 5), (NEGATIVE_LABEL, 50)]:
+        for i in range(n):
+            rows.append(
+                {
+                    "pmid": f"{ent}_{i}",
+                    "entity": ent,
+                    "mention": f"m{i}",
+                    "embed": rng.standard_normal(4).astype(np.float32),
+                }
+            )
+    return pd.DataFrame(rows)
+
+
+def test_cap_mentions_per_entity_truncates_heavy_entity() -> None:
+    frame = _multi_entity_frame()
+    capped = cap_mentions_per_entity(
+        frame,
+        max_mentions=10,
+        negative_label=NEGATIVE_LABEL,
+        max_mentions_negative=None,
+        random_state=42,
+    )
+    assert capped.groupby("entity").size()["a"] == 10
+    assert capped.groupby("entity").size()["b"] == 5
+    assert capped.groupby("entity").size()[NEGATIVE_LABEL] == 50
+
+
+def test_cap_mentions_per_entity_negative_cap() -> None:
+    frame = _multi_entity_frame()
+    capped = cap_mentions_per_entity(
+        frame,
+        max_mentions=10,
+        negative_label=NEGATIVE_LABEL,
+        max_mentions_negative=8,
+        random_state=42,
+    )
+    assert capped.groupby("entity").size()[NEGATIVE_LABEL] == 8
+
+
+def test_cap_mentions_per_entity_reproducible() -> None:
+    frame = _multi_entity_frame()
+    a = cap_mentions_per_entity(
+        frame,
+        max_mentions=10,
+        negative_label=NEGATIVE_LABEL,
+        max_mentions_negative=None,
+        random_state=7,
+    )
+    b = cap_mentions_per_entity(
+        frame,
+        max_mentions=10,
+        negative_label=NEGATIVE_LABEL,
+        max_mentions_negative=None,
+        random_state=7,
+    )
+    pd.testing.assert_frame_equal(a.reset_index(drop=True), b.reset_index(drop=True))

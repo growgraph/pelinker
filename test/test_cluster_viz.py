@@ -16,7 +16,8 @@ def test_cluster_viz_pca_matches_manual_projection() -> None:
         umap_components=4,
         cluster_viz_components=3,
         cluster_viz_method="pca",
-        seed=13,
+        pca_seed=13,
+        umap_seed=13,
     )
     transformer = EmbeddingTransformer(cfg)
     umap_c, cluster_v, *_ = transformer.fit_transform(embeddings)
@@ -38,7 +39,8 @@ def test_cluster_viz_umap_produces_expected_shape() -> None:
         umap_components=4,
         cluster_viz_components=3,
         cluster_viz_method="umap",
-        seed=13,
+        pca_seed=13,
+        umap_seed=13,
     )
     transformer = EmbeddingTransformer(cfg)
     umap_c, cluster_v, *_ = transformer.fit_transform(embeddings)
@@ -60,7 +62,8 @@ def test_cluster_viz_fits_on_clustering_coords_not_pca() -> None:
         umap_components=4,
         cluster_viz_components=2,
         cluster_viz_method="pca",
-        seed=7,
+        pca_seed=7,
+        umap_seed=7,
     )
     transformer = EmbeddingTransformer(cfg).fit(embeddings)
 
@@ -73,7 +76,7 @@ def test_cluster_viz_fits_on_clustering_coords_not_pca() -> None:
     got = transformer._transform_cluster_viz(umap_clustering)
 
     wrong_space = (
-        PCA(n_components=2, random_state=cfg.seed)
+        PCA(n_components=2, random_state=cfg.pca_seed)
         .fit(pca_reduced)
         .transform(pca_reduced)
     )

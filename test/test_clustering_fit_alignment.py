@@ -20,6 +20,9 @@ from pelinker.config import (
 from pelinker.model import Linker
 from pelinker.onto import NEGATIVE_LABEL
 from pelinker.sampling import draw_selection_sample
+from pelinker.selection import load_selection_frame
+
+_SUBSAMPLE_ROWS = 80
 
 
 def _mention_frame(*, dim: int = 12, n_pos: int = 120, n_neg: int = 40) -> pd.DataFrame:
@@ -59,15 +62,11 @@ def _filtered_frame() -> pd.DataFrame:
 def test_clustering_subsample_draw_matches_linker_fit_config() -> None:
     frame = _filtered_frame()
     opt = ClusteringOptimizationConfig(
-        min_class_size=5,
-        frac=0.5,
-        eval_max_rows=None,
+        clustering_sample_rows=_SUBSAMPLE_ROWS,
         base_seed=13,
     )
     fit_cfg = LinkerFitConfig(
-        min_class_size=5,
-        frac=0.5,
-        eval_max_rows=None,
+        clustering_sample_rows=_SUBSAMPLE_ROWS,
         base_seed=13,
         clustering_sample_index=0,
     )
@@ -84,9 +83,7 @@ def test_clustering_subsample_draw_matches_linker_fit_config() -> None:
 def test_fit_manifold_clustering_parity_on_shared_subsample() -> None:
     frame = _filtered_frame()
     opt = ClusteringOptimizationConfig(
-        min_class_size=5,
-        frac=0.5,
-        eval_max_rows=None,
+        clustering_sample_rows=_SUBSAMPLE_ROWS,
         base_seed=13,
     )
     sample = draw_selection_sample(frame, opt, sample_index=0)
@@ -95,7 +92,8 @@ def test_fit_manifold_clustering_parity_on_shared_subsample() -> None:
         pca_components=8,
         umap_components=3,
         cluster_viz_components=3,
-        seed=13,
+        pca_seed=13,
+        umap_seed=13,
     )
     mcs = 5
     sel_result = fit_manifold_clustering(
@@ -117,7 +115,7 @@ def test_fit_manifold_clustering_parity_on_shared_subsample() -> None:
     np.testing.assert_array_equal(sel_result.cluster_labels, fit_result.cluster_labels)
 
 
-def test_linker_fit_assigns_all_manifold_rows_when_frac_subsampled(
+def test_linker_fit_assigns_all_manifold_rows_when_clustering_sample_capped(
     tmp_path: Path,
 ) -> None:
     frame = _filtered_frame()
@@ -125,13 +123,12 @@ def test_linker_fit_assigns_all_manifold_rows_when_frac_subsampled(
         pca_components=8,
         umap_components=3,
         cluster_viz_components=3,
-        seed=13,
+        pca_seed=13,
+        umap_seed=13,
     )
     mcs = 5
     opt = ClusteringOptimizationConfig(
-        min_class_size=5,
-        frac=0.5,
-        eval_max_rows=None,
+        clustering_sample_rows=_SUBSAMPLE_ROWS,
         base_seed=13,
     )
     sample = draw_selection_sample(frame, opt, sample_index=0)
@@ -158,9 +155,7 @@ def test_linker_fit_assigns_all_manifold_rows_when_frac_subsampled(
         transform_config=tc,
         min_cluster_size=mcs,
         fit_config=LinkerFitConfig(
-            min_class_size=5,
-            frac=0.5,
-            eval_max_rows=None,
+            clustering_sample_rows=_SUBSAMPLE_ROWS,
             base_seed=13,
             clustering_sample_index=0,
             screener_seed=13,
@@ -173,3 +168,23 @@ def test_linker_fit_assigns_all_manifold_rows_when_frac_subsampled(
 
     _, manifold_full = split_by_negative_label(frame, NEGATIVE_LABEL)
     assert len(fit_report.assignments) == len(manifold_full)
+
+
+def test_load_selection_frame_drop_and_cap(tmp_path: Path) -> None:
+    raw = _mention_frame(n_pos=200, n_neg=40)
+    parquet = tmp_path / "emb.parquet"
+    raw.to_parquet(parquet)
+    cfg = ClusteringOptimizationConfig(
+        drop_rare_entities=True,
+        min_mentions_per_entity=5,
+        max_mentions_per_entity=8,
+        mention_cap_seed=11,
+    )
+    loaded = load_selection_frame(file_path=parquet, config=cfg)
+    assert loaded is not None
+    counts = loaded.groupby("entity").size()
+    for ent in counts.index:
+        if ent == NEGATIVE_LABEL:
+            assert counts[ent] == 40
+        else:
+            assert counts[ent] <= 8

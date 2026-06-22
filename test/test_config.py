@@ -1,5 +1,7 @@
 from datetime import date
 
+import pathlib
+
 import pytest
 
 from pelinker.config import ClusteringOptimizationConfig, KBConfig
@@ -70,9 +72,9 @@ def test_clustering_optimization_rejects_max_below_resolved_min() -> None:
         ClusteringOptimizationConfig(min_class_size=20, min_scale=50, max_scale=40)
 
 
-def test_clustering_optimization_rejects_invalid_eval_max_rows() -> None:
-    with pytest.raises(ValueError, match="eval_max_rows"):
-        ClusteringOptimizationConfig(eval_max_rows=0)
+def test_clustering_optimization_rejects_invalid_clustering_sample_rows() -> None:
+    with pytest.raises(ValueError, match="clustering_sample_rows"):
+        ClusteringOptimizationConfig(clustering_sample_rows=0)
 
 
 def test_clustering_optimization_rejects_negative_cluster_count_reward() -> None:
@@ -83,3 +85,52 @@ def test_clustering_optimization_rejects_negative_cluster_count_reward() -> None
 def test_clustering_optimization_rejects_invalid_grid_n_entities() -> None:
     with pytest.raises(ValueError, match="grid_n_entities"):
         ClusteringOptimizationConfig(grid_n_entities=0)
+
+
+def test_linker_fit_config_load_fields_validate() -> None:
+    from pelinker.config import LinkerFitConfig
+
+    LinkerFitConfig(
+        drop_rare_entities=True,
+        min_mentions_per_entity=5,
+        max_mentions_per_entity=100,
+        max_mentions_negative=50,
+    )
+
+
+def test_linker_fit_config_rejects_invalid_max_mentions() -> None:
+    from pelinker.config import LinkerFitConfig
+
+    with pytest.raises(ValueError, match="max_mentions_per_entity"):
+        LinkerFitConfig(max_mentions_per_entity=0)
+
+
+def test_fingerprint_includes_mention_load_fields(tmp_path: pathlib.Path) -> None:
+    from pelinker.model_selection_checkpoint import fingerprint_config_from_cli
+
+    d = tmp_path / "in"
+    d.mkdir()
+    fp = fingerprint_config_from_cli(
+        input_dir=d,
+        umap_dim=8,
+        pca_components=100,
+        cluster_viz_method="pca",
+        min_class_size=20,
+        seed=1,
+        pca_seed=13,
+        umap_seed=None,
+        clustering_sample_rows=None,
+        batch_size=1000,
+        prefix="p",
+        n_sample=1,
+        selected_labels_kb_path=None,
+        max_scale=60,
+        drop_rare_entities=True,
+        min_mentions_per_entity=15,
+        max_mentions_per_entity=200,
+        max_mentions_negative=1000,
+        mention_cap_seed=99,
+    )
+    assert fp["drop_rare_entities"] is True
+    assert fp["max_mentions_per_entity"] == 200
+    assert fp["mention_cap_seed"] == 99

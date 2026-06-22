@@ -1,4 +1,4 @@
-"""Structured checkpoint I/O for ``run/analysis/model_selection.py`` runs."""
+"""Structured checkpoint I/O for ``pelinker.model_selection`` runs."""
 
 from __future__ import annotations
 
@@ -132,9 +132,9 @@ def fingerprint_config_from_cli(
     cluster_viz_method: str,
     min_class_size: int,
     seed: int,
-    frac: float,
-    eval_max_rows: int | None,
-    n_embedding_batches: int | None,
+    pca_seed: int,
+    umap_seed: int | None,
+    clustering_sample_rows: int | None,
     batch_size: int,
     prefix: str,
     n_sample: int,
@@ -144,6 +144,11 @@ def fingerprint_config_from_cli(
     clustering_grid_step: int = 5,
     negative_label: str = NEGATIVE_LABEL,
     screener_kind: str = "lda",
+    drop_rare_entities: bool = False,
+    min_mentions_per_entity: int = 20,
+    max_mentions_per_entity: int | None = None,
+    max_mentions_negative: int | None = None,
+    mention_cap_seed: int = 13,
 ) -> dict[str, Any]:
     kb = None
     if selected_labels_kb_path is not None:
@@ -154,22 +159,27 @@ def fingerprint_config_from_cli(
     return {
         "batch_size": batch_size,
         "clustering_grid_step": clustering_grid_step,
-        "frac": frac,
-        "eval_max_rows": eval_max_rows,
-        "n_embedding_batches": n_embedding_batches,
+        "clustering_sample_rows": clustering_sample_rows,
         "input_dir": str(input_dir.expanduser().resolve()),
         "max_scale": max_scale,
         "min_class_size": min_class_size,
         "min_scale": resolved_min_scale,
         "n_sample": n_sample,
         "pca_components": pca_components,
+        "pca_seed": pca_seed,
         "cluster_viz_method": cluster_viz_method,
         "prefix": prefix,
         "seed": seed,
         "selected_labels_kb_path": kb,
         "umap_dim": umap_dim,
+        "umap_seed": umap_seed,
         "negative_label": negative_label,
         "screener_kind": screener_kind,
+        "drop_rare_entities": drop_rare_entities,
+        "min_mentions_per_entity": min_mentions_per_entity,
+        "max_mentions_per_entity": max_mentions_per_entity,
+        "max_mentions_negative": max_mentions_negative,
+        "mention_cap_seed": mention_cap_seed,
     }
 
 

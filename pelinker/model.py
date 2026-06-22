@@ -37,14 +37,23 @@ from pelinker.screener.projection_screener import (
 )
 from pelinker.screener.ambient_screener import NegativeClassScreener
 from pelinker.analysis import (
-    drop_entities_with_few_mentions,
     fit_ambient_screener_with_metrics,
-    mention_frame_from_embedding_paths,
     split_by_negative_label,
 )
 from pelinker.clustering_fit import fit_manifold_clustering
+from pelinker.embedder import embed_kb_corpus
+from pelinker.embedding_fusion import (
+    MENTION_PROVENANCE_COLUMNS,
+    fused_property_vectors_from_paths,
+    property_fused_dataframe_for_linker_order,
+)
 from pelinker.sampling import draw_selection_sample, stratified_mention_sample
-from pelinker.transform import score_transform_artifacts
+from pelinker.selection import load_selection_frame
+from pelinker.transform import (
+    EmbeddingTransformer,
+    TransformArtifacts,
+    score_transform_artifacts,
+)
 from pelinker.reporting import (
     ClusteringFitMetrics,
     ClusteringHyperparameters,
@@ -53,12 +62,6 @@ from pelinker.reporting import (
     NegativeScreenerInSampleMetrics,
     entity_negative_label_mask_01,
     subsample_diagnostics_stratified,
-)
-from pelinker.embedder import embed_kb_corpus
-from pelinker.embedding_fusion import (
-    MENTION_PROVENANCE_COLUMNS,
-    fused_property_vectors_from_paths,
-    property_fused_dataframe_for_linker_order,
 )
 from pelinker.linker_cluster_training import (
     cluster_composition_from_training_frame,
@@ -77,7 +80,6 @@ from pelinker.onto import (
     NEGATIVE_LABEL,
     WordGrouping,
 )
-from pelinker.transform import EmbeddingTransformer
 from pelinker.util import (
     extract_ordered_mention_tensors,
     keep_expression_for_prediction,
@@ -86,6 +88,30 @@ from pelinker.util import (
 )
 
 logger = logging.getLogger(__name__)
+
+_ROW_ID_COL = "_pelinker_row_id"
+
+_LINKER_LOAD_DEFAULTS: dict[str, object] = {
+    "embedding_metadata": None,
+    "kb_config": None,
+    "_hf_models_by_type": {},
+    "training_cluster_frame": None,
+    "training_pca_residuals": None,
+    "training_pca_mahalanobis": None,
+    "training_pca_spectral_entropy": None,
+    "projection": None,
+    "training_umap_clustering": None,
+    "training_cluster_viz": None,
+    "training_pca_reduced": None,
+    "cluster_composition": None,
+    "cluster_consensus_names": {},
+    "cluster_derived_labels_map": {},
+    "nlp_model_name": "en_core_web_trf",
+    "_nlp": None,
+    "screener_in_sample_metrics": None,
+    "clustering_fit_metrics": None,
+    "_fit_clustering_report": None,
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -110,7 +136,7 @@ def _screener_training_frame(
     clustering_prepared: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """Stratified subsample for screener fitting (aligned with model-selection draws)."""
-    if clustering_prepared is not None and fit_cfg.frac < 1.0:
+    if clustering_prepared is not None and len(clustering_prepared) < len(prepared):
         return clustering_prepared
     cap = fit_cfg.screener_max_rows
     if cap is None or len(prepared) <= cap:
@@ -231,6 +257,120 @@ def _linker_fit_diagnostics_full(
     )
 
 
+def _predict_cluster_labels_on_full_manifold(
+    manifold_full: pd.DataFrame,
+    manifold_fit: pd.DataFrame,
+    clusterer: hdbscan.HDBSCAN,
+    umap_full: np.ndarray,
+    fit_labels: np.ndarray,
+    *,
+    row_id_col: str = _ROW_ID_COL,
+) -> tuple[np.ndarray, np.ndarray]:
+    """``approximate_predict`` on full KB rows; training subsample rows keep exact fit labels."""
+    if (
+        row_id_col not in manifold_fit.columns
+        or row_id_col not in manifold_full.columns
+    ):
+        raise ValueError(f"manifold frames missing {row_id_col!r}")
+    cluster_labels_arr, cluster_probs = approximate_predict(clusterer, umap_full)
+    cluster_labels = np.asarray(cluster_labels_arr, dtype=np.int64)
+    cluster_scores = np.asarray(cluster_probs, dtype=np.float64).ravel()
+    fit_ids = manifold_fit[row_id_col].to_numpy(dtype=np.int64, copy=False)
+    fit_id_to_label = dict(zip(fit_ids.tolist(), fit_labels.astype(int).tolist()))
+    full_ids = manifold_full[row_id_col].to_numpy(dtype=np.int64, copy=False)
+    for i, row_id in enumerate(full_ids.tolist()):
+        label = fit_id_to_label.get(int(row_id))
+        if label is not None:
+            cluster_labels[i] = label
+    return cluster_labels, cluster_scores
+
+
+def _build_training_cluster_frame(
+    manifold_full: pd.DataFrame,
+    cluster_labels: np.ndarray,
+    cluster_scores: np.ndarray,
+    screener_decision: np.ndarray,
+    manifold_mask: np.ndarray,
+    projection_scores: np.ndarray,
+) -> pd.DataFrame:
+    tc_cols = ["pmid", "entity", "mention"]
+    missing = [c for c in tc_cols if c not in manifold_full.columns]
+    if missing:
+        raise ValueError(
+            "Prepared mention frame missing columns required for "
+            f"training_cluster_frame: {missing}"
+        )
+    frame = manifold_full[tc_cols].copy()
+    for col in MENTION_PROVENANCE_COLUMNS:
+        if col in manifold_full.columns:
+            frame[col] = manifold_full[col].values
+    frame["cluster"] = cluster_labels
+    frame["screener_score"] = screener_decision[manifold_mask]
+    frame["projection_score"] = projection_scores[manifold_mask]
+    frame["cluster_score"] = cluster_scores
+    return frame
+
+
+def _store_training_manifold_arrays(
+    linker: Linker,
+    artifacts: TransformArtifacts,
+) -> None:
+    linker.training_pca_residuals = np.asarray(
+        artifacts.pca_residuals, dtype=np.float32
+    )
+    linker.training_pca_mahalanobis = np.asarray(
+        artifacts.pca_mahalanobis, dtype=np.float32
+    )
+    linker.training_pca_spectral_entropy = np.asarray(
+        artifacts.pca_spectral_entropy, dtype=np.float32
+    )
+    linker.training_umap_clustering = np.asarray(
+        artifacts.umap_clustering, dtype=np.float32
+    )
+    linker.training_cluster_viz = np.asarray(artifacts.cluster_viz, dtype=np.float32)
+    linker.training_pca_reduced = np.asarray(artifacts.pca_reduced, dtype=np.float32)
+
+
+def _finalize_linker_cluster_state(
+    linker: Linker,
+    *,
+    kb_config: KBConfig | None,
+    sampled_diag: LinkerFitDiagnostics,
+) -> None:
+    linker.cluster_composition = cluster_composition_from_training_frame(
+        linker.training_cluster_frame
+    )
+    linker.cluster_consensus_names = consensus_cluster_names(linker.cluster_composition)
+
+    linker.cluster_assignments = _provisional_cluster_assignments_from_training_frame(
+        linker.labels_map,
+        linker.training_cluster_frame,
+    )
+    linker.cluster_derived_labels_map = cluster_derived_labels_map(
+        linker.labels_map,
+        linker.cluster_assignments,
+        linker.cluster_composition,
+    )
+    linker.vocabulary = sorted(linker.cluster_assignments.keys())
+    if not linker.vocabulary:
+        raise ValueError(
+            "No entity_ids received provisional cluster assignments after fit "
+            "(check labels_map and training entity labels)"
+        )
+
+    if kb_config is not None:
+        if kb_config.entity_count is None:
+            linker.kb_config = replace(kb_config, entity_count=len(linker.vocabulary))
+        else:
+            linker.kb_config = kb_config
+
+    fit_report = linker.build_clustering_report(
+        training_diagnostics=sampled_diag,
+    )
+    linker._strip_training_metrics_for_prediction()
+    linker._fit_clustering_report = fit_report
+
+
 class EntityPredictionRow(TypedDict):
     """Row shape for ``predict`` ``entities`` entries from clustering (before optional KB fields)."""
 
@@ -331,18 +471,6 @@ def _linker_artifact_gz_path(file_spec: str | pathlib.Path) -> pathlib.Path:
     if p.suffix == ".gz":
         return p
     return p.with_name(p.name + ".gz")
-
-
-def _parquet_read_config_from_fit(
-    fit_cfg: LinkerFitConfig,
-) -> ClusteringOptimizationConfig:
-    """Map :class:`LinkerFitConfig` to the parquet batch fields of :class:`ClusteringOptimizationConfig`."""
-    return ClusteringOptimizationConfig(
-        min_class_size=fit_cfg.min_class_size,
-        batch_size=fit_cfg.batch_size,
-        n_embedding_batches=fit_cfg.n_embedding_batches,
-        ambient_screener=fit_cfg.ambient_screener,
-    )
 
 
 class Linker:
@@ -446,44 +574,9 @@ class Linker:
     def load(cls, file_spec: str | pathlib.Path) -> Linker:
         path = _linker_artifact_gz_path(file_spec)
         pe_model = joblib.load(path)
-        if "embedding_metadata" not in pe_model.__dict__:
-            pe_model.embedding_metadata = None
-        if "kb_config" not in pe_model.__dict__:
-            pe_model.kb_config = None
-        if "_hf_models_by_type" not in pe_model.__dict__:
-            pe_model._hf_models_by_type = {}
-        if "training_cluster_frame" not in pe_model.__dict__:
-            pe_model.training_cluster_frame = None
-        if "training_pca_residuals" not in pe_model.__dict__:
-            pe_model.training_pca_residuals = None
-        if "training_pca_mahalanobis" not in pe_model.__dict__:
-            pe_model.training_pca_mahalanobis = None
-        if "training_pca_spectral_entropy" not in pe_model.__dict__:
-            pe_model.training_pca_spectral_entropy = None
-        if "projection" not in pe_model.__dict__:
-            pe_model.projection = None
-        if "training_umap_clustering" not in pe_model.__dict__:
-            pe_model.training_umap_clustering = None
-        if "training_cluster_viz" not in pe_model.__dict__:
-            pe_model.training_cluster_viz = None
-        if "training_pca_reduced" not in pe_model.__dict__:
-            pe_model.training_pca_reduced = None
-        if "cluster_composition" not in pe_model.__dict__:
-            pe_model.cluster_composition = None
-        if "cluster_consensus_names" not in pe_model.__dict__:
-            pe_model.cluster_consensus_names = {}
-        if "cluster_derived_labels_map" not in pe_model.__dict__:
-            pe_model.cluster_derived_labels_map = {}
-        if "nlp_model_name" not in pe_model.__dict__:
-            pe_model.nlp_model_name = "en_core_web_trf"
-        if "_nlp" not in pe_model.__dict__:
-            pe_model._nlp = None
-        if "screener_in_sample_metrics" not in pe_model.__dict__:
-            pe_model.screener_in_sample_metrics = None
-        if "clustering_fit_metrics" not in pe_model.__dict__:
-            pe_model.clustering_fit_metrics = None
-        if "_fit_clustering_report" not in pe_model.__dict__:
-            pe_model._fit_clustering_report = None
+        for field, default in _LINKER_LOAD_DEFAULTS.items():
+            if field not in pe_model.__dict__:
+                setattr(pe_model, field, default)
         return pe_model
 
     def take_fit_clustering_report(self) -> ModelSelectionReport | None:
@@ -652,8 +745,8 @@ class Linker:
                         (one output file per source).
             transform_config: TransformConfig instance
             min_cluster_size: HDBSCAN ``min_cluster_size`` (choose upstream, e.g. via
-                ``run/analysis/model_selection.py``).
-            fit_config: Parquet read batching, mention-per-entity filter, and screener settings.
+                ``pelinker.model_selection``).
+            fit_config: Parquet read batching, mention load filters, subsample settings, and screener config.
                 Defaults to :class:`LinkerFitConfig()`.
             embedding_training: Corpus paths and embedding runtime. Required when embeddings=None.
             embedding_metadata: If provided, overrides or sets ``self.embedding_metadata`` for
@@ -685,7 +778,7 @@ class Linker:
                 self.embedding_metadata = embedding_metadata
 
             fc = fit_config or LinkerFitConfig()
-            read_cfg = _parquet_read_config_from_fit(fc)
+            load_cfg = fc.to_clustering_sample_config()
 
             if embeddings is None:
                 if embedding_training is None:
@@ -732,25 +825,15 @@ class Linker:
                 "Stage (B): mention-level load from %s parquet file(s)",
                 len(embeddings_paths),
             )
-            raw = mention_frame_from_embedding_paths(
-                embeddings_paths,
-                optimization_config=read_cfg,
-                show_read_progress=True,
+            prepared = load_selection_frame(
+                file_paths=embeddings_paths,
+                config=load_cfg,
+                show_embedding_read_progress=True,
             )
-            if raw is None or len(raw) == 0:
+            if prepared is None or len(prepared) == 0:
                 raise ValueError(
                     "No mention-level embedding rows loaded from parquet (check paths "
                     "and columns pmid, entity, mention, embed)."
-                )
-
-            prepared = drop_entities_with_few_mentions(
-                raw,
-                fc.min_class_size,
-                negative_label=fc.ambient_screener.negative_label,
-            )
-            if len(prepared) == 0:
-                raise ValueError(
-                    "No mention-level rows left after min_class_size entity filtering"
                 )
 
             self._fit_clustering_on_prepared_mentions(
@@ -783,6 +866,9 @@ class Linker:
         kb_config: KBConfig | None,
     ) -> None:
         """Fit screeners, then PCA/UMAP + HDBSCAN on the clustering subsample; label full KB via predict."""
+        prepared = prepared.copy()
+        prepared[_ROW_ID_COL] = np.arange(len(prepared), dtype=np.int64)
+
         ns_cfg = fit_cfg.ambient_screener
         mo_cfg = fit_cfg.projection_screener
         neg_label = ns_cfg.negative_label
@@ -834,24 +920,7 @@ class Linker:
             cl_result.transformer,
             include_umap=True,
         )
-        self.training_pca_residuals = np.asarray(
-            full_artifacts.pca_residuals, dtype=np.float32
-        )
-        self.training_pca_mahalanobis = np.asarray(
-            full_artifacts.pca_mahalanobis, dtype=np.float32
-        )
-        self.training_pca_spectral_entropy = np.asarray(
-            full_artifacts.pca_spectral_entropy, dtype=np.float32
-        )
-        self.training_umap_clustering = np.asarray(
-            full_artifacts.umap_clustering, dtype=np.float32
-        )
-        self.training_cluster_viz = np.asarray(
-            full_artifacts.cluster_viz, dtype=np.float32
-        )
-        self.training_pca_reduced = np.asarray(
-            full_artifacts.pca_reduced, dtype=np.float32
-        )
+        _store_training_manifold_arrays(self, full_artifacts)
 
         mo_step = _fit_projection_step(
             screener_prepared,
@@ -887,84 +956,29 @@ class Linker:
             random_state=fit_cfg.diagnostics_random_state,
         )
 
-        tc_cols = ["pmid", "entity", "mention"]
-        missing = [c for c in tc_cols if c not in manifold_full.columns]
-        if missing:
-            raise ValueError(
-                "Prepared mention frame missing columns required for "
-                f"training_cluster_frame: {missing}"
-            )
         neg_mask = prepared["entity"].astype(str).values == neg_label
         manifold_mask = ~neg_mask
-        fit_keys = list(
-            zip(
-                manifold_fit["pmid"].astype(str),
-                manifold_fit["entity"].astype(str),
-                manifold_fit["mention"].astype(str),
-            )
+        cluster_labels, cluster_scores = _predict_cluster_labels_on_full_manifold(
+            manifold_full,
+            manifold_fit,
+            cl_result.clusterer,
+            full_artifacts.umap_clustering,
+            cl_result.cluster_labels,
         )
-        full_keys = list(
-            zip(
-                manifold_full["pmid"].astype(str),
-                manifold_full["entity"].astype(str),
-                manifold_full["mention"].astype(str),
-            )
+        self.training_cluster_frame = _build_training_cluster_frame(
+            manifold_full,
+            cluster_labels,
+            cluster_scores,
+            neg_step.decision,
+            manifold_mask,
+            full_diag.projection_score,
         )
-        fit_key_to_label = dict(
-            zip(fit_keys, cl_result.cluster_labels.astype(int).tolist())
-        )
-        cluster_labels_arr, cluster_probs = approximate_predict(
-            cl_result.clusterer, full_artifacts.umap_clustering
-        )
-        cluster_labels = np.asarray(cluster_labels_arr, dtype=np.int64)
-        cluster_scores = np.asarray(cluster_probs, dtype=np.float64).ravel()
-        for i, key in enumerate(full_keys):
-            if key in fit_key_to_label:
-                cluster_labels[i] = fit_key_to_label[key]
 
-        self.training_cluster_frame = manifold_full[tc_cols].copy()
-        for col in MENTION_PROVENANCE_COLUMNS:
-            if col in manifold_full.columns:
-                self.training_cluster_frame[col] = manifold_full[col].values
-        self.training_cluster_frame["cluster"] = cluster_labels
-        self.training_cluster_frame["screener_score"] = neg_step.decision[manifold_mask]
-        self.training_cluster_frame["projection_score"] = full_diag.projection_score[
-            manifold_mask
-        ]
-        self.training_cluster_frame["cluster_score"] = cluster_scores
-
-        self.cluster_composition = cluster_composition_from_training_frame(
-            self.training_cluster_frame
+        _finalize_linker_cluster_state(
+            self,
+            kb_config=kb_config,
+            sampled_diag=sampled_diag,
         )
-        self.cluster_consensus_names = consensus_cluster_names(self.cluster_composition)
-
-        self.cluster_assignments = _provisional_cluster_assignments_from_training_frame(
-            self.labels_map,
-            self.training_cluster_frame,
-        )
-        self.cluster_derived_labels_map = cluster_derived_labels_map(
-            self.labels_map,
-            self.cluster_assignments,
-            self.cluster_composition,
-        )
-        self.vocabulary = sorted(self.cluster_assignments.keys())
-        if not self.vocabulary:
-            raise ValueError(
-                "No entity_ids received provisional cluster assignments after fit "
-                "(check labels_map and training entity labels)"
-            )
-
-        if kb_config is not None:
-            if kb_config.entity_count is None:
-                self.kb_config = replace(kb_config, entity_count=len(self.vocabulary))
-            else:
-                self.kb_config = kb_config
-
-        fit_report = self.build_clustering_report(
-            training_diagnostics=sampled_diag,
-        )
-        self._strip_training_metrics_for_prediction()
-        self._fit_clustering_report = fit_report
 
     def _load_embeddings_from_file(
         self, embeddings_path: pathlib.Path, kb_labels: set[str] | None = None
@@ -993,7 +1007,6 @@ class Linker:
             embeddings_paths,
             kb_labels,
             batch_size=cfg.batch_size,
-            n_embedding_batches=cfg.n_embedding_batches,
             show_read_progress=sys.stdout.isatty(),
         )
         if not fused:
@@ -1485,30 +1498,6 @@ class Linker:
             )
         return rows
 
-    def _mention_anomaly_from_full_vectors(
-        self,
-        mentions: list[MentionCandidate],
-        screener_neg: np.ndarray,
-        screener_margin: np.ndarray,
-        residuals: np.ndarray,
-        mahalanobis: np.ndarray,
-        spectral_entropy: np.ndarray,
-        combined: np.ndarray,
-        projection_scores: np.ndarray,
-        kb_lemma_by_wg: dict[WordGrouping, dict[str, str]],
-    ) -> list[dict[str, object]]:
-        return self._build_mention_anomaly_rows(
-            mentions,
-            screener_neg,
-            screener_margin,
-            residuals,
-            mahalanobis,
-            spectral_entropy,
-            combined,
-            projection_scores,
-            kb_lemma_by_wg,
-        )
-
     def _predict_with_clustering(
         self,
         embeddings: torch.Tensor,
@@ -1566,7 +1555,7 @@ class Linker:
                 assert screener_margin is not None
                 assert kb_lemma_by_wg is not None
                 nan_vec = np.full(n_mentions, np.nan, dtype=np.float64)
-                return [], self._mention_anomaly_from_full_vectors(
+                return [], self._build_mention_anomaly_rows(
                     mentions,
                     screener_neg,
                     screener_margin,
@@ -1656,7 +1645,7 @@ class Linker:
             spectral_entropy[idx_keep] = ent_k
             combined_full[idx_keep] = combined_k
             projection_full[idx_keep] = oov_scores_k
-            return deduped, self._mention_anomaly_from_full_vectors(
+            return deduped, self._build_mention_anomaly_rows(
                 mentions,
                 screener_neg,
                 screener_margin,

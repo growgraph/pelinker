@@ -22,7 +22,7 @@ from pelinker.config import (
     EmbeddingSourceSpec,
     EmbeddingTrainingConfig,
 )
-from pelinker.ops import _detect_file_format, _detect_headers_and_columns
+from pelinker.ops import iter_pmid_text_table_chunks
 from pelinker.util import expand_config_path, extract_and_embed_mentions, load_models
 from pelinker.onto import WordGrouping
 from pelinker.util import str2layers
@@ -68,14 +68,23 @@ def _embed_corpus_single_source(
     logger.info("Loaded %s entities", df_kb.shape[0])
     logger.info("Layers are set to %s", layers)
 
-    file_format = _detect_file_format(training.input_text_table_path)
-    has_header, pmid_col, text_col = _detect_headers_and_columns(
-        training.input_text_table_path, file_format
+    table_path = training.input_text_table_path
+    chunk_iter = iter_pmid_text_table_chunks(
+        table_path, chunk_size=training.input_buffer_rows
     )
+    _first_chunk = next(iter(chunk_iter), None)
+    if _first_chunk is None:
+        logger.warning("Text table is empty: %s", table_path)
+        chunk_iter = iter(())
+    else:
+        _chunk0, pmid_col, text_col = _first_chunk
+        logger.info("Using columns: %r, %r", pmid_col, text_col)
 
-    logger.info("Detected file format: %s", file_format.upper())
-    logger.info("Headers detected: %s", has_header)
-    logger.info("Using columns: %r, %r", pmid_col, text_col)
+        def _chunk_stream():
+            yield _chunk0, pmid_col, text_col
+            yield from chunk_iter
+
+        chunk_iter = _chunk_stream()
 
     if training.max_input_buffers is not None:
         logger.info(
@@ -85,19 +94,6 @@ def _embed_corpus_single_source(
         )
     else:
         logger.info("Processing full text table (all read passes)")
-
-    compression = (
-        "gzip" if training.input_text_table_path.suffix.endswith(".gz") else None
-    )
-    sep = "\t" if file_format == "tsv" else ","
-
-    reader = pd.read_csv(
-        training.input_text_table_path,
-        sep=sep,
-        header=0 if has_header else None,
-        compression=compression,
-        chunksize=training.input_buffer_rows,
-    )
 
     expanded_out = expand_config_path(output_parquet_path)
     if expanded_out is None:
@@ -150,7 +146,7 @@ def _embed_corpus_single_source(
             if training.negatives_per_positive > 0:
                 negative_sampler = np.random.RandomState(training.negative_seed)
 
-            for i, chunk in enumerate(reader):
+            for i, (chunk, pmid_col, text_col) in enumerate(chunk_iter):
                 if max_buf is not None and i >= max_buf:
                     logger.info(
                         "Reached max_input_buffers=%s table read passes, stopping",

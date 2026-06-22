@@ -65,7 +65,7 @@ def load_models(model_type, sentence=False):
     return tokenizer, model
 
 
-def layers2str(layers: str | list[int]) -> str:
+def layers2str(layers: str | list[int]) -> str:  # used by run/obsolete only
     if isinstance(layers, str):
         layers_str = layers
     else:
@@ -448,7 +448,7 @@ def tt_normalize(cm: ChunkMapper, layers) -> list[list[torch.Tensor]]:
     return tt_r
 
 
-def compute_distance_ref(
+def compute_distance_ref(  # used by run/obsolete only
     index,
     tt_descs,
     nb_nn,
@@ -473,7 +473,7 @@ def compute_distance_ref(
     return m0, dfa
 
 
-def encode(texts, tokenizer, model, ls):
+def encode(texts, tokenizer, model, ls):  # used by run/obsolete only
     if ls == "sent":
         tt_labels = model.encode(texts, normalize_embeddings=True)
     else:
@@ -485,7 +485,9 @@ def encode(texts, tokenizer, model, ls):
     return tt_labels
 
 
-def fetch_latest_kb(path_derived) -> tuple[str | None, int]:
+def fetch_latest_kb(
+    path_derived,
+) -> tuple[str | None, int]:  # used by run/obsolete only
     file_names = [
         file.name
         for file in path_derived.iterdir()
@@ -796,13 +798,6 @@ def texts_to_vrep(
     return ReportBatch(chunk_mapper=chunk_mapper, texts=texts, _data=data)
 
 
-def merge_wbs(word_boundaries, window) -> list[tuple[int, int]]:
-    return [
-        (wa, wb)
-        for (wa, _), (_, wb) in zip(word_boundaries, word_boundaries[window - 1 :])
-    ]
-
-
 def token_list_with_window(
     tokens: list[SimplifiedToken], window: WordGrouping, itext=None, ichunk=None
 ) -> list[Expression]:
@@ -915,6 +910,43 @@ def _sample_row_indices(rng: np.random.RandomState, n_pool: int, k: int) -> np.n
     return rng.choice(n_pool, size=k, replace=True)
 
 
+def _mention_key(
+    wg_value: int,
+    ichunk: int,
+    a: int,
+    b: int,
+    mention: str,
+) -> tuple[int, int, int, int, str]:
+    return (wg_value, ichunk, a, b, mention.casefold())
+
+
+def _mention_row_dict(
+    *,
+    pmid: str,
+    entity: str,
+    mention: str,
+    a: int,
+    b: int,
+    a_abs: int,
+    b_abs: int,
+    itext: int,
+    ichunk: int,
+    embed_list: list[float],
+) -> dict[str, object]:
+    return {
+        "pmid": pmid,
+        "entity": entity,
+        "mention": mention,
+        "a": a,
+        "b": b,
+        "a_abs": a_abs,
+        "b_abs": b_abs,
+        "itext": itext,
+        "ichunk": ichunk,
+        "embed": embed_list,
+    }
+
+
 def extract_and_embed_mentions(
     entities: list[str],
     data: list[str],
@@ -1003,28 +1035,21 @@ def extract_and_embed_mentions(
                         e.itext, e.ichunk
                     )
                     mention = text[offset + e.a : offset + e.b]
-                    mention_key = (
-                        wg.value,
-                        e.ichunk,
-                        e.a,
-                        e.b,
-                        mention.casefold(),
-                    )
+                    mention_key = _mention_key(wg.value, e.ichunk, e.a, e.b, mention)
                     positive_keys_by_text[itext].add(mention_key)
-                    embed_list = tt.numpy().tolist()
                     positive_rows_by_text[itext].append(
-                        {
-                            "pmid": batch_pmids[itext],
-                            "entity": entity,
-                            "mention": mention,
-                            "a": e.a,
-                            "b": e.b,
-                            "a_abs": offset + e.a,
-                            "b_abs": offset + e.b,
-                            "itext": e.itext,
-                            "ichunk": e.ichunk,
-                            "embed": embed_list,
-                        }
+                        _mention_row_dict(
+                            pmid=batch_pmids[itext],
+                            entity=entity,
+                            mention=mention,
+                            a=e.a,
+                            b=e.b,
+                            a_abs=offset + e.a,
+                            b_abs=offset + e.b,
+                            itext=e.itext,
+                            ichunk=e.ichunk,
+                            embed_list=tt.numpy().tolist(),
+                        )
                     )
 
         # Phase B: emit positives and optionally add globally-negative samples.
@@ -1052,28 +1077,28 @@ def extract_and_embed_mentions(
                             expression.itext, expression.ichunk
                         )
                         mention = text[offset + expression.a : offset + expression.b]
-                        mention_key = (
+                        mention_key = _mention_key(
                             wg.value,
                             expression.ichunk,
                             expression.a,
                             expression.b,
-                            mention.casefold(),
+                            mention,
                         )
                         if mention_key in pos_keys:
                             continue
                         if mention_key not in negative_candidates:
-                            negative_candidates[mention_key] = {
-                                "pmid": batch_pmids[itext],
-                                "entity": negative_label,
-                                "mention": mention,
-                                "a": expression.a,
-                                "b": expression.b,
-                                "a_abs": offset + expression.a,
-                                "b_abs": offset + expression.b,
-                                "itext": expression.itext,
-                                "ichunk": expression.ichunk,
-                                "embed": embedding.numpy().tolist(),
-                            }
+                            negative_candidates[mention_key] = _mention_row_dict(
+                                pmid=batch_pmids[itext],
+                                entity=negative_label,
+                                mention=mention,
+                                a=expression.a,
+                                b=expression.b,
+                                a_abs=offset + expression.a,
+                                b_abs=offset + expression.b,
+                                itext=expression.itext,
+                                ichunk=expression.ichunk,
+                                embed_list=embedding.numpy().tolist(),
+                            )
 
                 if not negative_candidates:
                     continue

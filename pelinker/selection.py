@@ -2,7 +2,7 @@
 Model-selection evaluation: load embeddings, draw stratified samples, evaluate screeners + clustering.
 
 Production :meth:`~pelinker.model.Linker.fit` uses the same clustering subsample contract when
-``LinkerFitConfig.frac`` / ``base_seed`` / ``clustering_sample_index`` match the selection run.
+``LinkerFitConfig.clustering_sample_rows`` / ``base_seed`` / ``clustering_sample_index`` match the selection run.
 """
 
 from __future__ import annotations
@@ -15,12 +15,12 @@ import numpy as np
 import pandas as pd
 
 from pelinker.analysis import (
-    _mention_quality_frame,
     drop_entities_with_few_mentions,
     evaluate_all_screeners_cv,
     split_by_negative_label,
 )
 from pelinker.clustering_fit import (
+    ManifoldTransformerFitResult,
     fit_hdbscan_on_umap,
     fit_transformer_on_manifold,
 )
@@ -29,7 +29,11 @@ from pelinker.clustering_grid import (
     evaluate_cluster_size_grid,
     solve_optimal_min_cluster_size_from_aggregated,
 )
-from pelinker.config import ClusteringOptimizationConfig, TransformConfig
+from pelinker.config import (
+    ClusteringOptimizationConfig,
+    ManifoldOovScreenerConfig,
+    TransformConfig,
+)
 from pelinker.embedding_fusion import concat_mention_level_embedding_sources
 from pelinker.reporting import (
     AllScreenerCvResult,
@@ -37,9 +41,10 @@ from pelinker.reporting import (
     ModelSelectionReport,
     PerDatapointScores,
     entity_negative_label_mask_01,
+    mention_quality_frame,
 )
-from pelinker.sampling import draw_selection_sample
-from pelinker.transform import score_transform_artifacts
+from pelinker.sampling import cap_mentions_per_entity, draw_selection_sample
+from pelinker.transform import TransformArtifacts, score_transform_artifacts
 
 
 def load_selection_frame(
@@ -77,7 +82,6 @@ def load_selection_frame(
         frame = concat_mention_level_embedding_sources(
             paths,
             batch_size=config.batch_size,
-            n_embedding_batches=config.n_embedding_batches,
             read_status=embedding_read_status,
             show_read_progress=show_embedding_read_progress,
         )
@@ -90,14 +94,96 @@ def load_selection_frame(
             return None
 
     neg_label = config.ambient_screener.negative_label
-    frame = drop_entities_with_few_mentions(
-        frame,
-        config.min_class_size,
-        negative_label=neg_label,
-    )
-    if len(frame) == 0:
-        return None
+    if config.drop_rare_entities:
+        frame = drop_entities_with_few_mentions(
+            frame,
+            config.min_mentions_per_entity,
+            negative_label=neg_label,
+        )
+        if len(frame) == 0:
+            return None
+
+    if config.max_mentions_per_entity is not None:
+        frame = cap_mentions_per_entity(
+            frame,
+            max_mentions=config.max_mentions_per_entity,
+            negative_label=neg_label,
+            max_mentions_negative=config.max_mentions_negative,
+            random_state=config.mention_cap_seed,
+        )
+        if len(frame) == 0:
+            return None
     return frame
+
+
+def _prepare_screener_cv_arrays(
+    dfr: pd.DataFrame,
+    tx_result: ManifoldTransformerFitResult,
+    projection_cfg: ManifoldOovScreenerConfig,
+    neg_label: str,
+) -> tuple[
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray | None,
+    TransformArtifacts,
+]:
+    X_embed_full = np.stack(dfr["embed"].values).astype(np.float64, copy=False)
+    y_full = (dfr["entity"].astype(str).values == neg_label).astype(np.int64).ravel()
+    entity_full = dfr["entity"].astype(str).values
+    orig_idx_full = np.arange(len(dfr), dtype=np.int64)
+    full_quality_artifacts = score_transform_artifacts(
+        dfr,
+        tx_result.transformer,
+        include_umap=False,
+    )
+    X_manifold_full = np.column_stack(
+        [
+            np.asarray(full_quality_artifacts.pca_residuals, dtype=np.float64),
+            np.asarray(full_quality_artifacts.pca_mahalanobis, dtype=np.float64),
+            np.asarray(full_quality_artifacts.pca_spectral_entropy, dtype=np.float64),
+        ]
+    )
+    X_m_cv = X_manifold_full if projection_cfg.enabled else None
+    return (
+        X_embed_full,
+        y_full,
+        entity_full,
+        orig_idx_full,
+        X_m_cv,
+        full_quality_artifacts,
+    )
+
+
+def _solve_cluster_size_from_grid(
+    metrics_df: pd.DataFrame,
+    config: ClusteringOptimizationConfig,
+) -> tuple[int, float]:
+    single_sample_aggregated = aggregate_grid_metrics([metrics_df])
+    solved = solve_optimal_min_cluster_size_from_aggregated(
+        single_sample_aggregated,
+        objective=config.grid_objective,
+        method=config.optimization_method,
+        smooth_window=config.grid_smooth_window,
+        plateau_fraction=config.grid_plateau_fraction,
+        derivative_rel_tol=config.grid_derivative_rel_tol,
+        cluster_count_reward=config.grid_cluster_count_reward,
+        n_entities=config.grid_n_entities,
+    )
+    return solved.chosen_min_cluster_size, solved.score_mean_at_chosen
+
+
+def _build_selection_assignments(
+    dfr_manifold: pd.DataFrame,
+    labels: np.ndarray,
+) -> pd.DataFrame:
+    assignments = dfr_manifold[["entity"]].copy()
+    for optional_col in ["pmid", "mention"]:
+        if optional_col in dfr_manifold.columns:
+            assignments[optional_col] = dfr_manifold[optional_col]
+    assignments["cluster"] = labels.astype(int, copy=False)
+    return assignments
 
 
 def evaluate_selection_sample(
@@ -112,6 +198,10 @@ def evaluate_selection_sample(
 ) -> ModelSelectionReport | None:
     """
     Evaluate one selection draw: screener CV, transform, clustering grid, and HDBSCAN fit.
+
+    ``n_clusters_emergent`` in the returned report is at the grid-optimal ``best_size``,
+    not an arbitrary ``min_cluster_size``. Compare with ``Linker.fit`` at a fixed MCS via
+    :func:`~pelinker.reporting.n_clusters_at_min_cluster_size` on ``metrics_df``.
 
     When ``all_metrics_dfs`` is provided, appends this sample's grid ``metrics_df``. Run
     :func:`~pelinker.analysis.pooled_min_cluster_size_from_metrics_dfs` after all bootstraps
@@ -135,19 +225,22 @@ def evaluate_selection_sample(
     neg_label = screener_cfg.negative_label
 
     if aggregation_level == "mention" and not entities_pre_filtered:
-        dfr = drop_entities_with_few_mentions(
-            dfr,
-            config.min_class_size,
-            negative_label=neg_label,
-        )
-        if len(dfr) == 0:
-            return None
+        if config.drop_rare_entities:
+            dfr = drop_entities_with_few_mentions(
+                dfr,
+                config.min_mentions_per_entity,
+                negative_label=neg_label,
+            )
+            if len(dfr) == 0:
+                return None
 
     neg_mask, dfr_manifold = split_by_negative_label(dfr, neg_label)
     if len(dfr_manifold) == 0:
         return None
 
-    number_properties = int(dfr_manifold["entity"].nunique())
+    number_properties = int(
+        dfr_manifold["entity"].nunique()
+    )  # for report metadata only
 
     tx_result = fit_transformer_on_manifold(dfr_manifold, transform_config)
     artifacts = score_transform_artifacts(
@@ -156,24 +249,15 @@ def evaluate_selection_sample(
         include_umap=True,
     )
 
-    X_embed_full = np.stack(dfr["embed"].values).astype(np.float64, copy=False)
-    y_full = (dfr["entity"].astype(str).values == neg_label).astype(np.int64).ravel()
-    entity_full = dfr["entity"].astype(str).values
-    orig_idx_full = np.arange(len(dfr), dtype=np.int64)
     projection_cfg = config.projection_screener
-    full_quality_artifacts = score_transform_artifacts(
-        dfr,
-        tx_result.transformer,
-        include_umap=False,
-    )
-    X_manifold_full = np.column_stack(
-        [
-            np.asarray(full_quality_artifacts.pca_residuals, dtype=np.float64),
-            np.asarray(full_quality_artifacts.pca_mahalanobis, dtype=np.float64),
-            np.asarray(full_quality_artifacts.pca_spectral_entropy, dtype=np.float64),
-        ]
-    )
-    X_m_cv: np.ndarray | None = X_manifold_full if projection_cfg.enabled else None
+    (
+        X_embed_full,
+        y_full,
+        entity_full,
+        orig_idx_full,
+        X_m_cv,
+        full_quality_artifacts,
+    ) = _prepare_screener_cv_arrays(dfr, tx_result, projection_cfg, neg_label)
 
     unified = evaluate_all_screeners_cv(
         X_embed=X_embed_full,
@@ -211,19 +295,7 @@ def evaluate_selection_sample(
     if all_metrics_dfs is not None:
         all_metrics_dfs.append(metrics_df)
 
-    single_sample_aggregated = aggregate_grid_metrics([metrics_df])
-    solved_single_sample = solve_optimal_min_cluster_size_from_aggregated(
-        single_sample_aggregated,
-        objective=config.grid_objective,
-        method=config.optimization_method,
-        smooth_window=config.grid_smooth_window,
-        plateau_fraction=config.grid_plateau_fraction,
-        derivative_rel_tol=config.grid_derivative_rel_tol,
-        cluster_count_reward=config.grid_cluster_count_reward,
-        n_entities=config.grid_n_entities,
-    )
-    best_size = solved_single_sample.chosen_min_cluster_size
-    best_score = solved_single_sample.score_mean_at_chosen
+    best_size, best_score = _solve_cluster_size_from_grid(metrics_df, config)
 
     cl_result = fit_hdbscan_on_umap(
         artifacts.umap_clustering,
@@ -233,17 +305,10 @@ def evaluate_selection_sample(
     )
     labels = cl_result.cluster_labels
     fit_metrics = cl_result.fit_metrics
-    assignments = dfr_manifold[["entity"]].copy()
-    for optional_col in ["pmid", "mention"]:
-        if optional_col in dfr_manifold.columns:
-            assignments[optional_col] = dfr_manifold[optional_col]
-    assignments["cluster"] = labels.astype(int, copy=False)
+    assignments = _build_selection_assignments(dfr_manifold, labels)
 
-    res_a = artifacts.pca_residuals
-    mah_a = artifacts.pca_mahalanobis
-    ent_a = artifacts.pca_spectral_entropy
     y_neg = entity_negative_label_mask_01(dfr_manifold["entity"], neg_label)
-    mention_quality = _mention_quality_frame(
+    mention_quality = mention_quality_frame(
         dfr,
         neg_mask=neg_mask,
         cluster_kb=labels,
@@ -260,9 +325,9 @@ def evaluate_selection_sample(
         n_clusters_emergent=fit_metrics.n_clusters_emergent,
         metrics_df=metrics_df,
         assignments=assignments,
-        pca_residuals=res_a,
-        pca_mahalanobis=mah_a,
-        pca_spectral_entropy=ent_a,
+        pca_residuals=artifacts.pca_residuals,
+        pca_mahalanobis=artifacts.pca_mahalanobis,
+        pca_spectral_entropy=artifacts.pca_spectral_entropy,
         oov_label=y_neg,
         umap_clustering=artifacts.umap_clustering,
         cluster_viz=artifacts.cluster_viz,

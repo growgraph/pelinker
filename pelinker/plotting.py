@@ -16,7 +16,7 @@ from pelinker.grid_export import (
     per_combo_metrics_from_grid,
     select_grid_points_at_chosen_min_cluster_size,
 )
-from pelinker.reporting import LinkerFitDiagnostics
+from pelinker.reporting import LinkerFitDiagnostics, ModelSelectionReport
 import seaborn as sns
 
 # Force a non-interactive backend because this project only saves plots to files.
@@ -78,18 +78,33 @@ def _arity_from_model(model: str) -> str:
     return "singleton"
 
 
-def _base_models_in_row(model: str, layer: str) -> list[str]:
-    """Constituent encoder model names (singleton: one; fusion: from ``a/L1+b/L2``)."""
-    if model not in ("fusion2", "fusion3"):
-        return [str(model)]
-    names: list[str] = []
+def _parse_fusion_layer_parts(layer: str) -> list[tuple[str, str]]:
+    """Split fusion ``a/L1+b/L2`` into ``(model, layer_spec)`` pairs."""
+    parts: list[tuple[str, str]] = []
     for part in str(layer).split("+"):
         p = part.strip()
         if not p:
             continue
-        m, _, _ = p.partition("/")
-        if m:
-            names.append(m)
+        model, sep, lyr = p.partition("/")
+        parts.append((model, lyr if sep else p))
+    return parts
+
+
+def _style_metrics_axis(ax: plt.Axes, *, ylabel: str, title: str, color: str) -> None:
+    ax.set_xlabel("min_cluster_size", fontsize=12, fontweight="bold")
+    ax.set_ylabel(ylabel, fontsize=12, fontweight="bold", color=color)
+    ax.set_title(title, fontsize=13, fontweight="bold")
+    ax.tick_params(axis="y", labelcolor=color)
+    ax.grid(True, alpha=0.3, linestyle="--")
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+
+
+def _base_models_in_row(model: str, layer: str) -> list[str]:
+    """Constituent encoder model names (singleton: one; fusion: from ``a/L1+b/L2``)."""
+    if model not in ("fusion2", "fusion3"):
+        return [str(model)]
+    names = [m for m, _ in _parse_fusion_layer_parts(layer) if m]
     return names if names else [str(model)]
 
 
@@ -100,13 +115,7 @@ def _layer_spec_code(model: str, layer: str) -> str:
     """
     if model not in ("fusion2", "fusion3"):
         return str(layer)
-    specs: list[str] = []
-    for part in str(layer).split("+"):
-        p = part.strip()
-        if not p:
-            continue
-        _m, sep, lyr = p.partition("/")
-        specs.append(lyr if sep else p)
+    specs = [lyr for _m, lyr in _parse_fusion_layer_parts(layer)]
     return ",".join(specs) if specs else str(layer)
 
 
@@ -354,17 +363,14 @@ def _grid_solver_config(
     return replace(base, **overrides) if overrides else base
 
 
-def _should_resolve_chosen_min_cluster_size(
+def _grid_solver_kwargs_active(
     *,
-    chosen_min_cluster_size: float | None,
     optimization_config: ClusteringOptimizationConfig | None,
     grid_cluster_count_reward: float | None,
     grid_n_entities: int | None,
     grid_objective: GridObjectiveSpec | None,
     optimization_method: str | None,
 ) -> bool:
-    if chosen_min_cluster_size is not None:
-        return False
     return any(
         v is not None
         for v in (
@@ -377,25 +383,24 @@ def _should_resolve_chosen_min_cluster_size(
     )
 
 
-def resolve_chosen_min_cluster_size_from_metrics_list(
-    metrics_list: list[pd.DataFrame],
-    optimization_config: ClusteringOptimizationConfig | None = None,
+def _should_resolve_chosen_min_cluster_size(
     *,
-    grid_cluster_count_reward: float | None = None,
-    grid_n_entities: int | None = None,
-    grid_objective: GridObjectiveSpec | None = None,
-    optimization_method: str | None = None,
-) -> int:
-    """Re-run pooled grid smoothing on per-sample metric tables (same as model selection)."""
-    solved = solve_pooled_grid_from_metrics_list(
-        metrics_list,
-        optimization_config,
+    chosen_min_cluster_size: float | None,
+    optimization_config: ClusteringOptimizationConfig | None,
+    grid_cluster_count_reward: float | None,
+    grid_n_entities: int | None,
+    grid_objective: GridObjectiveSpec | None,
+    optimization_method: str | None,
+) -> bool:
+    if chosen_min_cluster_size is not None:
+        return False
+    return _grid_solver_kwargs_active(
+        optimization_config=optimization_config,
         grid_cluster_count_reward=grid_cluster_count_reward,
         grid_n_entities=grid_n_entities,
         grid_objective=grid_objective,
         optimization_method=optimization_method,
     )
-    return solved.chosen_min_cluster_size
 
 
 def solve_pooled_grid_from_metrics_list(
@@ -496,15 +501,12 @@ def plot_dbcv_vs_ari_from_grid(
         return False
 
     df_plot = df_grid
-    if any(
-        v is not None
-        for v in (
-            optimization_config,
-            grid_cluster_count_reward,
-            grid_n_entities,
-            grid_objective,
-            optimization_method,
-        )
+    if _grid_solver_kwargs_active(
+        optimization_config=optimization_config,
+        grid_cluster_count_reward=grid_cluster_count_reward,
+        grid_n_entities=grid_n_entities,
+        grid_objective=grid_objective,
+        optimization_method=optimization_method,
     ):
         chosen_by_combo = resolve_chosen_min_cluster_size_by_combo_from_grid(
             df_grid,
@@ -742,15 +744,6 @@ def plot_metrics_with_error_bars(
             zorder=0,
         )
 
-    def _style_ax(ax: plt.Axes, ylabel: str, title: str, color: str) -> None:
-        ax.set_xlabel("min_cluster_size", fontsize=12, fontweight="bold")
-        ax.set_ylabel(ylabel, fontsize=12, fontweight="bold", color=color)
-        ax.set_title(title, fontsize=13, fontweight="bold")
-        ax.tick_params(axis="y", labelcolor=color)
-        ax.grid(True, alpha=0.3, linestyle="--")
-        ax.spines["top"].set_visible(False)
-        ax.spines["right"].set_visible(False)
-
     sns.lineplot(
         data=df_combined,
         x="min_cluster_size",
@@ -764,7 +757,12 @@ def plot_metrics_with_error_bars(
         err_kws={"alpha": 0.3, "linewidth": 1.5},
     )
     _maybe_vline(ax_dbcv)
-    _style_ax(ax_dbcv, "DBCV Score", "DBCV vs. min_cluster_size", colors[0])
+    _style_metrics_axis(
+        ax_dbcv,
+        ylabel="DBCV Score",
+        title="DBCV vs. min_cluster_size",
+        color=colors[0],
+    )
 
     if ax_ari is not None:
         sns.lineplot(
@@ -780,7 +778,12 @@ def plot_metrics_with_error_bars(
             err_kws={"alpha": 0.3, "linewidth": 1.5},
         )
         _maybe_vline(ax_ari)
-        _style_ax(ax_ari, "ARI", "ARI vs. min_cluster_size", colors[1])
+        _style_metrics_axis(
+            ax_ari,
+            ylabel="ARI",
+            title="ARI vs. min_cluster_size",
+            color=colors[1],
+        )
 
     sns.lineplot(
         data=df_combined,
@@ -795,7 +798,12 @@ def plot_metrics_with_error_bars(
         err_kws={"alpha": 0.3, "linewidth": 1.5},
     )
     _maybe_vline(ax_k)
-    _style_ax(ax_k, "n clusters", "Number of Clusters vs. min_cluster_size", colors[2])
+    _style_metrics_axis(
+        ax_k,
+        ylabel="n clusters",
+        title="Number of Clusters vs. min_cluster_size",
+        color=colors[2],
+    )
 
     obj_color = colors[3]
     if grid_solve is not None and len(grid_solve.x) > 0:
@@ -834,7 +842,9 @@ def plot_metrics_with_error_bars(
     else:
         obj_title = "Grid objective (unavailable)"
     _maybe_vline(ax_obj)
-    _style_ax(ax_obj, "Grid objective", obj_title, obj_color)
+    _style_metrics_axis(
+        ax_obj, ylabel="Grid objective", title=obj_title, color=obj_color
+    )
 
     plt.tight_layout()
     _save_figure_multi_format(fig, output_path)
@@ -1347,15 +1357,6 @@ def plot_metrics(df: pd.DataFrame, output_path: pathlib.Path) -> None:
         fig, axes = plt.subplots(1, 2, figsize=(12, 5))
         ax_dbcv, ax_k = axes[0], axes[1]
 
-    def _style_ax(ax: plt.Axes, ylabel: str, title: str, color: str) -> None:
-        ax.set_xlabel("min_cluster_size", fontsize=12, fontweight="bold")
-        ax.set_ylabel(ylabel, fontsize=12, fontweight="bold", color=color)
-        ax.set_title(title, fontsize=13, fontweight="bold")
-        ax.tick_params(axis="y", labelcolor=color)
-        ax.grid(True, alpha=0.3, linestyle="--")
-        ax.spines["top"].set_visible(False)
-        ax.spines["right"].set_visible(False)
-
     ax_dbcv.plot(
         df_plot["min_cluster_size"],
         df_plot["dbcv"],
@@ -1363,7 +1364,12 @@ def plot_metrics(df: pd.DataFrame, output_path: pathlib.Path) -> None:
         color=colors[0],
         linewidth=2,
     )
-    _style_ax(ax_dbcv, "DBCV Score", "DBCV vs. min_cluster_size", colors[0])
+    _style_metrics_axis(
+        ax_dbcv,
+        ylabel="DBCV Score",
+        title="DBCV vs. min_cluster_size",
+        color=colors[0],
+    )
 
     if has_ari:
         ax_ari.plot(
@@ -1373,9 +1379,12 @@ def plot_metrics(df: pd.DataFrame, output_path: pathlib.Path) -> None:
             color=colors[1],
             linewidth=2,
         )
-        _style_ax(ax_ari, "ARI", "ARI vs. min_cluster_size", colors[1])
-    else:
-        pass
+        _style_metrics_axis(
+            ax_ari,
+            ylabel="ARI",
+            title="ARI vs. min_cluster_size",
+            color=colors[1],
+        )
 
     ax_k.plot(
         df_plot["min_cluster_size"],
@@ -1384,7 +1393,12 @@ def plot_metrics(df: pd.DataFrame, output_path: pathlib.Path) -> None:
         color=colors[2],
         linewidth=2,
     )
-    _style_ax(ax_k, "n clusters", "Number of Clusters vs. min_cluster_size", colors[2])
+    _style_metrics_axis(
+        ax_k,
+        ylabel="n clusters",
+        title="Number of Clusters vs. min_cluster_size",
+        color=colors[2],
+    )
 
     plt.tight_layout()
     try:
@@ -1737,43 +1751,9 @@ def load_pmid_texts(
     chunk_size: int = 10_000,
 ) -> dict[str, str]:
     """Stream a PMID/text table and return rows for the requested ``pmids`` only."""
-    from pelinker.ops import _detect_file_format, _detect_headers_and_columns
+    from pelinker.ops import load_pmid_texts_from_table
 
-    path = pathlib.Path(table_path).expanduser().resolve()
-    if not path.exists():
-        raise FileNotFoundError(f"PMID text table not found: {path}")
-
-    need = {str(p) for p in pmids}
-    if not need:
-        return {}
-
-    file_format = _detect_file_format(path)
-    has_header, pmid_col, text_col = _detect_headers_and_columns(path, file_format)
-    compression = "gzip" if path.suffix.endswith(".gz") else None
-    sep = "\t" if file_format == "tsv" else ","
-
-    found: dict[str, str] = {}
-    reader = pd.read_csv(
-        path,
-        sep=sep,
-        header=0 if has_header else None,
-        compression=compression,
-        chunksize=chunk_size,
-    )
-    for chunk in reader:
-        pmid_series = chunk[pmid_col].astype(str)
-        mask = pmid_series.isin(need)
-        if not mask.any():
-            continue
-        for pmid, text in zip(
-            pmid_series[mask],
-            chunk.loc[mask, text_col].astype(str),
-            strict=True,
-        ):
-            found[str(pmid)] = text
-        if len(found) >= len(need):
-            break
-    return found
+    return load_pmid_texts_from_table(table_path, pmids, chunk_size=chunk_size)
 
 
 def enrich_fit_cluster_viz_plot_df_with_context(
@@ -1819,16 +1799,13 @@ def enrich_fit_cluster_viz_plot_df_with_context(
 
 
 def build_fit_cluster_viz_plot_df(
-    report: object,
+    report: ModelSelectionReport,
     *,
     exclude_noise: bool = True,
 ) -> tuple[pd.DataFrame | None, str]:
     """Build a :func:`plot_cluster_viz` frame from a :class:`~pelinker.reporting.ModelSelectionReport`."""
     from pelinker.cluster_composition_viz import filter_emergent_assignments
-    from pelinker.reporting import ModelSelectionReport
 
-    if not isinstance(report, ModelSelectionReport):
-        return None, "pca"
     cluster_viz = report.cluster_viz
     if cluster_viz is None or cluster_viz.size == 0 or cluster_viz.shape[1] < 1:
         return None, report.cluster_viz_method

@@ -66,16 +66,23 @@ class FitCliConfig:
     pca_components: int = 100
     umap_dim: int = 8
     cluster_viz_method: str = "pca"
-    min_class_size: int = 20
+    drop_rare_entities: bool = False
+    min_mentions_per_entity: int = 20
+    max_mentions_per_entity: int | None = None
+    max_mentions_negative: int | None = None
+    mention_cap_seed: int | None = None
+    """Seed for per-entity mention cap; defaults to ``seed`` when omitted."""
     seed: int = 13
-    """PCA/UMAP seed and ``LinkerFitConfig.base_seed`` for clustering subsample draws."""
-    frac: float = 1.0
-    """Stratified mention fraction for clustering; match model-selection ``--frac``."""
-    eval_max_rows: int | None = None
-    """Cap rows per clustering draw after ``frac``; None or 0 = frac only (no row cap)."""
+    """Bootstrap seed for clustering subsample draws (``base_seed``); also default for mention-cap and screener draws."""
+    pca_seed: int = 13
+    """Random seed for PCA and cluster-viz PCA."""
+    umap_seed: int | None = None
+    """UMAP random seed; omit (None) for parallel UMAP. Set for reproducible production fits."""
+    clustering_sample_rows: int | None = None
+    """Max mention rows per clustering bootstrap draw (stratified). None = use all loaded rows."""
     clustering_sample_index: int = 0
     """Bootstrap index for clustering subsample (match model-selection ``sample_idx``)."""
-    # Stage-B HDBSCAN ``min_cluster_size`` (choose upstream, e.g. ``run/analysis/model_selection.py``).
+    # Stage-B HDBSCAN ``min_cluster_size`` (choose upstream, e.g. ``pelinker.model_selection``).
     min_cluster_size: int = 20
     # Filesystem base path for ``Linker.dump`` (``.gz`` added by the linker).
     model_path: str | None = None
@@ -97,7 +104,6 @@ class FitCliConfig:
     projection_enabled: bool = True
     """When false, skip 3D manifold OOV score model (no predict-time gate from that path)."""
     # Stage (B): parquet batching (``batch_size`` rows per read batch).
-    n_embedding_batches: int | None = None  # max read batches per parquet; None = all
     batch_size: int = 1000
     kb_name: str | None = None
     kb_version: str = "0.1.0"
@@ -129,8 +135,17 @@ class FitCliConfig:
             )
         if self.min_cluster_size < 2:
             raise ValueError("min_cluster_size must be >= 2")
-        if not 0 < self.frac <= 1:
-            raise ValueError("frac must be in range (0, 1]")
+        if self.clustering_sample_rows is not None and self.clustering_sample_rows < 1:
+            raise ValueError("clustering_sample_rows must be >= 1 when provided")
+        if self.min_mentions_per_entity < 1:
+            raise ValueError("min_mentions_per_entity must be >= 1")
+        if (
+            self.max_mentions_per_entity is not None
+            and self.max_mentions_per_entity < 1
+        ):
+            raise ValueError("max_mentions_per_entity must be >= 1 when provided")
+        if self.max_mentions_negative is not None and self.max_mentions_negative < 1:
+            raise ValueError("max_mentions_negative must be >= 1 when provided")
         if self.clustering_sample_index < 0:
             raise ValueError("clustering_sample_index must be >= 0")
 
@@ -298,42 +313,13 @@ def _abort_if_outputs_exist(paths: list[Path], *, context: str) -> None:
     raise SystemExit(1)
 
 
-def fit(cfg: FitCliConfig) -> None:
-    """
-    Run embedding (optional), fit a ``Linker`` from parquet(s) (optional), and write outputs.
-
-    Paths (no implicit fallbacks — missing required paths raise):
-
-    - ``embeddings_parquet``: output path(s) for ``embed_only`` / ``both`` stage (A), or input
-      parquet(s) for ``fit_only`` / ``both`` stage (B).
-    - ``report_path``: directory; fit stages write ``linker_fit.clustering_report.json.gz`` and
-      ``linker_fit.cluster_composition.json.gz`` there (see
-      :func:`pelinker.reporting.linker_fit_clustering_report_path` and
-      :func:`pelinker.reporting.linker_fit_cluster_composition_path`).
-    - ``model_path``: filesystem path passed to ``Linker.dump`` for fit stages.
-
-    Pipelines:
-
-    - ``pipeline=auto``: embed then fit if ``input_text_table_path`` is set; else fit from parquet.
-    - ``pipeline=embed_only``: write parquet(s) only (``model_path`` / ``report_path`` not used).
-    - ``pipeline=fit_only``: fit from existing parquet(s); requires ``model_path`` and ``report_path``.
-    - ``pipeline=both``: text table + embed then fit; requires ``model_path`` and ``report_path``.
-
-    Multiple ``embeddings_parquet`` values fuse in list order (inner join on pmid/entity/mention).
-    Set ``model_types`` / ``layers_specs`` (or scalars) so ``embedding_metadata.sources`` matches;
-    or infer ``model_type`` / ``layers_spec`` from each filename stem when lists are omitted.
-    """
-    logging.basicConfig(
-        level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
-    )
-
+def _load_kb_labels_map(cfg: FitCliConfig) -> tuple[Path, dict[str, str], set[str]]:
     kb_path = expand_config_path(cfg.kb_path)
     if kb_path is None:
         raise ValueError("kb_path must be provided")
     logger.info("Using KB: %s", kb_path)
 
     df0 = pd.read_csv(kb_path)
-
     logger.info("Loaded %s properties from KB", len(df0))
 
     if "entity_id" not in df0.columns:
@@ -349,39 +335,19 @@ def fit(cfg: FitCliConfig) -> None:
         for eid, lbl in zip(df0["entity_id"], df0["label"])
         if pd.notna(lbl)
     }
-
     kb_labels = set(df0["label"].dropna().unique())
-
     logger.info("Extracted %s unique entity labels from KB", len(kb_labels))
+    return kb_path, labels_map, kb_labels
 
-    transform_config = TransformConfig(
-        pca_components=cfg.pca_components,
-        umap_components=cfg.umap_dim,
-        cluster_viz_method=cfg.cluster_viz_method,
-        seed=cfg.seed,
-    )
 
-    input_text_table_path = expand_config_path(cfg.input_text_table_path)
-    model_path = expand_config_path(cfg.model_path)
-    report_path_resolved = expand_config_path(cfg.report_path)
-
-    path_strs = _coerce_str_list(cfg.embeddings_parquet)
-    if not path_strs:
-        raise ValueError("embeddings_parquet must be one or more paths")
-
-    embed_paths: list[Path] = []
-    for s in path_strs:
-        p = expand_config_path(s)
-        if p is None:
-            raise ValueError(f"Invalid embeddings path: {s!r}")
-        embed_paths.append(p)
-
-    mts = _coerce_optional_str_list(cfg.model_types)
-    lss = _coerce_optional_str_list(cfg.layers_specs)
-    embedding_metadata = _embedding_metadata(
-        embed_paths, cfg.model_type, cfg.layers_spec, mts, lss
-    )
-
+def _resolve_fit_pipeline(
+    cfg: FitCliConfig,
+    *,
+    input_text_table_path: Path | None,
+    embed_paths: list[Path],
+    model_path: Path | None,
+    report_path_resolved: Path | None,
+) -> FitPipeline:
     pipeline = cfg.pipeline
     if pipeline == "auto":
         effective: FitPipeline = "fit_only" if input_text_table_path is None else "both"
@@ -424,51 +390,60 @@ def fit(cfg: FitCliConfig) -> None:
             embed_paths,
             context="pipeline=embed_only",
         )
+    return effective
 
-    if effective in ("both", "embed_only"):
-        logger.info(
-            "Stage (A): embed_kb_corpus → %s",
-            embed_paths if len(embed_paths) > 1 else embed_paths[0],
-        )
-        training = EmbeddingTrainingConfig(
-            input_text_table_path=input_text_table_path,
-            kb_csv_path=kb_path,
-            use_gpu=cfg.use_gpu,
-            input_buffer_rows=cfg.input_buffer_rows,
-            encoder_batch_size=cfg.encoder_batch_size,
-            nlp_model=cfg.nlp_model,
-            max_input_buffers=cfg.max_input_buffers,
-            negatives_per_positive=cfg.negatives_per_positive,
-            negative_label=cfg.negative_label,
-            negative_seed=cfg.negative_seed,
-        )
-        if len(embed_paths) == 1:
-            embed_kb_corpus(
-                metadata=embedding_metadata,
-                training=training,
-                output_parquet_path=embed_paths[0],
-            )
-        else:
-            embed_kb_corpus(
-                metadata=embedding_metadata,
-                training=training,
-                output_parquet_paths=tuple(embed_paths),
-            )
 
-    if effective == "embed_only":
-        logger.info("Embed-only pipeline finished; not fitting or saving a linker.")
+def _run_embed_stage(
+    cfg: FitCliConfig,
+    *,
+    effective: FitPipeline,
+    input_text_table_path: Path,
+    kb_path: Path,
+    embed_paths: list[Path],
+    embedding_metadata: EmbeddingModelMetadata,
+) -> None:
+    if effective not in ("both", "embed_only"):
         return
+    logger.info(
+        "Stage (A): embed_kb_corpus → %s",
+        embed_paths if len(embed_paths) > 1 else embed_paths[0],
+    )
+    training = EmbeddingTrainingConfig(
+        input_text_table_path=input_text_table_path,
+        kb_csv_path=kb_path,
+        use_gpu=cfg.use_gpu,
+        input_buffer_rows=cfg.input_buffer_rows,
+        encoder_batch_size=cfg.encoder_batch_size,
+        nlp_model=cfg.nlp_model,
+        max_input_buffers=cfg.max_input_buffers,
+        negatives_per_positive=cfg.negatives_per_positive,
+        negative_label=cfg.negative_label,
+        negative_seed=cfg.negative_seed,
+    )
+    if len(embed_paths) == 1:
+        embed_kb_corpus(
+            metadata=embedding_metadata,
+            training=training,
+            output_parquet_path=embed_paths[0],
+        )
+    else:
+        embed_kb_corpus(
+            metadata=embedding_metadata,
+            training=training,
+            output_parquet_paths=tuple(embed_paths),
+        )
 
-    linker_fit_cfg = LinkerFitConfig(
-        min_class_size=cfg.min_class_size,
+
+def _build_linker_fit_config(cfg: FitCliConfig) -> LinkerFitConfig:
+    cap_seed = cfg.seed if cfg.mention_cap_seed is None else cfg.mention_cap_seed
+    return LinkerFitConfig(
         batch_size=cfg.batch_size,
-        n_embedding_batches=cfg.n_embedding_batches,
-        frac=cfg.frac,
-        eval_max_rows=(
-            None
-            if cfg.eval_max_rows is None or cfg.eval_max_rows <= 0
-            else int(cfg.eval_max_rows)
-        ),
+        drop_rare_entities=cfg.drop_rare_entities,
+        min_mentions_per_entity=cfg.min_mentions_per_entity,
+        max_mentions_per_entity=cfg.max_mentions_per_entity,
+        max_mentions_negative=cfg.max_mentions_negative,
+        mention_cap_seed=cap_seed,
+        clustering_sample_rows=cfg.clustering_sample_rows,
         base_seed=cfg.seed,
         clustering_sample_index=cfg.clustering_sample_index,
         screener_seed=cfg.seed,
@@ -481,11 +456,13 @@ def fit(cfg: FitCliConfig) -> None:
         ),
     )
 
+
+def _build_kb_config(cfg: FitCliConfig, kb_path: Path) -> KBConfig:
     kb_created = (
         date.fromisoformat(cfg.kb_created_at) if cfg.kb_created_at else date.today()
     )
     kb_display_name = (cfg.kb_name or "").strip() or kb_path.stem
-    kb_config = KBConfig(
+    return KBConfig(
         name=kb_display_name,
         version=cfg.kb_version,
         created_at=kb_created,
@@ -493,32 +470,14 @@ def fit(cfg: FitCliConfig) -> None:
         entity_count=cfg.kb_entity_count,
     )
 
-    linker = Linker(
-        labels_map=labels_map,
-        transform_config=transform_config,
-        embedding_metadata=embedding_metadata,
-    )
 
-    logger.info("Stage (B): Linker.fit from %s", embed_paths)
-
-    linker.fit(
-        embeddings=embed_paths if len(embed_paths) > 1 else embed_paths[0],
-        transform_config=transform_config,
-        min_cluster_size=cfg.min_cluster_size,
-        fit_config=linker_fit_cfg,
-        embedding_training=None,
-        kb_config=kb_config,
-    )
-
-    logger.info("Fitted Linker model with %s entities", len(linker.vocabulary))
-    logger.info(
-        "Entity-level provisional clusters: %s distinct ids",
-        len(set(linker.cluster_assignments.values())),
-    )
-
-    if model_path is None or report_path_resolved is None:
-        raise ValueError("model_path and report_path must be set when fitting")
-
+def _write_fit_outputs(
+    linker: Linker,
+    cfg: FitCliConfig,
+    *,
+    model_path: Path,
+    report_path_resolved: Path,
+) -> None:
     report_path_resolved.mkdir(parents=True, exist_ok=True)
     fit_report = linker.take_fit_clustering_report()
     if fit_report is None:
@@ -526,10 +485,12 @@ def fit(cfg: FitCliConfig) -> None:
 
     mass_summary = cluster_entity_mass_summary(fit_report.assignments)
     logger.info(
-        "Emergent HDBSCAN clusters: %s (report n_clusters_emergent=%s, "
-        "noise mentions=%s, noise fraction=%.3f)",
-        mass_summary["n_emergent_clusters"],
+        "HDBSCAN emergent clusters on clustering subsample: %s "
+        "(comparable to model-selection report n_clusters_emergent at the same MCS); "
+        "distinct cluster labels on full KB assignments after approximate_predict: %s "
+        "(noise mentions=%s, noise fraction=%.3f)",
         fit_report.n_clusters_emergent,
+        mass_summary["n_emergent_clusters"],
         mass_summary["n_noise_mentions"],
         mass_summary["noise_fraction"],
     )
@@ -573,8 +534,127 @@ def fit(cfg: FitCliConfig) -> None:
 
     logger.info("Saving model to %s", model_path)
     linker.dump(model_path)
-
     logger.info("Model saved successfully!")
+
+
+def fit(cfg: FitCliConfig) -> None:
+    """
+    Run embedding (optional), fit a ``Linker`` from parquet(s) (optional), and write outputs.
+
+    Paths (no implicit fallbacks — missing required paths raise):
+
+    - ``embeddings_parquet``: output path(s) for ``embed_only`` / ``both`` stage (A), or input
+      parquet(s) for ``fit_only`` / ``both`` stage (B).
+    - ``report_path``: directory; fit stages write ``linker_fit.clustering_report.json.gz`` and
+      ``linker_fit.cluster_composition.json.gz`` there (see
+      :func:`pelinker.reporting.linker_fit_clustering_report_path` and
+      :func:`pelinker.reporting.linker_fit_cluster_composition_path`).
+    - ``model_path``: filesystem path passed to ``Linker.dump`` for fit stages.
+
+    Pipelines:
+
+    - ``pipeline=auto``: embed then fit if ``input_text_table_path`` is set; else fit from parquet.
+    - ``pipeline=embed_only``: write parquet(s) only (``model_path`` / ``report_path`` not used).
+    - ``pipeline=fit_only``: fit from existing parquet(s); requires ``model_path`` and ``report_path``.
+    - ``pipeline=both``: text table + embed then fit; requires ``model_path`` and ``report_path``.
+
+    Multiple ``embeddings_parquet`` values fuse in list order (inner join on pmid/entity/mention).
+    Set ``model_types`` / ``layers_specs`` (or scalars) so ``embedding_metadata.sources`` matches;
+    or infer ``model_type`` / ``layers_spec`` from each filename stem when lists are omitted.
+    """
+    logging.basicConfig(
+        level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
+    )
+
+    kb_path, labels_map, _kb_labels = _load_kb_labels_map(cfg)
+
+    transform_config = TransformConfig(
+        pca_components=cfg.pca_components,
+        umap_components=cfg.umap_dim,
+        cluster_viz_method=cfg.cluster_viz_method,
+        pca_seed=cfg.pca_seed,
+        umap_seed=cfg.umap_seed,
+    )
+
+    input_text_table_path = expand_config_path(cfg.input_text_table_path)
+    model_path = expand_config_path(cfg.model_path)
+    report_path_resolved = expand_config_path(cfg.report_path)
+
+    path_strs = _coerce_str_list(cfg.embeddings_parquet)
+    if not path_strs:
+        raise ValueError("embeddings_parquet must be one or more paths")
+
+    embed_paths: list[Path] = []
+    for s in path_strs:
+        p = expand_config_path(s)
+        if p is None:
+            raise ValueError(f"Invalid embeddings path: {s!r}")
+        embed_paths.append(p)
+
+    mts = _coerce_optional_str_list(cfg.model_types)
+    lss = _coerce_optional_str_list(cfg.layers_specs)
+    embedding_metadata = _embedding_metadata(
+        embed_paths, cfg.model_type, cfg.layers_spec, mts, lss
+    )
+
+    effective = _resolve_fit_pipeline(
+        cfg,
+        input_text_table_path=input_text_table_path,
+        embed_paths=embed_paths,
+        model_path=model_path,
+        report_path_resolved=report_path_resolved,
+    )
+
+    if effective in ("both", "embed_only"):
+        assert input_text_table_path is not None
+        _run_embed_stage(
+            cfg,
+            effective=effective,
+            input_text_table_path=input_text_table_path,
+            kb_path=kb_path,
+            embed_paths=embed_paths,
+            embedding_metadata=embedding_metadata,
+        )
+
+    if effective == "embed_only":
+        logger.info("Embed-only pipeline finished; not fitting or saving a linker.")
+        return
+
+    linker_fit_cfg = _build_linker_fit_config(cfg)
+    kb_config = _build_kb_config(cfg, kb_path)
+
+    linker = Linker(
+        labels_map=labels_map,
+        transform_config=transform_config,
+        embedding_metadata=embedding_metadata,
+    )
+
+    logger.info("Stage (B): Linker.fit from %s", embed_paths)
+
+    linker.fit(
+        embeddings=embed_paths if len(embed_paths) > 1 else embed_paths[0],
+        transform_config=transform_config,
+        min_cluster_size=cfg.min_cluster_size,
+        fit_config=linker_fit_cfg,
+        embedding_training=None,
+        kb_config=kb_config,
+    )
+
+    logger.info("Fitted Linker model with %s entities", len(linker.vocabulary))
+    logger.info(
+        "Entity-level provisional clusters: %s distinct ids",
+        len(set(linker.cluster_assignments.values())),
+    )
+
+    if model_path is None or report_path_resolved is None:
+        raise ValueError("model_path and report_path must be set when fitting")
+
+    _write_fit_outputs(
+        linker,
+        cfg,
+        model_path=model_path,
+        report_path_resolved=report_path_resolved,
+    )
 
 
 CONFIG_STORE = ConfigStore.instance()

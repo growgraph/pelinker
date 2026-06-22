@@ -12,9 +12,9 @@ from pelinker.reporting import (
     ModelSelectionReport,
     entity_negative_label_mask_01,
 )
-from run.analysis.model_selection import (
-    _fine_clustering_metadata_df,
-    _validated_oov_label_series,
+from pelinker.model_selection.fine_metadata import (
+    clustering_metadata_df,
+    validated_oov_label_series,
 )
 
 
@@ -53,7 +53,7 @@ def test_fine_metadata_includes_core_and_optional_columns() -> None:
             }
         )
     )
-    got = _fine_clustering_metadata_df(
+    got = clustering_metadata_df(
         report,
         model="m",
         layer="L1",
@@ -115,7 +115,7 @@ def test_fine_metadata_skips_pca_when_length_mismatch() -> None:
         pca_reduced=report.pca_reduced,
         ari=report.ari,
     )
-    got = _fine_clustering_metadata_df(
+    got = clustering_metadata_df(
         report,
         model="m",
         layer="L1",
@@ -146,12 +146,12 @@ def test_fine_metadata_raises_when_oov_label_length_mismatch() -> None:
         ari=report.ari,
     )
     with pytest.raises(ValueError, match="len\\(oov_label\\)"):
-        _fine_clustering_metadata_df(bad, model="m", layer="L1", sample_idx=0)
+        clustering_metadata_df(bad, model="m", layer="L1", sample_idx=0)
 
 
 def test_fine_metadata_returns_empty_if_required_columns_missing() -> None:
     report = _report_with_assignments(pd.DataFrame({"entity": ["term_a"]}))
-    got = _fine_clustering_metadata_df(
+    got = clustering_metadata_df(
         report,
         model="m",
         layer="L1",
@@ -160,27 +160,27 @@ def test_fine_metadata_returns_empty_if_required_columns_missing() -> None:
     assert got.empty
 
 
-def test_validated_oov_label_series_raises_for_all_zeroes() -> None:
+def testvalidated_oov_label_series_raises_for_all_zeroes() -> None:
     df = pd.DataFrame({"oov_label": [0, 0, 0]})
     with pytest.raises(ValueError, match="trivial oov_label mask"):
-        _validated_oov_label_series(df, source_name="unit")
+        validated_oov_label_series(df, source_name="unit")
 
 
-def test_validated_oov_label_series_raises_for_all_ones() -> None:
+def testvalidated_oov_label_series_raises_for_all_ones() -> None:
     df = pd.DataFrame({"oov_label": [1, 1, 1]})
     with pytest.raises(ValueError, match="trivial oov_label mask"):
-        _validated_oov_label_series(df, source_name="unit")
+        validated_oov_label_series(df, source_name="unit")
 
 
-def test_validated_oov_label_series_raises_for_non_binary() -> None:
+def testvalidated_oov_label_series_raises_for_non_binary() -> None:
     df = pd.DataFrame({"oov_label": [0, 2, 1]})
     with pytest.raises(ValueError, match="must be binary"):
-        _validated_oov_label_series(df, source_name="unit")
+        validated_oov_label_series(df, source_name="unit")
 
 
-def test_validated_oov_label_series_accepts_both_classes() -> None:
+def testvalidated_oov_label_series_accepts_both_classes() -> None:
     df = pd.DataFrame({"oov_label": [0, 1, 0, 1]})
-    got = _validated_oov_label_series(df, source_name="unit")
+    got = validated_oov_label_series(df, source_name="unit")
     assert got.tolist() == [0, 1, 0, 1]
 
 
@@ -215,7 +215,7 @@ def test_fine_metadata_prefers_mention_quality_with_mixed_oov_label() -> None:
         ari=0.1,
         mention_quality=mq,
     )
-    got = _fine_clustering_metadata_df(
+    got = clustering_metadata_df(
         report,
         model="m",
         layer="L1",
@@ -223,4 +223,4 @@ def test_fine_metadata_prefers_mention_quality_with_mixed_oov_label() -> None:
     )
     assert len(got) == 2
     assert set(got["oov_label"].tolist()) == {0, 1}
-    _validated_oov_label_series(got, source_name="unit")
+    validated_oov_label_series(got, source_name="unit")
