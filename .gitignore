@@ -166,3 +166,5 @@ nbs/
 debug/
 
 reports/
+paper/
+pelinker/store/*gz

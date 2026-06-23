@@ -64,8 +64,10 @@ class SmoothedGridOptimumResult:
     chosen_min_cluster_size: int
     score_mean_at_chosen: float
     score_std_at_chosen: float
+    n_clusters_mean_at_chosen: float
     x: tuple[float, ...]
     y_objective: tuple[float, ...]
+    y_cluster_term: tuple[float, ...]
     y_smooth: tuple[float, ...]
     dy_dx: tuple[float, ...]
     d2y_dx2: tuple[float, ...]
@@ -219,6 +221,22 @@ def _apply_optimization_method(
     raise ValueError(f"Unknown optimization method: {method!r}")
 
 
+def _cluster_count_reward_term(
+    n_clusters: np.ndarray,
+    *,
+    cluster_count_reward: float,
+    n_entities: int | None,
+) -> np.ndarray:
+    """Additive log penalty: 0 at ``n_ref`` clusters, negative when fewer clusters."""
+    if cluster_count_reward == 0.0:
+        return np.zeros_like(n_clusters, dtype=np.float64)
+    n_clust = np.maximum(n_clusters.astype(np.float64), 1.0)
+    n_ref = float(n_entities) if n_entities is not None else float(np.max(n_clust))
+    if n_ref <= 0:
+        return np.zeros_like(n_clust, dtype=np.float64)
+    return cluster_count_reward * np.log(n_clust / n_ref)
+
+
 def solve_optimal_min_cluster_size_from_aggregated(
     report: AggregatedGridReport,
     *,
@@ -229,25 +247,43 @@ def solve_optimal_min_cluster_size_from_aggregated(
     plateau_fraction: float = 0.92,
     derivative_rel_tol: float = 0.12,
     precision_weighted_smooth: bool | None = None,
+    cluster_count_reward: float = 0.0,
+    n_entities: int | None = None,
 ) -> SmoothedGridOptimumResult:
     """
     Choose ``min_cluster_size`` from aggregated noisy grid scores.
 
     Builds f(x) from ``objective`` (single metric or pooled DBCV+ARI), then optionally
-    ``method`` (mean / lower_bound / weighted). Smooths f with a centered moving average,
-    then prefers the **leftmost** x where the smoothed curve is near the top of its **range**
-    (f ≥ ``y_min + plateau_fraction · (y_max - y_min)`` on the smoothed curve, with
-    ``|df/dx|`` small). If none qualify, uses the smoothed argmax.
+    ``method`` (mean / lower_bound / weighted). When ``cluster_count_reward`` > 0, adds
+    ``cluster_count_reward * log(n_clusters / n_ref)`` using mean cluster counts per grid
+    point (``n_ref`` = ``n_entities`` when set, else the maximum mean cluster count on the
+    grid). Smooths f with a centered moving average, then prefers the **leftmost** x where
+    the smoothed curve is near the top of its **range** (f ≥ ``y_min + plateau_fraction ·
+    (y_max - y_min)`` on the smoothed curve, with ``|df/dx|`` small). If none qualify, uses
+    the smoothed argmax.
 
     ``precision_weighted_smooth`` defaults to True for ``lower_bound`` and ``weighted``,
     and False for ``mean``.
     """
     if len(report.points) == 0:
         raise ValueError("No aggregated grid points provided")
+    if cluster_count_reward < 0:
+        raise ValueError("cluster_count_reward must be >= 0")
+    if n_entities is not None and n_entities < 1:
+        raise ValueError("n_entities must be >= 1 when provided")
 
     x = np.array([p.min_cluster_size for p in report.points], dtype=np.float64)
+    n_clusters_all = np.array(
+        [p.n_clusters_mean for p in report.points], dtype=np.float64
+    )
     base_means, stds, counts = _objective_mean_std_count(report, objective)
     y = _apply_optimization_method(base_means, stds, method, uncertainty_penalty)
+    cluster_term_all = _cluster_count_reward_term(
+        n_clusters_all,
+        cluster_count_reward=cluster_count_reward,
+        n_entities=n_entities,
+    )
+    y = y + cluster_term_all
 
     finite = np.isfinite(x) & np.isfinite(y)
     if not np.any(finite):
@@ -258,12 +294,16 @@ def solve_optimal_min_cluster_size_from_aggregated(
     base_means = base_means[finite]
     stds = stds[finite]
     counts = counts[finite]
+    n_clusters = n_clusters_all[finite]
+    cluster_term = cluster_term_all[finite]
     order = np.argsort(x)
     x = x[order]
     y = y[order]
     base_means = base_means[order]
     stds = stds[order]
     counts = counts[order]
+    n_clusters = n_clusters[order]
+    cluster_term = cluster_term[order]
 
     if precision_weighted_smooth is None:
         precision_weighted_smooth = method in ("lower_bound", "weighted")
@@ -308,13 +348,16 @@ def solve_optimal_min_cluster_size_from_aggregated(
     chosen_x = int(x[chosen_idx])
     score_mean_at = float(base_means[chosen_idx])
     score_std_at = float(stds[chosen_idx])
+    n_clusters_at = float(n_clusters[chosen_idx])
 
     return SmoothedGridOptimumResult(
         chosen_min_cluster_size=chosen_x,
         score_mean_at_chosen=score_mean_at,
         score_std_at_chosen=score_std_at,
+        n_clusters_mean_at_chosen=n_clusters_at,
         x=tuple(float(v) for v in x),
         y_objective=tuple(float(v) for v in y),
+        y_cluster_term=tuple(float(v) for v in cluster_term),
         y_smooth=tuple(float(v) for v in y_s),
         dy_dx=tuple(float(v) for v in dydx),
         d2y_dx2=tuple(float(v) for v in d2ydx2),

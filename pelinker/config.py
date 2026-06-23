@@ -24,6 +24,44 @@ _GRID_OBJECTIVES: frozenset[str] = frozenset(
 )
 
 
+def _validate_batch_size(batch_size: int) -> None:
+    if batch_size < 1:
+        raise ValueError("batch_size must be >= 1")
+
+
+def _validate_clustering_sample_rows(clustering_sample_rows: int | None) -> None:
+    if clustering_sample_rows is not None and clustering_sample_rows < 1:
+        raise ValueError("clustering_sample_rows must be >= 1 when provided")
+
+
+def _validate_min_mentions_per_entity(min_mentions_per_entity: int) -> None:
+    if min_mentions_per_entity < 1:
+        raise ValueError("min_mentions_per_entity must be >= 1")
+
+
+def _validate_max_mentions_per_entity(max_mentions_per_entity: int | None) -> None:
+    if max_mentions_per_entity is not None and max_mentions_per_entity < 1:
+        raise ValueError("max_mentions_per_entity must be >= 1 when provided")
+
+
+def _validate_max_mentions_negative(max_mentions_negative: int | None) -> None:
+    if max_mentions_negative is not None and max_mentions_negative < 1:
+        raise ValueError("max_mentions_negative must be >= 1 when provided")
+
+
+def _validate_mention_frame_load_fields(
+    *,
+    batch_size: int,
+    min_mentions_per_entity: int,
+    max_mentions_per_entity: int | None,
+    max_mentions_negative: int | None,
+) -> None:
+    _validate_batch_size(batch_size)
+    _validate_min_mentions_per_entity(min_mentions_per_entity)
+    _validate_max_mentions_per_entity(max_mentions_per_entity)
+    _validate_max_mentions_negative(max_mentions_negative)
+
+
 def _validate_semver(version: str) -> None:
     """Require semver 2.0.0 core MAJOR.MINOR.PATCH; allow optional -prerelease+build."""
     s = version.strip()
@@ -167,7 +205,7 @@ class NegativeScreenerConfig:
     kind: ScreenerKind = "lda"
     """Estimator persisted on :class:`~pelinker.model.Linker` (``Linker.screener``)."""
     negative_label: str = NEGATIVE_LABEL
-    cv_n_splits: int = 20
+    cv_n_splits: int = 5
     cv_test_size: float = 0.2
     cv_random_state: int = 42
 
@@ -185,49 +223,113 @@ class ManifoldOovScreenerConfig:
     """3D (residual, Mahalanobis, spectral entropy) OOV score model; predict-time gate only."""
 
     enabled: bool = True
-    cv_n_splits: int = 20
+    cv_n_splits: int = 5
     cv_test_size: float = 0.2
     cv_random_state: int = 42
-    dt_max_depth_candidates: tuple[int | None, ...] = (None, 4, 8)
-    """``None`` means unrestricted depth (sklearn default)."""
-    dt_min_samples_leaf_candidates: tuple[int, ...] = (1, 2, 5)
+    oov_rbf_C: float = 1.0
+    oov_rbf_gamma: float | Literal["scale", "auto"] = "scale"
 
     def __post_init__(self) -> None:
         if self.cv_n_splits < 2:
             raise ValueError("cv_n_splits must be >= 2")
         if not 0.0 < self.cv_test_size < 1.0:
             raise ValueError("cv_test_size must be in (0, 1)")
-        if not self.dt_max_depth_candidates:
-            raise ValueError("dt_max_depth_candidates must be non-empty")
-        if not self.dt_min_samples_leaf_candidates:
-            raise ValueError("dt_min_samples_leaf_candidates must be non-empty")
-        for leaf in self.dt_min_samples_leaf_candidates:
-            if int(leaf) < 1:
-                raise ValueError("dt_min_samples_leaf_candidates values must be >= 1")
+        if self.oov_rbf_C <= 0.0:
+            raise ValueError("oov_rbf_C must be > 0")
+        if isinstance(self.oov_rbf_gamma, (int, float)):
+            if float(self.oov_rbf_gamma) <= 0.0:
+                raise ValueError(
+                    "oov_rbf_gamma must be > 0 when a numeric value is used"
+                )
+        elif self.oov_rbf_gamma not in ("scale", "auto"):
+            raise ValueError(
+                'oov_rbf_gamma must be "scale", "auto", or a positive float'
+            )
+
+
+@dataclass
+class MentionFrameLoadConfig:
+    """Shared mention-level parquet load and pre-subsample filters."""
+
+    batch_size: int = 1000
+    drop_rare_entities: bool = False
+    """When true, drop KB entities with fewer than :attr:`min_mentions_per_entity` rows."""
+    min_mentions_per_entity: int = 20
+    max_mentions_per_entity: int | None = None
+    """Cap mention rows per KB entity (seeded); ``None`` = no cap."""
+    max_mentions_negative: int | None = None
+    """Cap for :attr:`~NegativeScreenerConfig.negative_label`; ``None`` = exempt."""
+    mention_cap_seed: int = 13
+
+    def __post_init__(self) -> None:
+        _validate_mention_frame_load_fields(
+            batch_size=self.batch_size,
+            min_mentions_per_entity=self.min_mentions_per_entity,
+            max_mentions_per_entity=self.max_mentions_per_entity,
+            max_mentions_negative=self.max_mentions_negative,
+        )
 
 
 @dataclass
 class LinkerFitConfig:
     """Parquet read + mention filters + screener settings for :meth:`~pelinker.model.Linker.fit`."""
 
-    min_class_size: int = 20
-    """Minimum mention rows per KB ``entity`` before training (negative label exempt)."""
     batch_size: int = 1000
-    n_embedding_batches: int | None = None
-    negative_screener: NegativeScreenerConfig = field(
+    drop_rare_entities: bool = False
+    min_mentions_per_entity: int = 20
+    max_mentions_per_entity: int | None = None
+    max_mentions_negative: int | None = None
+    mention_cap_seed: int = 13
+    ambient_screener: NegativeScreenerConfig = field(
         default_factory=NegativeScreenerConfig
     )
-    manifold_oov_screener: ManifoldOovScreenerConfig = field(
+    projection_screener: ManifoldOovScreenerConfig = field(
         default_factory=ManifoldOovScreenerConfig
     )
+    screener_max_rows: int | None = 100_000
+    """Max rows for ambient + projection screener training when using the full frame (stratified). None = no cap."""
+    screener_seed: int = 13
+    """Random seed for the stratified screener training draw when using the full frame."""
+    clustering_sample_rows: int | None = None
+    """Max mention rows per clustering bootstrap draw (stratified). None = use all loaded rows."""
+    base_seed: int = 13
+    """Seed for stratified clustering draws; draw seed is ``base_seed + clustering_sample_index``."""
+    clustering_sample_index: int = 0
+    """Bootstrap index for the clustering subsample (same contract as model selection ``sample_idx``)."""
+    diagnostics_sample_size: int = 20_000
+    """Max rows of :class:`~pelinker.reporting.LinkerFitDiagnostics` stored on the fit report."""
+    diagnostics_random_state: int = 0
+    """Stratified subsample seed for training diagnostics."""
+
+    def to_clustering_sample_config(self) -> ClusteringOptimizationConfig:
+        """Build a :class:`ClusteringOptimizationConfig` for load + subsample helpers."""
+        return ClusteringOptimizationConfig(
+            base_seed=self.base_seed,
+            clustering_sample_rows=self.clustering_sample_rows,
+            batch_size=self.batch_size,
+            drop_rare_entities=self.drop_rare_entities,
+            min_mentions_per_entity=self.min_mentions_per_entity,
+            max_mentions_per_entity=self.max_mentions_per_entity,
+            max_mentions_negative=self.max_mentions_negative,
+            mention_cap_seed=self.mention_cap_seed,
+            ambient_screener=self.ambient_screener,
+            projection_screener=self.projection_screener,
+        )
 
     def __post_init__(self) -> None:
-        if self.min_class_size < 1:
-            raise ValueError("min_class_size must be >= 1")
-        if self.batch_size < 1:
-            raise ValueError("batch_size must be >= 1")
-        if self.n_embedding_batches is not None and self.n_embedding_batches < 1:
-            raise ValueError("n_embedding_batches must be >= 1 when provided")
+        _validate_mention_frame_load_fields(
+            batch_size=self.batch_size,
+            min_mentions_per_entity=self.min_mentions_per_entity,
+            max_mentions_per_entity=self.max_mentions_per_entity,
+            max_mentions_negative=self.max_mentions_negative,
+        )
+        if self.screener_max_rows is not None and self.screener_max_rows < 1:
+            raise ValueError("screener_max_rows must be >= 1 when provided")
+        _validate_clustering_sample_rows(self.clustering_sample_rows)
+        if self.clustering_sample_index < 0:
+            raise ValueError("clustering_sample_index must be >= 0")
+        if self.diagnostics_sample_size < 1:
+            raise ValueError("diagnostics_sample_size must be >= 1")
 
 
 @dataclass
@@ -240,18 +342,22 @@ class ClusteringOptimizationConfig:
     min_scale: int | None = None
     """Lower bound (inclusive) for the ``min_cluster_size`` grid.
 
-    When ``None``, defaults to ``max(1, min_class_size // 2)`` (legacy behavior: half of
-    :attr:`min_class_size`). Set explicitly to decouple grid start from mention-level
-    filtering (:attr:`min_class_size`).
+    When ``None``, defaults to ``max(1, min_class_size // 2)``.
     """
     clustering_grid_step: int = 5
     """Step between consecutive ``min_cluster_size`` values on the grid (``numpy.arange`` step)."""
     rns: RandomState = field(default_factory=lambda: RandomState(seed=13))
-    frac: float = 1.0
-    n_embedding_batches: int | None = None
-    """Cap parquet reads at this many batches (`batch_size` rows each); None = read all."""
+    base_seed: int = 13
+    """Seed for stratified selection draws; per-bootstrap seed is ``base_seed + sample_index``."""
+    clustering_sample_rows: int | None = None
+    """Max mention rows per clustering bootstrap draw (stratified). None = use all loaded rows."""
     batch_size: int = 1000
     """Rows per batch when **reading mention-level embedding parquet** (not encoder batch size)."""
+    drop_rare_entities: bool = False
+    min_mentions_per_entity: int = 20
+    max_mentions_per_entity: int | None = None
+    max_mentions_negative: int | None = None
+    mention_cap_seed: int = 13
     optimization_method: str = "mean"
     """How to build the objective f(min_cluster_size) before smoothing (mean / lower_bound / weighted)."""
     grid_objective: GridObjectiveSpec = "dbcv_ari_mean_minmax"
@@ -262,10 +368,18 @@ class ClusteringOptimizationConfig:
     """Plateau threshold on the **smoothed** curve: ``y_min + this * (y_max - y_min)`` (finite values only)."""
     grid_derivative_rel_tol: float = 0.12
     """|df/dx| below this times max|df/dx| counts as “derivative near zero” on the smoothed curve."""
-    negative_screener: NegativeScreenerConfig = field(
+    grid_cluster_count_reward: float = 0.0
+    """Weight on ``log(n_clusters / n_ref)`` added to the grid objective (0 = disabled)."""
+    grid_n_entities: int | None = None
+    """Reference entity count for the cluster-count term; when ``None``, uses max mean cluster count on the grid."""
+    ambient_screener: NegativeScreenerConfig = field(
         default_factory=NegativeScreenerConfig
     )
     """Negative-class screening before PCA→UMAP (see :class:`NegativeScreenerConfig`)."""
+    projection_screener: ManifoldOovScreenerConfig = field(
+        default_factory=ManifoldOovScreenerConfig
+    )
+    """Validation config for manifold OOV model selection (analysis reporting only)."""
 
     def resolved_min_scale(self) -> int:
         """Inclusive start of the ``min_cluster_size`` grid (HDBSCAN hyperparameter)."""
@@ -285,12 +399,13 @@ class ClusteringOptimizationConfig:
             )
         if self.clustering_grid_step < 1:
             raise ValueError("clustering_grid_step must be >= 1")
-        if self.batch_size < 1:
-            raise ValueError("batch_size must be >= 1")
-        if not 0 < self.frac <= 1:
-            raise ValueError("frac must be in range (0, 1]")
-        if self.n_embedding_batches is not None and self.n_embedding_batches < 1:
-            raise ValueError("n_embedding_batches must be >= 1 when provided")
+        _validate_mention_frame_load_fields(
+            batch_size=self.batch_size,
+            min_mentions_per_entity=self.min_mentions_per_entity,
+            max_mentions_per_entity=self.max_mentions_per_entity,
+            max_mentions_negative=self.max_mentions_negative,
+        )
+        _validate_clustering_sample_rows(self.clustering_sample_rows)
         if not self.optimization_method:
             raise ValueError("optimization_method must be a non-empty string")
         if self.grid_objective not in _GRID_OBJECTIVES:
@@ -303,6 +418,10 @@ class ClusteringOptimizationConfig:
             raise ValueError("grid_plateau_fraction must be in (0, 1]")
         if self.grid_derivative_rel_tol <= 0:
             raise ValueError("grid_derivative_rel_tol must be > 0")
+        if self.grid_cluster_count_reward < 0:
+            raise ValueError("grid_cluster_count_reward must be >= 0")
+        if self.grid_n_entities is not None and self.grid_n_entities < 1:
+            raise ValueError("grid_n_entities must be >= 1 when provided")
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -322,17 +441,33 @@ class TransformConfig:
     umap_metric: str = "cosine"
     """Distance metric for UMAP (default: 'cosine')."""
 
-    # Visualization UMAP configuration
-    umap_viz_components: int = 3
-    """Number of UMAP dimensions for visualization (default: 3)."""
-    umap_viz_metric: str = "cosine"
-    """Distance metric for visualization UMAP (default: 'cosine')."""
+    # Cluster-space visualization (reduces umap_clustering coords for plotting)
+    cluster_viz_components: int = 3
+    """Number of dimensions for cluster-space visualization (default: 3)."""
+    cluster_viz_method: Literal["pca", "umap"] = "pca"
+    """Reducer applied to clustering UMAP coords: ``pca`` (linear) or ``umap``."""
+    cluster_viz_umap_metric: str = "euclidean"
+    """Distance metric for cluster-space UMAP viz (only when ``cluster_viz_method='umap'``)."""
+
+    pca_seed: int = 13
+    """Random seed for PCA and cluster-viz PCA."""
+    umap_seed: int | None = None
+    """UMAP random seed; ``None`` enables parallel UMAP (non-reproducible). Cluster-viz UMAP uses ``umap_seed + 1`` when set."""
 
     def __post_init__(self):
-        """Validate configuration parameters."""
         if self.pca_components < 1:
             raise ValueError("pca_components must be >= 1")
         if self.umap_components < 2:
             raise ValueError("umap_components must be >= 2")
-        if self.umap_viz_components < 2:
-            raise ValueError("umap_viz_components must be >= 2")
+        if self.cluster_viz_components < 2:
+            raise ValueError("cluster_viz_components must be >= 2")
+        if self.cluster_viz_components > self.umap_components:
+            raise ValueError(
+                "cluster_viz_components must be <= umap_components "
+                f"(got {self.cluster_viz_components} > {self.umap_components})"
+            )
+        if self.cluster_viz_method not in ("pca", "umap"):
+            raise ValueError(
+                "cluster_viz_method must be 'pca' or 'umap', "
+                f"got {self.cluster_viz_method!r}"
+            )

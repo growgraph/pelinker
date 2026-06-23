@@ -87,7 +87,7 @@ def test_predict_include_prediction_kb_validation(monkeypatch) -> None:
         "pca_mahalanobis": 0.0,
         "pca_spectral_entropy": 0.0,
         "anomaly_score_max_z": 0.0,
-        "manifold_oov_score": 0.0,
+        "projection_score": 0.0,
     }
     fake_index = {WordGrouping.W1: {"alpha tok": "Alpha Label"}}
 
@@ -137,7 +137,7 @@ def test_predict_merges_kb_validation_into_debug_mentions(monkeypatch) -> None:
         "pca_mahalanobis": 0.0,
         "pca_spectral_entropy": 0.0,
         "anomaly_score_max_z": 0.0,
-        "manifold_oov_score": 0.0,
+        "projection_score": 0.0,
         "mention_source_index": 0,
     }
     debug_row: dict[str, object] = {
@@ -242,7 +242,7 @@ def test_predict_default_entities_omit_kb_training_label(monkeypatch) -> None:
         "pca_mahalanobis": 0.0,
         "pca_spectral_entropy": 0.0,
         "anomaly_score_max_z": 0.0,
-        "manifold_oov_score": 0.0,
+        "projection_score": 0.0,
     }
     monkeypatch.setattr(
         linker,
@@ -278,7 +278,7 @@ def test_linker_predict_result_to_dict_public_entity_fields() -> None:
         "pca_mahalanobis": 8.85,
         "pca_spectral_entropy": 0.5,
         "anomaly_score_max_z": 1.83,
-        "manifold_oov_score": -0.1,
+        "projection_score": -0.1,
         "kb_training_entity": "facilitates",
     }
     r = LinkerPredictResult(entities=[dict(raw)])
@@ -289,5 +289,5 @@ def test_linker_predict_result_to_dict_public_entity_fields() -> None:
     assert "word_grouping" not in e
     assert "pca_residual" not in e
     assert "pca_spectral_entropy" not in e
-    assert "manifold_oov_score" not in e
+    assert "projection_score" not in e
     assert "kb_training_entity" not in e

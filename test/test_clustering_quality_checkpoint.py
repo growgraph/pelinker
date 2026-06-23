@@ -1,4 +1,4 @@
-"""Tests for clustering quality checkpoint and reporting round-trip helpers."""
+"""Tests for model selection checkpoint and reporting round-trip helpers."""
 
 from __future__ import annotations
 
@@ -7,9 +7,9 @@ import pathlib
 
 import pytest
 
-from pelinker.clustering_quality_checkpoint import (
+from pelinker.model_selection_checkpoint import (
     CHECKPOINT_VERSION,
-    ClusteringQualityCheckpoint,
+    ModelSelectionCheckpoint,
     combination_key_from_members,
     compute_run_fingerprint,
     fingerprint_config_from_cli,
@@ -103,10 +103,12 @@ def test_fingerprint_depends_on_input_dir_not_fusion_cli(
     common = dict(
         umap_dim=8,
         pca_components=100,
+        cluster_viz_method="pca",
         min_class_size=20,
         seed=1,
-        frac=0.1,
-        n_embedding_batches=None,
+        pca_seed=13,
+        umap_seed=None,
+        clustering_sample_rows=100_000,
         batch_size=1000,
         prefix="p",
         n_sample=1,
@@ -140,7 +142,7 @@ def test_summary_flat_dict_round_trip() -> None:
 
 
 def test_checkpoint_to_json_dict_sorted_keys(tmp_path: pathlib.Path) -> None:
-    ckpt = ClusteringQualityCheckpoint(
+    ckpt = ModelSelectionCheckpoint(
         version=CHECKPOINT_VERSION,
         run_fingerprint="ab",
         summaries_by_key={"z": {"model": "z"}, "a": {"model": "a"}},

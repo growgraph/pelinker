@@ -25,10 +25,9 @@ from pelinker.io import read_batches
 logger = logging.getLogger(__name__)
 
 
-def _parquet_capped_batch_count(
+def _parquet_batch_count(
     path: pathlib.Path,
     batch_size: int,
-    n_embedding_batches: int | None,
 ) -> int | None:
     """Return expected batch count for progress, or None if metadata is unavailable."""
     try:
@@ -38,10 +37,7 @@ def _parquet_capped_batch_count(
         return None
     if rows <= 0:
         return None
-    full = (rows + batch_size - 1) // batch_size
-    if n_embedding_batches is not None:
-        return min(full, n_embedding_batches)
-    return full
+    return (rows + batch_size - 1) // batch_size
 
 
 def _should_emit_read_progress(batch_index: int, total_batches: int | None) -> bool:
@@ -70,21 +66,18 @@ def _maybe_emit_read_line(
 def _for_each_embedding_parquet_batch(
     path: pathlib.Path,
     batch_size: int,
-    n_embedding_batches: int | None,
     *,
     read_status: Callable[[str], None] | None,
     show_read_progress: bool,
     on_batch: Callable[[int, pd.DataFrame], None],
 ) -> None:
     """Iterate parquet row batches; optional outer status or standalone Rich progress."""
-    total_batches = _parquet_capped_batch_count(path, batch_size, n_embedding_batches)
+    total_batches = _parquet_batch_count(path, batch_size)
 
     def _run(status_fn: Callable[[str], None] | None) -> None:
         for i, batch in enumerate(read_batches(path.as_posix(), batch_size=batch_size)):
             on_batch(i, batch)
             _maybe_emit_read_line(path, i + 1, total_batches, status_fn)
-            if n_embedding_batches is not None and i >= n_embedding_batches - 1:
-                break
 
     if read_status is not None:
         _run(read_status)
@@ -136,6 +129,15 @@ REQUIRED_MENTION_COLUMNS: frozenset[str] = frozenset(
     {"pmid", "entity", "mention", "embed"}
 )
 
+MENTION_PROVENANCE_COLUMNS: tuple[str, ...] = (
+    "a",
+    "b",
+    "a_abs",
+    "b_abs",
+    "itext",
+    "ichunk",
+)
+
 
 def _normalize_entity_column(df: pd.DataFrame) -> pd.DataFrame:
     if "entity" not in df.columns:
@@ -148,11 +150,25 @@ def _to_embed_array(v: list | np.ndarray) -> np.ndarray:
     return arr.reshape(-1) if arr.ndim > 1 and arr.shape[0] == 1 else arr.squeeze()
 
 
+def provenance_columns_in(df: pd.DataFrame) -> list[str]:
+    """Return provenance column names present in ``df``."""
+    return [c for c in MENTION_PROVENANCE_COLUMNS if c in df.columns]
+
+
+def _first_non_null(series: pd.Series) -> object:
+    for v in series:
+        if pd.notna(v):
+            return v
+    return pd.NA
+
+
 def dedupe_mean_embed_by_keys(
     df: pd.DataFrame, *, keys: Sequence[str] = JOIN_KEYS
 ) -> pd.DataFrame:
     """
     Collapse duplicate rows sharing the same join keys by averaging embed vectors.
+
+    Optional :data:`MENTION_PROVENANCE_COLUMNS` are kept via first non-null per group.
     """
     missing = [c for c in keys if c not in df.columns]
     if missing:
@@ -162,11 +178,11 @@ def dedupe_mean_embed_by_keys(
         vecs = np.stack([_to_embed_array(x) for x in embed_series.values])
         return np.mean(vecs, axis=0)
 
-    grouped = (
-        df.groupby(list(keys), sort=False)
-        .agg(embed=("embed", _mean_group))
-        .reset_index()
-    )
+    agg: dict[str, tuple[str, object]] = {"embed": ("embed", _mean_group)}
+    for col in provenance_columns_in(df):
+        agg[col] = (col, _first_non_null)
+
+    grouped = df.groupby(list(keys), sort=False).agg(**agg).reset_index()
     return grouped
 
 
@@ -186,7 +202,10 @@ def mention_level_concat_frames(dfs: Sequence[pd.DataFrame]) -> pd.DataFrame:
         if not REQUIRED_MENTION_COLUMNS.issubset(cols):
             missing = REQUIRED_MENTION_COLUMNS - cols
             raise ValueError(f"Frame {i} missing columns: {sorted(missing)}")
-        sub = df[list(JOIN_KEYS) + ["embed"]].copy()
+        keep = list(JOIN_KEYS) + ["embed"]
+        if i == 0:
+            keep.extend(provenance_columns_in(df))
+        sub = df[keep].copy()
         sub = dedupe_mean_embed_by_keys(sub)
         sub = sub.rename(columns={"embed": f"_e{i}"})
         prepared.append(sub)
@@ -223,15 +242,13 @@ def read_embedding_parquet_batches_concat(
     path: pathlib.Path,
     *,
     batch_size: int,
-    n_embedding_batches: int | None = None,
     read_status: Callable[[str], None] | None = None,
     show_read_progress: bool = False,
 ) -> pd.DataFrame | None:
     """
     Stream mention-level embedding parquet via ``read_batches`` and concatenate batches.
 
-    Same batching contract as ``ClusteringOptimizationConfig`` (``batch_size`` rows per
-    batch; optional cap on batch count).
+    ``batch_size`` controls rows per read batch.
 
     If ``read_status`` is set, it receives short status lines (for combining with an
     outer Rich progress bar). If it is omitted and ``show_read_progress`` is True, a
@@ -248,7 +265,6 @@ def read_embedding_parquet_batches_concat(
         _for_each_embedding_parquet_batch(
             path,
             batch_size,
-            n_embedding_batches,
             read_status=read_status,
             show_read_progress=show_read_progress,
             on_batch=on_batch,
@@ -264,14 +280,13 @@ def concat_mention_level_embedding_sources(
     paths: Sequence[pathlib.Path],
     *,
     batch_size: int,
-    n_embedding_batches: int | None = None,
     read_status: Callable[[str], None] | None = None,
     show_read_progress: bool = False,
 ) -> pd.DataFrame | None:
     """
-    Load one or more mention-level parquet sources like ``estimate_model_clustering``:
-    read each path in batches, optionally inner-join across sources, return one frame
-    (no ``frac`` sampling).
+    Load one or more mention-level parquet sources like
+    :func:`~pelinker.selection.load_selection_frame`:
+    read each path in batches, optionally inner-join across sources, return one frame.
     """
     if len(paths) == 0:
         return None
@@ -287,7 +302,6 @@ def concat_mention_level_embedding_sources(
         part = read_embedding_parquet_batches_concat(
             p,
             batch_size=batch_size,
-            n_embedding_batches=n_embedding_batches,
             read_status=path_read if read_status is not None else None,
             show_read_progress=show_read_progress and read_status is None,
         )
@@ -347,7 +361,6 @@ def property_mean_vectors_from_parquet_batches(
     kb_labels: set[str] | None,
     *,
     batch_size: int,
-    n_embedding_batches: int | None = None,
     read_status: Callable[[str], None] | None = None,
     show_read_progress: bool = False,
 ) -> dict[str, np.ndarray]:
@@ -361,7 +374,6 @@ def property_mean_vectors_from_parquet_batches(
     _for_each_embedding_parquet_batch(
         path,
         batch_size,
-        n_embedding_batches,
         read_status=read_status,
         show_read_progress=show_read_progress,
         on_batch=on_batch,
@@ -402,13 +414,11 @@ def property_mean_vectors_per_parquet(
     kb_labels: set[str] | None,
     *,
     batch_size: int = 1000,
-    n_embedding_batches: int | None = None,
 ) -> dict[str, np.ndarray]:
     return property_mean_vectors_from_parquet_batches(
         path,
         kb_labels,
         batch_size=batch_size,
-        n_embedding_batches=n_embedding_batches,
     )
 
 
@@ -417,7 +427,6 @@ def fused_property_vectors_from_paths(
     kb_labels: set[str] | None,
     *,
     batch_size: int = 1000,
-    n_embedding_batches: int | None = None,
     read_status: Callable[[str], None] | None = None,
     show_read_progress: bool = False,
 ) -> dict[str, np.ndarray]:
@@ -443,7 +452,6 @@ def fused_property_vectors_from_paths(
                 p,
                 kb_labels,
                 batch_size=batch_size,
-                n_embedding_batches=n_embedding_batches,
                 read_status=path_read if read_status is not None else None,
                 show_read_progress=show_read_progress and read_status is None,
             )

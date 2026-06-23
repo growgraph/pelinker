@@ -1,47 +1,50 @@
 from __future__ import annotations
 
 import math
-import pathlib
-from collections.abc import Callable, Iterable, Mapping, Sequence
-from typing import Literal
+from collections.abc import Iterable, Mapping, Sequence
 
 import numpy as np
 import pandas as pd
 import torch
-import hdbscan
 from pelinker.clustering_grid import (
+    SmoothedGridOptimumResult,
     aggregate_grid_metrics,
-    evaluate_cluster_size_grid,
     solve_optimal_min_cluster_size_from_aggregated,
 )
-from pelinker.plotting import (
-    GRID_COL_CHOSEN_MIN_CLUSTER_SIZE,
-    GRID_COL_SAMPLE_ARI,
-    GRID_COL_SAMPLE_BEST_DBCV,
-)
-from pelinker.embedding_fusion import concat_mention_level_embedding_sources
 from pelinker.reporting import (
+    AllScreenerCvResult,
+    BinaryClassifierMetrics,
     ClusteringFitMetrics,
-    ClusteringHyperparameters,
-    ClusteringReport,
-    NegativeScreenerCvSummary,
+    MetricMeanStd,
     NegativeScreenerInSampleMetrics,
-    entity_negative_label_mask_01,
-    negative_screener_cv_summary_from_eval_dict,
+    PerDatapointScores,
 )
-from sklearn.metrics import adjusted_rand_score, f1_score, precision_score, recall_score
-from numpy.random import RandomState
+from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
+from sklearn.metrics import (
+    adjusted_rand_score,
+    f1_score,
+    precision_score,
+    recall_score,
+    roc_auc_score,
+)
+from sklearn.model_selection import StratifiedKFold
 
 from pelinker.config import (
     ClusteringOptimizationConfig,
+    ManifoldOovScreenerConfig,
     NegativeScreenerConfig,
-    TransformConfig,
 )
-from pelinker.negative_screener import (
+from pelinker.screener.projection_screener import (
+    ManifoldOovKind,
+    make_manifold_linear_svc,
+    make_manifold_rbf_svc,
+    oov_estimator_scores,
+    pick_projection_winner_by_mean_f1,
+)
+from pelinker.screener.ambient_screener import (
     NegativeClassScreener,
-    evaluate_negative_screener_models,
+    _linear_svc_for_embeddings,
 )
-from pelinker.transform import compute_transform_artifacts
 
 
 def get_word_frequencies_from_library(
@@ -182,6 +185,30 @@ def compute_adjusted_rand_index(y_true: np.ndarray, y_pred: np.ndarray) -> float
     return float(ari)
 
 
+def pooled_grid_solve_from_metrics_dfs(
+    metrics_dfs: Sequence[pd.DataFrame],
+    optimization_config: ClusteringOptimizationConfig | None = None,
+) -> SmoothedGridOptimumResult:
+    """
+    After all bootstrap samples have run a min_cluster_size grid, aggregate their metrics
+    once and return full smoothed-grid diagnostics (including ``y_objective`` curve).
+    """
+    if not metrics_dfs:
+        raise ValueError("metrics_dfs must be non-empty")
+    config = optimization_config or ClusteringOptimizationConfig()
+    aggregated = aggregate_grid_metrics(list(metrics_dfs))
+    return solve_optimal_min_cluster_size_from_aggregated(
+        aggregated,
+        objective=config.grid_objective,
+        method=config.optimization_method,
+        smooth_window=config.grid_smooth_window,
+        plateau_fraction=config.grid_plateau_fraction,
+        derivative_rel_tol=config.grid_derivative_rel_tol,
+        cluster_count_reward=config.grid_cluster_count_reward,
+        n_entities=config.grid_n_entities,
+    )
+
+
 def pooled_min_cluster_size_from_metrics_dfs(
     metrics_dfs: Sequence[pd.DataFrame],
     optimization_config: ClusteringOptimizationConfig | None = None,
@@ -192,52 +219,8 @@ def pooled_min_cluster_size_from_metrics_dfs(
     The objective is set by ``ClusteringOptimizationConfig.grid_objective`` (default: pooled
     min–max normalized DBCV and ARI).
     """
-    if not metrics_dfs:
-        raise ValueError("metrics_dfs must be non-empty")
-    config = optimization_config or ClusteringOptimizationConfig()
-    aggregated = aggregate_grid_metrics(list(metrics_dfs))
-    solved = solve_optimal_min_cluster_size_from_aggregated(
-        aggregated,
-        objective=config.grid_objective,
-        method=config.optimization_method,
-        smooth_window=config.grid_smooth_window,
-        plateau_fraction=config.grid_plateau_fraction,
-        derivative_rel_tol=config.grid_derivative_rel_tol,
-    )
+    solved = pooled_grid_solve_from_metrics_dfs(metrics_dfs, optimization_config)
     return solved.chosen_min_cluster_size, solved.score_mean_at_chosen
-
-
-def metrics_df_with_grid_sample_columns(
-    report: ClusteringReport,
-    *,
-    model: str,
-    layer: str,
-    sample_idx: int,
-    chosen_min_cluster_size: int | None = None,
-) -> pd.DataFrame:
-    """
-    Per-sample grid rows for ``results_grid_per_sample.csv``.
-
-    ``chosen_min_cluster_size`` defaults to the value used to fit this sample's clusters
-    (per-sample grid argmax). Pass the pooled choice from
-    :func:`pooled_min_cluster_size_from_metrics_dfs` so every row shares one consensus marker.
-    """
-    ari = report.ari
-    h = (
-        chosen_min_cluster_size
-        if chosen_min_cluster_size is not None
-        else report.hyperparameters.min_cluster_size
-    )
-    return report.metrics_df.assign(
-        model=model,
-        layer=layer,
-        sample_idx=sample_idx,
-        **{
-            GRID_COL_CHOSEN_MIN_CLUSTER_SIZE: int(h),
-            GRID_COL_SAMPLE_BEST_DBCV: float(report.best_score),
-            GRID_COL_SAMPLE_ARI: float("nan") if ari is None else float(ari),
-        },
-    )
 
 
 def split_by_negative_label(
@@ -253,29 +236,493 @@ def split_by_negative_label(
     return neg_mask, manifold_df
 
 
-def evaluate_negative_screener_cv_summary(
-    dfr: pd.DataFrame,
-    cfg: NegativeScreenerConfig,
-) -> NegativeScreenerCvSummary | None:
-    """Stratified CV for LDA vs linear SVM on negative vs KB (same task as grid analysis)."""
-    neg_mask = dfr["entity"].astype(str).values == cfg.negative_label
-    if not neg_mask.any():
+def _pick_oov_winner_by_cv_folds(
+    fold_pairs: list[tuple[np.ndarray, np.ndarray]],
+    Xm: np.ndarray,
+    y_i: np.ndarray,
+    oov_cfg: ManifoldOovScreenerConfig,
+) -> tuple[bool, ManifoldOovKind | str]:
+    svm_oov_fold: list[float] = []
+    lda_oov_fold: list[float] = []
+    rbf_oov_fold: list[float] = []
+
+    for train_idx, test_idx in fold_pairs:
+        Xtr_m, Xtst_m = Xm[train_idx], Xm[test_idx]
+        ytr_m, ytst_m = y_i[train_idx], y_i[test_idx]
+        if len(np.unique(ytst_m)) < 2:
+            continue
+        xm64 = Xtr_m.astype(np.float64, copy=False)
+        xt64 = Xtst_m.astype(np.float64, copy=False)
+
+        lin_o = make_manifold_linear_svc(xm64, oov_cfg)
+        lin_o.fit(xm64, ytr_m)
+        svm_oov_fold.append(
+            float(
+                f1_score(
+                    ytst_m,
+                    lin_o.predict(xt64),
+                    pos_label=1,
+                    zero_division=0,
+                )
+            )
+        )
+
+        rbf_o = make_manifold_rbf_svc(oov_cfg)
+        rbf_o.fit(xm64, ytr_m)
+        rbf_oov_fold.append(
+            float(
+                f1_score(
+                    ytst_m,
+                    rbf_o.predict(xt64),
+                    pos_label=1,
+                    zero_division=0,
+                )
+            )
+        )
+
+        lda_est_o = LinearDiscriminantAnalysis(solver="svd")
+        lda_est_o.fit(xm64, ytr_m)
+        lda_oov_fold.append(
+            float(
+                f1_score(
+                    ytst_m,
+                    lda_est_o.predict(xt64),
+                    pos_label=1,
+                    zero_division=0,
+                )
+            )
+        )
+
+    if not lda_oov_fold:
+        return False, "lda"
+    svm_m_o = float(np.mean(svm_oov_fold))
+    lda_m_o = float(np.mean(lda_oov_fold))
+    rbf_m_o = float(np.mean(rbf_oov_fold))
+    return True, pick_projection_winner_by_mean_f1(lda_m_o, svm_m_o, rbf_m_o)
+
+
+def _collect_embedding_cv_folds(
+    fold_pairs: list[tuple[np.ndarray, np.ndarray]],
+    Xe: np.ndarray,
+    y_i: np.ndarray,
+    rs_emb: int,
+) -> (
+    tuple[
+        list[tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]],
+        str,
+    ]
+    | None
+):
+    embed_fold_rows: list[
+        tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]
+    ] = []
+    pool_y_pooled: list[int] = []
+    pool_lda_pooled: list[float] = []
+    pool_svm_pooled: list[float] = []
+    for train_idx, test_idx in fold_pairs:
+        Xtr_e, Xtst_e = Xe[train_idx], Xe[test_idx]
+        ytr_e, ytst_e = y_i[train_idx], y_i[test_idx]
+        if len(np.unique(ytst_e)) < 2:
+            continue
+
+        lda_emb = LinearDiscriminantAnalysis(solver="svd")
+        lda_emb.fit(Xtr_e, ytr_e)
+        sc_lda = np.asarray(lda_emb.transform(Xtst_e), dtype=np.float64).ravel()
+        svm_emb = _linear_svc_for_embeddings(Xtr_e, random_state=rs_emb)
+        svm_emb.fit(Xtr_e, ytr_e)
+        sc_svm = np.asarray(
+            svm_emb.decision_function(Xtst_e),
+            dtype=np.float64,
+        ).ravel()
+        embed_fold_rows.append((train_idx, test_idx, ytst_e, sc_lda, sc_svm))
+        for j in range(int(ytst_e.shape[0])):
+            pool_y_pooled.append(int(ytst_e[j]))
+            pool_lda_pooled.append(float(sc_lda[j]))
+            pool_svm_pooled.append(float(sc_svm[j]))
+
+    if not pool_y_pooled:
         return None
-    X_all = np.stack(dfr["embed"].values).astype(np.float32, copy=False)
-    y_bin = neg_mask.astype(np.int64)
-    raw_cv = evaluate_negative_screener_models(
-        X_all,
-        y_bin,
-        n_splits=cfg.cv_n_splits,
-        test_size=cfg.cv_test_size,
-        random_state=cfg.cv_random_state,
+
+    y_p = np.asarray(pool_y_pooled, dtype=np.int64)
+    s_ld_p = np.asarray(pool_lda_pooled, dtype=np.float64)
+    s_sv_p = np.asarray(pool_svm_pooled, dtype=np.float64)
+    auc_lda_g = float(roc_auc_score(y_p, s_ld_p))
+    auc_svm_g = float(roc_auc_score(y_p, s_sv_p))
+    screener_best_kind = "lda" if auc_lda_g >= auc_svm_g else "svm"
+    return embed_fold_rows, screener_best_kind
+
+
+def _oov_scores_for_fold(
+    winner_kind_oov: ManifoldOovKind | str,
+    Xm: np.ndarray,
+    train_idx: np.ndarray,
+    test_idx: np.ndarray,
+    y_i: np.ndarray,
+    oov_cfg: ManifoldOovScreenerConfig,
+) -> np.ndarray:
+    Xtr_m, Xtst_m = Xm[train_idx], Xm[test_idx]
+    ytr_e = y_i[train_idx]
+    xm_tr = Xtr_m.astype(np.float64, copy=False)
+    xm_ts = Xtst_m.astype(np.float64, copy=False)
+    if winner_kind_oov == "svm":
+        svm_w = make_manifold_linear_svc(xm_tr, oov_cfg)
+        svm_w.fit(xm_tr, ytr_e)
+        return oov_estimator_scores(svm_w, xm_ts)
+    if winner_kind_oov == "rbf":
+        rbf_w = make_manifold_rbf_svc(oov_cfg)
+        rbf_w.fit(xm_tr, ytr_e)
+        return oov_estimator_scores(rbf_w, xm_ts)
+    lda_w = LinearDiscriminantAnalysis(solver="svd")
+    lda_w.fit(xm_tr, ytr_e)
+    return oov_estimator_scores(lda_w, xm_ts)
+
+
+def _score_folds_with_oov_and_pool(
+    embed_fold_rows: list[
+        tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]
+    ],
+    *,
+    screener_best_kind: str,
+    oov_disabled: bool,
+    winner_kind_oov: ManifoldOovKind | str,
+    Xm: np.ndarray | None,
+    y_i: np.ndarray,
+    entity: np.ndarray,
+    orig_idx: np.ndarray,
+    oov_cfg: ManifoldOovScreenerConfig,
+) -> (
+    tuple[
+        list[int],
+        list[str],
+        list[int],
+        list[float],
+        list[float],
+        list[float],
+        list[float],
+        list[float],
+        list[list[float]],
+    ]
+    | None
+):
+    pool_orig: list[int] = []
+    pool_ent: list[str] = []
+    pool_y: list[int] = []
+    pool_lda_s: list[float] = []
+    pool_svm_s: list[float] = []
+    pool_sb: list[float] = []
+    pool_oov: list[float] = []
+    pool_comb: list[float] = []
+
+    lda_p, lda_r, lda_f1, lda_auc_l = [], [], [], []
+    svm_p, svm_r, svm_f1, svm_auc_l = [], [], [], []
+    sb_p, sb_r, sb_f1, sb_a = [], [], [], []
+    oov_p, oov_r, oov_f1, oov_a = [], [], [], []
+    cb_p, cb_r, cb_f1, cb_a = [], [], [], []
+
+    for train_idx, test_idx, ytst_e, sc_lda, sc_svm in embed_fold_rows:
+        sb_scores = sc_lda if screener_best_kind == "lda" else sc_svm
+
+        if not oov_disabled and Xm is not None:
+            o_scores = _oov_scores_for_fold(
+                winner_kind_oov, Xm, train_idx, test_idx, y_i, oov_cfg
+            )
+            mn_s = _minmax01_fold(sb_scores)
+            mn_o = _minmax01_fold(o_scores)
+            comb_scores = 0.5 * mn_s + 0.5 * mn_o
+        else:
+            o_scores = np.zeros_like(sb_scores, dtype=np.float64)
+            comb_scores = sb_scores.astype(np.float64, copy=False)
+
+        oi_fold = np.asarray(orig_idx[test_idx], dtype=np.int64).ravel()
+        ent_fold = entity[test_idx]
+        yt = ytst_e.astype(np.int64, copy=False)
+
+        for j in range(int(yt.shape[0])):
+            pool_orig.append(int(oi_fold[j]))
+            pool_ent.append(str(ent_fold[j]))
+            pool_y.append(int(yt[j]))
+            pool_lda_s.append(float(sc_lda[j]))
+            pool_svm_s.append(float(sc_svm[j]))
+            pool_sb.append(float(sb_scores[j]))
+            pool_oov.append(float(o_scores[j]))
+            pool_comb.append(float(comb_scores[j]))
+
+        p0, r0, f00, a0 = _fold_prfa(ytst_e, sc_lda)
+        lda_p.append(p0)
+        lda_r.append(r0)
+        lda_f1.append(f00)
+        lda_auc_l.append(a0)
+        p1, r1, f01, a1 = _fold_prfa(ytst_e, sc_svm)
+        svm_p.append(p1)
+        svm_r.append(r1)
+        svm_f1.append(f01)
+        svm_auc_l.append(a1)
+        p2, r2, f02, a2 = _fold_prfa(ytst_e, sb_scores)
+        sb_p.append(p2)
+        sb_r.append(r2)
+        sb_f1.append(f02)
+        sb_a.append(a2)
+        p3, r3, f03, a3 = _fold_prfa(ytst_e, o_scores)
+        oov_p.append(p3)
+        oov_r.append(r3)
+        oov_f1.append(f03)
+        oov_a.append(a3)
+        p4, r4, f04, a4 = _fold_prfa(ytst_e, comb_scores)
+        cb_p.append(p4)
+        cb_r.append(r4)
+        cb_f1.append(f04)
+        cb_a.append(a4)
+
+    if not lda_p:
+        return None
+
+    fold_lists = [
+        lda_p,
+        lda_r,
+        lda_f1,
+        lda_auc_l,
+        svm_p,
+        svm_r,
+        svm_f1,
+        svm_auc_l,
+        sb_p,
+        sb_r,
+        sb_f1,
+        sb_a,
+        oov_p,
+        oov_r,
+        oov_f1,
+        oov_a,
+        cb_p,
+        cb_r,
+        cb_f1,
+        cb_a,
+    ]
+    return (
+        pool_orig,
+        pool_ent,
+        pool_y,
+        pool_lda_s,
+        pool_svm_s,
+        pool_sb,
+        pool_oov,
+        pool_comb,
+        fold_lists,
     )
-    if raw_cv is None:
+
+
+def _build_all_screener_cv_result(
+    fold_lists: list[list[float]],
+    *,
+    screener_best_kind: str,
+    oov_kind_disp: str,
+    oov_disabled: bool,
+) -> AllScreenerCvResult:
+    (
+        lda_p,
+        lda_r,
+        lda_f1,
+        lda_auc_l,
+        svm_p,
+        svm_r,
+        svm_f1,
+        svm_auc_l,
+        sb_p,
+        sb_r,
+        sb_f1,
+        sb_a,
+        oov_p,
+        oov_r,
+        oov_f1,
+        oov_a,
+        cb_p,
+        cb_r,
+        cb_f1,
+        cb_a,
+    ) = fold_lists
+    lda_mets = _metrics_from_fold_lists(lda_p, lda_r, lda_f1, lda_auc_l)
+    svm_mets = _metrics_from_fold_lists(svm_p, svm_r, svm_f1, svm_auc_l)
+    sb_mets = _metrics_from_fold_lists(sb_p, sb_r, sb_f1, sb_a)
+    if oov_disabled:
+        oov_mets = _zero_binary_metrics()
+        comb_mets = sb_mets
+    else:
+        oov_mets = _metrics_from_fold_lists(oov_p, oov_r, oov_f1, oov_a)
+        comb_mets = _metrics_from_fold_lists(cb_p, cb_r, cb_f1, cb_a)
+    return AllScreenerCvResult(
+        screener_lda=lda_mets,
+        screener_svm=svm_mets,
+        screener_best_kind=screener_best_kind,
+        screener_best=sb_mets,
+        oov_winner_kind=oov_kind_disp,
+        oov=oov_mets,
+        combined=comb_mets,
+    )
+
+
+def _unified_cv_fold_count(y: np.ndarray, n_splits_requested: int) -> int | None:
+    n0 = int(np.sum(y == 0))
+    n1 = int(np.sum(y == 1))
+    if n0 < 2 or n1 < 2:
         return None
-    return negative_screener_cv_summary_from_eval_dict(raw_cv)
+    max_splits = min(n0, n1)
+    n_eff = min(int(n_splits_requested), max_splits)
+    return n_eff if n_eff >= 2 else None
 
 
-def fit_negative_screener_with_metrics(
+def _minmax01_fold(x: np.ndarray) -> np.ndarray:
+    xf = np.asarray(x, dtype=np.float64).ravel()
+    lo = float(np.min(xf))
+    hi = float(np.max(xf))
+    if hi <= lo:
+        return np.full(xf.shape[0], 0.5, dtype=np.float64)
+    return (xf - lo) / (hi - lo)
+
+
+def _fold_prfa(
+    y_true: np.ndarray, scores: np.ndarray
+) -> tuple[float, float, float, float]:
+    y_i = np.asarray(y_true, dtype=np.int64).ravel()
+    s = np.asarray(scores, dtype=np.float64).ravel()
+    y_pred = (s > 0.0).astype(np.int64)
+    prec = float(precision_score(y_i, y_pred, pos_label=1, zero_division=0))
+    rec = float(recall_score(y_i, y_pred, pos_label=1, zero_division=0))
+    f1 = float(f1_score(y_i, y_pred, pos_label=1, zero_division=0))
+    try:
+        auc_v = float(roc_auc_score(y_i, s))
+    except ValueError:
+        auc_v = 0.5
+    if math.isnan(auc_v) or math.isinf(auc_v):
+        auc_v = 0.5
+    return prec, rec, f1, auc_v
+
+
+def _metrics_from_fold_lists(
+    precs: list[float],
+    recalls: list[float],
+    f1s: list[float],
+    aucs: list[float],
+) -> BinaryClassifierMetrics:
+    def _one(vals: list[float]) -> MetricMeanStd:
+        arr = np.asarray(vals, dtype=np.float64)
+        return MetricMeanStd(
+            mean=float(np.mean(arr)),
+            std=float(np.std(arr, ddof=1)) if arr.size > 1 else 0.0,
+        )
+
+    return BinaryClassifierMetrics(
+        precision=_one(precs),
+        recall=_one(recalls),
+        f1=_one(f1s),
+        auc=_one(aucs),
+    )
+
+
+def _zero_binary_metrics() -> BinaryClassifierMetrics:
+    z = MetricMeanStd(0.0, 0.0)
+    return BinaryClassifierMetrics(
+        precision=z, recall=z, f1=z, auc=MetricMeanStd(0.5, 0.0)
+    )
+
+
+def evaluate_all_screeners_cv(
+    X_embed: np.ndarray,
+    X_manifold: np.ndarray | None,
+    y: np.ndarray,
+    entity: np.ndarray,
+    orig_idx: np.ndarray,
+    screener_cfg: NegativeScreenerConfig,
+    oov_cfg: ManifoldOovScreenerConfig,
+) -> tuple[AllScreenerCvResult, PerDatapointScores] | None:
+    """
+    Shared-stratified-fold CV for LDA/SVM negative screener, manifold OOV model, and stacked score.
+
+    ``screener_best`` scores use the ROC winner (LDA vs SVM) on pooled OOS predictions.
+
+    When ``oov_cfg.enabled`` is False or ``X_manifold`` is None, OOV branch is skipped:
+    ``combined`` metrics match ``screener_best`` and ``oov_winner_kind`` is ``"disabled"``.
+    """
+    y_i = np.asarray(y, dtype=np.int64).ravel()
+    n_splits = _unified_cv_fold_count(y_i, screener_cfg.cv_n_splits)
+    if n_splits is None:
+        return None
+
+    splitter = StratifiedKFold(
+        n_splits=n_splits,
+        shuffle=True,
+        random_state=screener_cfg.cv_random_state,
+    )
+    Xe = np.asarray(X_embed, dtype=np.float64)
+    fold_pairs = list(splitter.split(Xe, y_i))
+    rs_emb = screener_cfg.cv_random_state
+
+    oov_run = bool(oov_cfg.enabled) and X_manifold is not None
+    Xm: np.ndarray | None = (
+        np.asarray(X_manifold, dtype=np.float64) if oov_run else None
+    )
+    winner_kind_oov: ManifoldOovKind | str = "lda"
+
+    if oov_run and Xm is not None:
+        oov_run, winner_kind_oov = _pick_oov_winner_by_cv_folds(
+            fold_pairs, Xm, y_i, oov_cfg
+        )
+        if not oov_run:
+            Xm = None
+
+    collected = _collect_embedding_cv_folds(fold_pairs, Xe, y_i, rs_emb)
+    if collected is None:
+        return None
+    embed_fold_rows, screener_best_kind = collected
+
+    oov_disabled = not oov_run or Xm is None
+    oov_kind_disp = "disabled" if oov_disabled else str(winner_kind_oov)
+
+    scored = _score_folds_with_oov_and_pool(
+        embed_fold_rows,
+        screener_best_kind=screener_best_kind,
+        oov_disabled=oov_disabled,
+        winner_kind_oov=winner_kind_oov,
+        Xm=Xm,
+        y_i=y_i,
+        entity=entity,
+        orig_idx=orig_idx,
+        oov_cfg=oov_cfg,
+    )
+    if scored is None:
+        return None
+    (
+        pool_orig,
+        pool_ent,
+        pool_y,
+        pool_lda_s,
+        pool_svm_s,
+        pool_sb,
+        pool_oov,
+        pool_comb,
+        fold_lists,
+    ) = scored
+
+    result = _build_all_screener_cv_result(
+        fold_lists,
+        screener_best_kind=screener_best_kind,
+        oov_kind_disp=oov_kind_disp,
+        oov_disabled=oov_disabled,
+    )
+
+    datapoints = PerDatapointScores(
+        orig_idx=list(pool_orig),
+        entity=list(pool_ent),
+        y_true=list(pool_y),
+        screener_lda_score=list(pool_lda_s),
+        screener_svm_score=list(pool_svm_s),
+        screener_best_score=list(pool_sb),
+        oov_score=list(pool_oov),
+        combined_score=list(pool_comb),
+    )
+    return result, datapoints
+
+
+def fit_ambient_screener_with_metrics(
     dfr: pd.DataFrame,
     config: NegativeScreenerConfig,
 ) -> tuple[NegativeClassScreener, NegativeScreenerInSampleMetrics | None]:
@@ -349,232 +796,6 @@ def compute_clustering_fit_metrics(
     )
 
 
-def estimate_clustering_from_frame(
-    dfr: pd.DataFrame,
-    transform_config: TransformConfig,
-    optimization_config: ClusteringOptimizationConfig | None = None,
-    *,
-    selected_labels: set[str] | None = None,
-    all_metrics_dfs: list[pd.DataFrame] | None = None,
-    aggregation_level: Literal["mention", "entity"] = "mention",
-) -> ClusteringReport | None:
-    """
-    Run clustering grid search and optional **accumulation** of per-sample grid tables.
-
-    When ``all_metrics_dfs`` is provided, each call appends this sample's ``metrics_df`` to
-    that list. The optimal ``min_cluster_size`` for the final HDBSCAN fit **on this sample**
-    is always the per-sample DBCV argmax on its own grid; run
-    :func:`pooled_min_cluster_size_from_metrics_dfs` after all samples to obtain one consensus
-    choice across bootstraps (for summaries, plots, and optional grid CSV markers).
-
-    ``aggregation_level="entity"`` expects one row per distinct ``entity`` (e.g. fused
-    KB vectors) and skips min-mention-per-entity trimming used for mention-level corpora.
-    """
-
-    config = optimization_config or ClusteringOptimizationConfig()
-
-    if "embed" not in dfr.columns or "entity" not in dfr.columns:
-        return None
-
-    if selected_labels is not None:
-        dfr = dfr.loc[dfr["entity"].isin(selected_labels)].copy()
-        if len(dfr) == 0:
-            return None
-
-    screener_cfg = config.negative_screener
-    neg_label = screener_cfg.negative_label
-
-    if aggregation_level == "mention":
-        mention_count = dfr["entity"].value_counts()
-        low_count_entities = mention_count[
-            ~(mention_count >= config.min_class_size)
-        ].index.to_list()
-        low_count_entities = [e for e in low_count_entities if e != neg_label]
-        dfr = dfr.loc[~dfr["entity"].isin(low_count_entities)].copy()
-        if len(dfr) == 0:
-            return None
-
-    negative_screener_cv = evaluate_negative_screener_cv_summary(dfr, screener_cfg)
-    _, dfr_manifold = split_by_negative_label(dfr, neg_label)
-    if len(dfr_manifold) == 0:
-        return None
-
-    number_properties = int(dfr_manifold["entity"].nunique())
-
-    artifacts = compute_transform_artifacts(
-        dfr_manifold,
-        config=transform_config,
-        embed_column="embed",
-    )
-    umap_clustering_df = artifacts.umap_clustering_df()
-
-    sizes = list(
-        np.arange(
-            config.resolved_min_scale(),
-            config.max_scale,
-            config.clustering_grid_step,
-        )
-    )
-    metrics_df = evaluate_cluster_size_grid(
-        umap_clustering_df,
-        list(umap_clustering_df.columns),
-        sizes,
-    )
-    if len(metrics_df) == 0:
-        return None
-
-    if all_metrics_dfs is not None:
-        all_metrics_dfs.append(metrics_df)
-
-    best_idx = metrics_df["dbcv"].idxmax()
-    best_size = int(metrics_df.loc[best_idx, "min_cluster_size"])
-    best_score = float(metrics_df.loc[best_idx, "dbcv"])
-
-    clusterer = hdbscan.HDBSCAN(min_cluster_size=best_size, gen_min_span_tree=True)
-    labels = clusterer.fit_predict(artifacts.umap_clustering)
-    fit_metrics = compute_clustering_fit_metrics(
-        clusterer,
-        dfr_manifold,
-        min_cluster_size=best_size,
-        cluster_labels=labels,
-    )
-    assignments = dfr_manifold[["entity"]].copy()
-    for optional_col in ["pmid", "mention"]:
-        if optional_col in dfr_manifold.columns:
-            assignments[optional_col] = dfr_manifold[optional_col]
-    assignments["cluster"] = labels.astype(int, copy=False)
-
-    res_a = artifacts.pca_residuals
-    mah_a = artifacts.pca_mahalanobis
-    ent_a = artifacts.pca_spectral_entropy
-    y_neg = entity_negative_label_mask_01(dfr_manifold["entity"], neg_label)
-    return ClusteringReport(
-        hyperparameters=ClusteringHyperparameters(min_cluster_size=best_size),
-        best_score=best_score,
-        number_properties=number_properties,
-        n_clusters_emergent=fit_metrics.n_clusters_emergent,
-        metrics_df=metrics_df,
-        assignments=assignments,
-        pca_residuals=res_a,
-        pca_mahalanobis=mah_a,
-        pca_spectral_entropy=ent_a,
-        pca_residual_label_01=y_neg,
-        pca_mahalanobis_label_01=y_neg,
-        pca_spectral_entropy_label_01=y_neg,
-        umap_clustering=artifacts.umap_clustering,
-        umap_visualization=artifacts.umap_visualization,
-        pca_reduced=artifacts.pca_reduced,
-        negative_screener_cv=negative_screener_cv,
-        manifold_oov_cv=None,
-        ari=fit_metrics.ari,
-    )
-
-
-def estimate_model_clustering(
-    transform_config: TransformConfig,
-    optimization_config: ClusteringOptimizationConfig | None = None,
-    *,
-    file_path: pathlib.Path | None = None,
-    file_paths: Sequence[pathlib.Path] | None = None,
-    dfr: pd.DataFrame | None = None,
-    selected_labels: set[str] | None = None,
-    all_metrics_dfs: list[pd.DataFrame] | None = None,
-    embedding_read_status: Callable[[str], None] | None = None,
-    show_embedding_read_progress: bool = False,
-):
-    """
-    Estimate optimal cluster size from parquet file(s) or a preloaded DataFrame.
-
-    Provide exactly one of ``file_path``, ``file_paths``, or ``dfr``. For multiple parquets,
-    rows are inner-joined on (pmid, entity, mention) and ``embed`` vectors are concatenated
-    in path order (must match ``EmbeddingModelMetadata.sources``). Sampling ``frac`` /
-    ``n_embedding_batches`` are applied while loading each file (batches), then ``frac`` is applied
-    once on the merged
-    mention-level frame.
-
-    Args:
-        transform_config: TransformConfig instance specifying transformation parameters
-        optimization_config: Clustering optimization settings. If None, defaults
-            to ClusteringOptimizationConfig().
-        file_path: Single parquet path (backward-compatible entry point).
-        file_paths: Multiple parquets to fuse at mention level before clustering.
-        dfr: Optional pre-built frame (e.g. fused) with ``entity`` and ``embed`` columns.
-        selected_labels: Optional set of labels from selected labels KB to filter by
-        all_metrics_dfs: Optional mutable list that receives each sample's grid ``DataFrame``
-            (for a pooled choice after the batch via :func:`pooled_min_cluster_size_from_metrics_dfs`).
-        embedding_read_status: Callback for embedding parquet batch progress lines
-            (e.g. append to an existing Rich ``Progress`` task description).
-        show_embedding_read_progress: When True and ``embedding_read_status`` is omitted,
-            show a transient Rich progress display while loading parquet batches.
-
-    Returns:
-        ClusteringReport or None if processing failed
-    """
-    config = optimization_config or ClusteringOptimizationConfig()
-    rns: RandomState = config.rns
-
-    sources = [file_path is not None, file_paths is not None, dfr is not None]
-    if sum(bool(x) for x in sources) != 1:
-        raise ValueError(
-            "Provide exactly one of file_path=, file_paths=, or dfr= to estimate_model_clustering"
-        )
-
-    frame: pd.DataFrame | None
-    if dfr is not None:
-        frame = dfr.copy()
-    else:
-        if file_paths is not None:
-            paths = list(file_paths)
-        else:
-            assert file_path is not None
-            paths = [file_path]
-        if len(paths) == 0:
-            return None
-        frame = concat_mention_level_embedding_sources(
-            paths,
-            batch_size=config.batch_size,
-            n_embedding_batches=config.n_embedding_batches,
-            read_status=embedding_read_status,
-            show_read_progress=show_embedding_read_progress,
-        )
-        if frame is None or len(frame) == 0:
-            return None
-
-    frame = frame.sample(frac=config.frac, random_state=rns, replace=False)
-    if len(frame) == 0:
-        return None
-
-    return estimate_clustering_from_frame(
-        frame,
-        transform_config,
-        optimization_config=config,
-        selected_labels=selected_labels,
-        all_metrics_dfs=all_metrics_dfs,
-        aggregation_level="mention",
-    )
-
-
-def mention_frame_from_embedding_paths(
-    paths: Sequence[pathlib.Path],
-    *,
-    optimization_config: ClusteringOptimizationConfig | None = None,
-    read_status: Callable[[str], None] | None = None,
-    show_read_progress: bool = False,
-) -> pd.DataFrame | None:
-    """
-    Load mention-level rows from parquet file(s) like ``estimate_model_clustering``
-    (batched read, optional multi-source inner join on keys), without ``frac`` subsampling.
-    """
-    cfg = optimization_config or ClusteringOptimizationConfig()
-    return concat_mention_level_embedding_sources(
-        paths,
-        batch_size=cfg.batch_size,
-        n_embedding_batches=cfg.n_embedding_batches,
-        read_status=read_status,
-        show_read_progress=show_read_progress,
-    )
-
-
 def drop_entities_with_few_mentions(
     frame: pd.DataFrame,
     min_mentions_per_entity: int,
@@ -583,7 +804,7 @@ def drop_entities_with_few_mentions(
 ) -> pd.DataFrame:
     """
     Drop entities with fewer than ``min_mentions_per_entity`` rows (same rule as
-    ``estimate_clustering_from_frame`` with ``aggregation_level='mention'``).
+    :func:`~pelinker.selection.load_selection_frame` / mention-level selection eval).
 
     When ``negative_label`` is set, that label is never dropped for low mention count
     (so thin negative tails remain for screener training).

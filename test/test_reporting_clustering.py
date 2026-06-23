@@ -9,14 +9,21 @@ import pandas as pd
 import pytest
 
 from pelinker.onto import NEGATIVE_LABEL
+from pelinker.plotting import diagnostics_to_pairgrid_dataframe
 from pelinker.reporting import (
     ClusteringHyperparameters,
-    ClusteringReport,
+    LinkerFitDiagnostics,
+    ModelSelectionReport,
     ClusteringSearchSummaryRow,
     entity_negative_label_mask_01,
+    read_cluster_composition_json,
+    read_clustering_report_json,
+    subsample_diagnostics_stratified,
     summarize_clustering_reports_for_search,
+    write_cluster_composition_json,
     write_clustering_report_json,
 )
+from pelinker.cluster_composition_viz import build_cluster_composition_df
 
 
 def _minimal_report(
@@ -27,7 +34,7 @@ def _minimal_report(
     ari: float | None = None,
     entity: str = "p1",
     negative_label: str = NEGATIVE_LABEL,
-) -> ClusteringReport:
+) -> ModelSelectionReport:
     metrics_df = pd.DataFrame(
         {"min_cluster_size": [min_cluster_size], "dbcv": [best_score]}
     )
@@ -36,7 +43,7 @@ def _minimal_report(
     mah = np.array([0.2], dtype=np.float64)
     ent = np.array([0.3], dtype=np.float64)
     y_neg = entity_negative_label_mask_01(assignments["entity"], negative_label)
-    return ClusteringReport(
+    return ModelSelectionReport(
         hyperparameters=ClusteringHyperparameters(min_cluster_size=min_cluster_size),
         best_score=best_score,
         number_properties=5,
@@ -46,11 +53,10 @@ def _minimal_report(
         pca_residuals=res,
         pca_mahalanobis=mah,
         pca_spectral_entropy=ent,
-        pca_residual_label_01=y_neg,
-        pca_mahalanobis_label_01=y_neg,
-        pca_spectral_entropy_label_01=y_neg,
+        oov_label=y_neg,
         umap_clustering=np.array([[0.0, 0.1]], dtype=np.float64),
-        umap_visualization=np.array([[0.0, 0.1]], dtype=np.float64),
+        cluster_viz=np.array([[0.0, 0.1]], dtype=np.float64),
+        cluster_viz_method="pca",
         pca_reduced=np.array([[0.0, 0.1]], dtype=np.float64),
         ari=ari,
     )
@@ -106,7 +112,7 @@ def test_summarize_with_pooled_min_cluster_size_uses_consensus_and_per_sample_db
     r1_ent = np.array([0.3], dtype=np.float64)
     r1_ent_df = pd.DataFrame({"entity": ["p1"], "cluster": [0]})
     r1_y = entity_negative_label_mask_01(r1_ent_df["entity"], NEGATIVE_LABEL)
-    r1 = ClusteringReport(
+    r1 = ModelSelectionReport(
         hyperparameters=ClusteringHyperparameters(min_cluster_size=10),
         best_score=0.5,
         number_properties=5,
@@ -121,11 +127,10 @@ def test_summarize_with_pooled_min_cluster_size_uses_consensus_and_per_sample_db
         pca_residuals=r1_res,
         pca_mahalanobis=r1_mah,
         pca_spectral_entropy=r1_ent,
-        pca_residual_label_01=r1_y,
-        pca_mahalanobis_label_01=r1_y,
-        pca_spectral_entropy_label_01=r1_y,
+        oov_label=r1_y,
         umap_clustering=np.array([[0.0, 0.1]], dtype=np.float64),
-        umap_visualization=np.array([[0.0, 0.1]], dtype=np.float64),
+        cluster_viz=np.array([[0.0, 0.1]], dtype=np.float64),
+        cluster_viz_method="pca",
         pca_reduced=np.array([[0.0, 0.1]], dtype=np.float64),
         ari=0.8,
     )
@@ -134,7 +139,7 @@ def test_summarize_with_pooled_min_cluster_size_uses_consensus_and_per_sample_db
     r2_ent = np.array([0.3], dtype=np.float64)
     r2_ent_df = pd.DataFrame({"entity": ["p2"], "cluster": [1]})
     r2_y = entity_negative_label_mask_01(r2_ent_df["entity"], NEGATIVE_LABEL)
-    r2 = ClusteringReport(
+    r2 = ModelSelectionReport(
         hyperparameters=ClusteringHyperparameters(min_cluster_size=15),
         best_score=0.6,
         number_properties=5,
@@ -149,11 +154,10 @@ def test_summarize_with_pooled_min_cluster_size_uses_consensus_and_per_sample_db
         pca_residuals=r2_res,
         pca_mahalanobis=r2_mah,
         pca_spectral_entropy=r2_ent,
-        pca_residual_label_01=r2_y,
-        pca_mahalanobis_label_01=r2_y,
-        pca_spectral_entropy_label_01=r2_y,
+        oov_label=r2_y,
         umap_clustering=np.array([[0.0, 0.1]], dtype=np.float64),
-        umap_visualization=np.array([[0.0, 0.1]], dtype=np.float64),
+        cluster_viz=np.array([[0.0, 0.1]], dtype=np.float64),
+        cluster_viz_method="pca",
         pca_reduced=np.array([[0.0, 0.1]], dtype=np.float64),
         ari=0.85,
     )
@@ -175,14 +179,100 @@ def test_write_clustering_report_json_includes_pca_arrays(tmp_path: Path) -> Non
     write_clustering_report_json(out, r)
     with gzip.open(out, mode="rt", encoding="utf-8") as fh:
         raw = json.load(fh)
-    assert raw["schema"] == "pelinker.clustering_report.v5"
+    assert raw["schema"] == "pelinker.clustering_report.v10"
     assert raw["pca_residuals"] == [0.1]
     assert raw["pca_mahalanobis"] == [0.2]
     assert raw["pca_spectral_entropy"] == [0.3]
-    assert raw["pca_residual_label_01"] == [0]
-    assert raw["pca_mahalanobis_label_01"] == [0]
-    assert raw["pca_spectral_entropy_label_01"] == [0]
-    assert raw["manifold_oov_cv"] is None
+    assert raw["oov_label"] == [0]
+    assert raw["all_screener_cv"] is None
+    assert raw.get("training_diagnostics") is None
+
+
+def test_subsample_diagnostics_stratified_two_classes_deterministic() -> None:
+    n = 400
+    n0, n1 = 250, 150
+    rng = np.random.default_rng(1)
+    y = np.array([0] * n0 + [1] * n1, dtype=np.int64)
+    rng.shuffle(y)
+    full = LinkerFitDiagnostics(
+        pca_residual=rng.standard_normal(n),
+        pca_mahalanobis=rng.standard_normal(n),
+        pca_spectral_entropy=rng.standard_normal(n),
+        oov_label=y,
+        screener_decision=rng.standard_normal(n),
+        projection_score=rng.standard_normal(n),
+        n_total=n,
+        sample_random_state=0,
+    )
+    s80 = subsample_diagnostics_stratified(full, max_rows=80, random_state=42)
+    s80b = subsample_diagnostics_stratified(full, max_rows=80, random_state=42)
+    assert len(s80.pca_residual) == 80
+    assert s80.n_total == n
+    np.testing.assert_array_equal(s80.pca_residual, s80b.pca_residual)
+    assert set(np.unique(s80.oov_label).tolist()) == {0, 1}
+
+
+def test_subsample_diagnostics_stratified_noop_when_small() -> None:
+    n = 50
+    y = np.array([0] * 30 + [1] * 20, dtype=np.int64)
+    full = LinkerFitDiagnostics(
+        pca_residual=np.arange(n, dtype=np.float64),
+        pca_mahalanobis=np.arange(n, dtype=np.float64),
+        pca_spectral_entropy=np.arange(n, dtype=np.float64),
+        oov_label=y,
+        screener_decision=np.zeros(n, dtype=np.float64),
+        projection_score=np.full(n, np.nan, dtype=np.float64),
+        n_total=n,
+        sample_random_state=7,
+    )
+    out = subsample_diagnostics_stratified(full, max_rows=10_000, random_state=0)
+    assert len(out.pca_residual) == n
+    np.testing.assert_array_equal(out.pca_residual, full.pca_residual)
+
+
+def test_diagnostics_to_pairgrid_dataframe() -> None:
+    td = LinkerFitDiagnostics(
+        pca_residual=np.array([1.0, 2.0], dtype=np.float64),
+        pca_mahalanobis=np.array([3.0, 4.0], dtype=np.float64),
+        pca_spectral_entropy=np.array([5.0, 6.0], dtype=np.float64),
+        oov_label=np.array([0, 1], dtype=np.int64),
+        screener_decision=np.zeros(2, dtype=np.float64),
+        projection_score=np.zeros(2, dtype=np.float64),
+        n_total=2,
+        sample_random_state=0,
+    )
+    df = diagnostics_to_pairgrid_dataframe(td)
+    assert list(df["class_label"]) == ["positive", "negative"]
+    assert {
+        "pca_residual",
+        "pca_mahalanobis",
+        "pca_spectral_entropy",
+        "class_label",
+    } <= set(df.columns)
+
+
+def test_training_diagnostics_json_roundtrip(tmp_path: Path) -> None:
+    td = LinkerFitDiagnostics(
+        pca_residual=np.array([0.1, 0.2], dtype=np.float64),
+        pca_mahalanobis=np.array([0.3, 0.4], dtype=np.float64),
+        pca_spectral_entropy=np.array([0.5, 0.6], dtype=np.float64),
+        oov_label=np.array([0, 1], dtype=np.int64),
+        screener_decision=np.array([-0.1, 0.9], dtype=np.float64),
+        projection_score=np.array([0.0, 1.1], dtype=np.float64),
+        n_total=2,
+        sample_random_state=3,
+    )
+    r = _minimal_report(5, 0.4, entity="p1")
+    r.training_diagnostics = td
+    out = tmp_path / "with_td.json.gz"
+    write_clustering_report_json(out, r)
+    loaded = read_clustering_report_json(out)
+    assert loaded.training_diagnostics is not None
+    d = loaded.training_diagnostics
+    np.testing.assert_array_almost_equal(d.pca_residual, td.pca_residual)
+    np.testing.assert_array_almost_equal(d.projection_score, td.projection_score)
+    assert d.n_total == 2
+    assert d.sample_random_state == 3
 
 
 def test_entity_negative_label_mask_01() -> None:
@@ -197,6 +287,50 @@ def test_write_clustering_report_json_labels_negative_entity(tmp_path: Path) -> 
     write_clustering_report_json(out, r)
     with gzip.open(out, mode="rt", encoding="utf-8") as fh:
         raw = json.load(fh)
-    assert raw["pca_residual_label_01"] == [1]
-    assert raw["pca_mahalanobis_label_01"] == [1]
-    assert raw["pca_spectral_entropy_label_01"] == [1]
+    assert raw["oov_label"] == [1]
+
+
+def test_clustering_report_v9_enriched_assignments_roundtrip(tmp_path: Path) -> None:
+    assignments = pd.DataFrame(
+        {
+            "entity": ["a", "a", "b"],
+            "cluster": [0, 0, 1],
+            "pmid": ["1", "1", "2"],
+            "mention": ["x", "x2", "y"],
+            "a_abs": [10, 11, 20],
+            "screener_score": [0.1, 0.2, -0.5],
+            "projection_score": [0.3, 0.4, 0.1],
+            "cluster_score": [0.9, 0.85, 0.7],
+        }
+    )
+    r = _minimal_report(5, 0.4)
+    r.assignments = assignments
+    out = tmp_path / "v9.json.gz"
+    write_clustering_report_json(out, r)
+    loaded = read_clustering_report_json(out)
+    assert int(loaded.assignments.iloc[0]["a_abs"]) == 10
+    assert float(loaded.assignments.iloc[0]["cluster_score"]) == pytest.approx(0.9)
+
+
+def test_cluster_composition_inv_sqrt_and_other(tmp_path: Path) -> None:
+    assignments = pd.DataFrame(
+        {
+            "entity": ["a", "a", "a", "b", "c", "d"],
+            "cluster": [0, 0, 0, 0, 0, 0],
+        }
+    )
+    comp = build_cluster_composition_df(assignments, top_n=2, weight_by_entity=True)
+    # a has 3 mentions -> weight 1/sqrt(3) each -> total 3/sqrt(3)
+    a_mass = comp.loc[comp["entity"] == "a", "count"].iloc[0]
+    assert a_mass == pytest.approx(3.0 / (3.0**0.5))
+    assert any(comp["entity"].astype(str).str.startswith("Other ("))
+
+
+def test_cluster_composition_json_roundtrip(tmp_path: Path) -> None:
+    df = pd.DataFrame({"cluster": [0, 1], "entity": ["p1", "p2"], "count": [1.5, 2.0]})
+    path = tmp_path / "comp.json.gz"
+    write_cluster_composition_json(path, df, top_n=3)
+    back, meta = read_cluster_composition_json(path)
+    assert len(back) == 2
+    assert float(back.iloc[0]["count"]) == pytest.approx(1.5)
+    assert meta["schema"] == "pelinker.fit_cluster_composition.v2"
