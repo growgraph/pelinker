@@ -189,6 +189,8 @@ def test_fit_with_synthetic_negatives_screener_metrics_and_dump_load(tmp_path):
     assert "screener_score" in fit_report.assignments.columns
     assert "cluster_score" in fit_report.assignments.columns
     assert fit_report.assignments["cluster_score"].between(0.0, 1.0).all()
+    for col in ("clustering_in_sample", "screener_pass", "manifold_oov_pass"):
+        assert col in fit_report.assignments.columns
 
     model_path = tmp_path / "linker_metrics"
     linker.dump(model_path)

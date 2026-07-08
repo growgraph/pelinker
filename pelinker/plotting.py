@@ -1734,13 +1734,18 @@ def mention_context_window(
     win_start = max(0, start_word - words_before)
     win_end = min(len(spans) - 1, end_word + words_after)
     parts: list[str] = []
+
     for i in range(win_start, win_end + 1):
         wa, wb = spans[i]
         word = text[wa:wb]
-        if start_word <= i <= end_word:
-            parts.append(f"«{word}»")
-        else:
-            parts.append(word)
+
+        if i == start_word:
+            word = f"<b>{word}"
+
+        if i == end_word:
+            word = f"{word}</b>"
+
+        parts.append(word)
     return " ".join(parts)
 
 
@@ -1798,20 +1803,51 @@ def enrich_fit_cluster_viz_plot_df_with_context(
     return out
 
 
+CLUSTER_VIZ_MEMBERSHIP_COLUMNS = (
+    "clustering_in_sample",
+    "screener_pass",
+    "manifold_oov_pass",
+)
+
+
+def filter_assignments_for_cluster_viz(
+    assign: pd.DataFrame,
+    *,
+    exclude_noise: bool = True,
+    hdbscan_fit_scope: bool = True,
+) -> pd.DataFrame:
+    """Restrict cluster viz rows to HDBSCAN-fit + screener/OOV-pass mentions when flagged."""
+    from pelinker.cluster_composition_viz import filter_emergent_assignments
+
+    out = assign.copy()
+    if exclude_noise:
+        out = filter_emergent_assignments(out)
+    if not hdbscan_fit_scope:
+        return out
+    present = [c for c in CLUSTER_VIZ_MEMBERSHIP_COLUMNS if c in out.columns]
+    if not present:
+        return out
+    mask = np.ones(len(out), dtype=bool)
+    for col in present:
+        mask &= out[col].astype(bool).to_numpy()
+    return out.loc[mask]
+
+
 def build_fit_cluster_viz_plot_df(
     report: ModelSelectionReport,
     *,
     exclude_noise: bool = True,
+    hdbscan_fit_scope: bool = True,
 ) -> tuple[pd.DataFrame | None, str]:
     """Build a :func:`plot_cluster_viz` frame from a :class:`~pelinker.reporting.ModelSelectionReport`."""
-    from pelinker.cluster_composition_viz import filter_emergent_assignments
-
     cluster_viz = report.cluster_viz
     if cluster_viz is None or cluster_viz.size == 0 or cluster_viz.shape[1] < 1:
         return None, report.cluster_viz_method
-    assign = report.assignments.copy()
-    if exclude_noise:
-        assign = filter_emergent_assignments(assign)
+    assign = filter_assignments_for_cluster_viz(
+        report.assignments,
+        exclude_noise=exclude_noise,
+        hdbscan_fit_scope=hdbscan_fit_scope,
+    )
     if len(assign) == 0:
         return None, report.cluster_viz_method
     n_dims = int(cluster_viz.shape[1])

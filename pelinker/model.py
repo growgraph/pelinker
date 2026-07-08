@@ -285,6 +285,44 @@ def _predict_cluster_labels_on_full_manifold(
     return cluster_labels, cluster_scores
 
 
+def _cluster_viz_membership_masks(
+    manifold_full: pd.DataFrame,
+    manifold_fit: pd.DataFrame,
+    *,
+    screener: NegativeClassScreener,
+    pca_residuals: np.ndarray,
+    pca_mahalanobis: np.ndarray,
+    pca_spectral_entropy: np.ndarray,
+    projection_model: ManifoldOovScoreModel | None,
+    row_id_col: str = _ROW_ID_COL,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Per-row flags for cluster-space viz (HDBSCAN fit draw, ambient screener, manifold OOV)."""
+    if (
+        row_id_col not in manifold_fit.columns
+        or row_id_col not in manifold_full.columns
+    ):
+        raise ValueError(f"manifold frames missing {row_id_col!r}")
+    n = len(manifold_full)
+    fit_ids = set(manifold_fit[row_id_col].astype(np.int64).tolist())
+    clustering_in_sample = (
+        manifold_full[row_id_col].astype(np.int64).isin(fit_ids).to_numpy(dtype=bool)
+    )
+    embeddings = np.stack(manifold_full["embed"].values).astype(np.float32, copy=False)
+    screener_pass = ~screener.predict_is_negative(embeddings)
+    if projection_model is not None:
+        x3 = np.column_stack(
+            [
+                np.asarray(pca_residuals, dtype=np.float64).ravel(),
+                np.asarray(pca_mahalanobis, dtype=np.float64).ravel(),
+                np.asarray(pca_spectral_entropy, dtype=np.float64).ravel(),
+            ]
+        )
+        manifold_oov_pass = ~projection_model.is_oov(x3)
+    else:
+        manifold_oov_pass = np.ones(n, dtype=bool)
+    return clustering_in_sample, screener_pass, manifold_oov_pass
+
+
 def _build_training_cluster_frame(
     manifold_full: pd.DataFrame,
     cluster_labels: np.ndarray,
@@ -292,6 +330,10 @@ def _build_training_cluster_frame(
     screener_decision: np.ndarray,
     manifold_mask: np.ndarray,
     projection_scores: np.ndarray,
+    *,
+    clustering_in_sample: np.ndarray,
+    screener_pass: np.ndarray,
+    manifold_oov_pass: np.ndarray,
 ) -> pd.DataFrame:
     tc_cols = ["pmid", "entity", "mention"]
     missing = [c for c in tc_cols if c not in manifold_full.columns]
@@ -308,6 +350,9 @@ def _build_training_cluster_frame(
     frame["screener_score"] = screener_decision[manifold_mask]
     frame["projection_score"] = projection_scores[manifold_mask]
     frame["cluster_score"] = cluster_scores
+    frame["clustering_in_sample"] = np.asarray(clustering_in_sample, dtype=bool)
+    frame["screener_pass"] = np.asarray(screener_pass, dtype=bool)
+    frame["manifold_oov_pass"] = np.asarray(manifold_oov_pass, dtype=bool)
     return frame
 
 
@@ -666,6 +711,9 @@ class Linker:
             "screener_score",
             "projection_score",
             "cluster_score",
+            "clustering_in_sample",
+            "screener_pass",
+            "manifold_oov_pass",
         ]
         keep = [c for c in base_cols + optional_cols if c in tcf.columns]
         assignments = tcf[keep].copy()
@@ -965,6 +1013,17 @@ class Linker:
             full_artifacts.umap_clustering,
             cl_result.cluster_labels,
         )
+        clustering_in_sample, screener_pass, manifold_oov_pass = (
+            _cluster_viz_membership_masks(
+                manifold_full,
+                manifold_fit,
+                screener=neg_step.screener,
+                pca_residuals=full_artifacts.pca_residuals,
+                pca_mahalanobis=full_artifacts.pca_mahalanobis,
+                pca_spectral_entropy=full_artifacts.pca_spectral_entropy,
+                projection_model=mo_step.model,
+            )
+        )
         self.training_cluster_frame = _build_training_cluster_frame(
             manifold_full,
             cluster_labels,
@@ -972,6 +1031,9 @@ class Linker:
             neg_step.decision,
             manifold_mask,
             full_diag.projection_score,
+            clustering_in_sample=clustering_in_sample,
+            screener_pass=screener_pass,
+            manifold_oov_pass=manifold_oov_pass,
         )
 
         _finalize_linker_cluster_state(

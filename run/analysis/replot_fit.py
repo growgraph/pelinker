@@ -4,7 +4,7 @@ Produces figures per report directory (emergent clusters only; HDBSCAN noise ``-
   - ``fit_cluster_composition_bars.{png,pdf}``  – horizontal bar chart (top clusters by mass)
   - ``fit_cluster_composition_pies.{png,pdf}``  – pie-chart grid (all plotted clusters)
   - ``fit_cluster_composition_pies_sample.{png,pdf}``  – compact top-cluster sample
-  - ``fit_cluster_viz.html``  – cluster-space viz (Plotly, emergent mentions only)
+  - ``fit_cluster_viz.html``  – cluster-space viz (Plotly; HDBSCAN-fit + screener/OOV-pass rows)
   - ``fit_cluster_entity_sankey.{png,pdf}``  – capped entity→cluster Sankey
 
 Reads ``linker_fit.clustering_report.json.gz``, ``linker_fit.cluster_composition.json.gz``,
@@ -273,6 +273,15 @@ def _load_composition_df(
         "Used to add a 5-word context window around each mention in the cluster viz hover."
     ),
 )
+@click.option(
+    "--viz-all-kb",
+    is_flag=True,
+    default=False,
+    help=(
+        "Cluster viz: plot all KB assignments (legacy). Default restricts to rows on which "
+        "HDBSCAN was fit and that pass ambient screener and manifold OOV gates."
+    ),
+)
 def main(
     report_dir: pathlib.Path,
     top_n: int,
@@ -280,6 +289,7 @@ def main(
     max_entities: int,
     show: bool,
     pmid_text_table: pathlib.Path | None,
+    viz_all_kb: bool,
 ) -> None:
     report_dir = report_dir.expanduser().resolve()
 
@@ -326,7 +336,21 @@ def main(
         autopct_min_pct=5.0,
     )
 
-    plot_df, viz_method = build_fit_cluster_viz_plot_df(report, exclude_noise=True)
+    plot_df, viz_method = build_fit_cluster_viz_plot_df(
+        report,
+        exclude_noise=True,
+        hdbscan_fit_scope=not viz_all_kb,
+    )
+    if (
+        not viz_all_kb
+        and plot_df is not None
+        and not any(c in report.assignments.columns for c in ("clustering_in_sample",))
+    ):
+        click.echo(
+            "Note: report lacks clustering membership columns; cluster viz shows all KB rows. "
+            "Re-run fit to persist in-sample / screener / OOV flags.",
+            err=True,
+        )
     if plot_df is not None and pmid_text_table is not None:
         plot_df = enrich_fit_cluster_viz_plot_df_with_context(
             plot_df,
