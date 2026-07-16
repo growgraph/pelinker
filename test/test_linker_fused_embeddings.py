@@ -101,7 +101,10 @@ def test_fused_fit_two_parquets_stacks_embedding_dim(tmp_path):
         fit_config=fit_cfg,
     )
     assert linker.transformer is not None
-    assert len(linker.vocabulary) == n_ent
+    assert len(linker.vocabulary) == len(linker.cluster_id_to_entity_id)
+    assert len(linker.vocabulary) > 0
+    assert linker.kb_in_labels_map == labels_map
+    assert all(eid in linker.labels_map for eid in linker.vocabulary)
     assert linker.transformer.pca is not None
     assert linker.transformer.pca.n_features_in_ == 4
     assert linker.clusterer is not None

@@ -1155,6 +1155,48 @@ def _sorted_class_labels_natural(class_series: pd.Series) -> list[str]:
     return sorted(labels, key=sort_key)
 
 
+_CLUSTER_VIZ_LEGEND_MAX_CHARS = 28
+_CLUSTER_VIZ_HOVER_WRAP = 48
+
+
+def _truncate_legend_label(
+    label: str, *, max_chars: int = _CLUSTER_VIZ_LEGEND_MAX_CHARS
+) -> str:
+    """Shorten long KB-out display names for the Plotly legend."""
+    text = str(label).strip()
+    if len(text) <= max_chars:
+        return text
+    return text[: max(1, max_chars - 1)].rstrip("-_ ") + "…"
+
+
+def _wrap_hover_html(text: str, *, width: int = _CLUSTER_VIZ_HOVER_WRAP) -> str:
+    """Insert ``<br>`` breaks so long hover strings stay readable."""
+    raw = str(text).replace("\n", " ").strip()
+    if not raw or width < 8:
+        return raw
+    parts: list[str] = []
+    remaining = raw
+    while len(remaining) > width:
+        cut = remaining.rfind(" ", 0, width + 1)
+        if cut < width // 3:
+            cut = width
+        parts.append(remaining[:cut].rstrip())
+        remaining = remaining[cut:].lstrip()
+    if remaining:
+        parts.append(remaining)
+    return "<br>".join(parts)
+
+
+def _format_hover_float(value: object) -> str:
+    """Format a numeric hover value to at most 3 decimal places."""
+    if value is None or (isinstance(value, float) and np.isnan(value)):
+        return ""
+    try:
+        return f"{float(value):.3f}"
+    except (TypeError, ValueError):
+        return str(value)
+
+
 def _distinct_category_hex_colors(n: int) -> list[str]:
     """
     One distinct color per category for large palettes (e.g. ~50 HDBSCAN clusters).
@@ -1196,8 +1238,23 @@ def plot_cluster_viz(
     show_rate = max(len(df) // 20, 1)
     df.loc[df.index % show_rate != 0, "show_label"] = ""
 
-    df["class"] = df["class"].astype(str)
-    class_order = _sorted_class_labels_natural(df["class"])
+    df["class_full"] = df["class"].astype(str)
+    # Stable short legend keys; full name stays in hover via class_full.
+    unique_full = _sorted_class_labels_natural(df["class_full"])
+    full_to_legend: dict[str, str] = {}
+    used_legend: set[str] = set()
+    for full in unique_full:
+        base = _truncate_legend_label(full)
+        legend = base
+        suffix = 2
+        while legend in used_legend:
+            trim = max(1, _CLUSTER_VIZ_LEGEND_MAX_CHARS - len(f"…{suffix}") - 1)
+            legend = f"{base[:trim].rstrip('-_ ')}…{suffix}"
+            suffix += 1
+        used_legend.add(legend)
+        full_to_legend[full] = legend
+    df["class"] = df["class_full"].map(full_to_legend)
+    class_order = [full_to_legend[f] for f in unique_full]
     n_classes = len(class_order)
     color_discrete_map = dict(
         zip(class_order, _distinct_category_hex_colors(n_classes), strict=True)
@@ -1206,14 +1263,19 @@ def plot_cluster_viz(
     axis_title_font = dict(size=15)
     axis_tick_font = dict(size=13)
 
-    hover_specs: list[tuple[str, str]] = []
+    df["cluster_hover"] = df["class_full"].map(_wrap_hover_html)
+    if "context" in df.columns:
+        df["context"] = df["context"].map(
+            lambda v: _wrap_hover_html("" if pd.isna(v) else str(v))
+        )
+    if "cluster_score" in df.columns:
+        df["cluster_score"] = df["cluster_score"].map(_format_hover_float)
+
+    hover_specs: list[tuple[str, str]] = [("cluster_hover", "Cluster")]
     for col, label in (
         ("pmid", "PMID"),
         ("mention", "Mention"),
         ("context", "Context"),
-        ("a_abs", "a_abs"),
-        ("b_abs", "b_abs"),
-        ("screener_score", "Screener"),
         ("cluster_score", "Cluster score"),
     ):
         if col in df.columns:
@@ -1228,9 +1290,8 @@ def plot_cluster_viz(
         "hover_name": label_col,
         "labels": {"cviz_00": "Dim 1", "cviz_01": "Dim 2"},
         "template": "plotly_white",
+        "custom_data": [c for c, _ in hover_specs],
     }
-    if hover_specs:
-        scatter_kwargs["custom_data"] = [c for c, _ in hover_specs]
     if use_3d:
         scatter_kwargs["z"] = "cviz_02"
         scatter_kwargs["labels"] = {
@@ -1244,11 +1305,10 @@ def plot_cluster_viz(
     else:
         fig = px.scatter(df, **scatter_kwargs)
 
-    dim_z_line = "Dim 3: %{z:.4f}<br>" if use_3d else ""
+    dim_z_line = "Dim 3: %{z:.3f}<br>" if use_3d else ""
     hover_lines = (
         "<b>%{hovertext}</b><br>"
-        "Cluster: <b>%{fullData.name}</b><br>"
-        f"Dim 1: %{{x:.4f}}<br>Dim 2: %{{y:.4f}}<br>{dim_z_line}"
+        f"Dim 1: %{{x:.3f}}<br>Dim 2: %{{y:.3f}}<br>{dim_z_line}"
     )
     for i, (_, label) in enumerate(hover_specs):
         hover_lines += f"{label}: %{{customdata[{i}]}}<br>"
@@ -1286,36 +1346,54 @@ def plot_cluster_viz(
         )
     fig.add_trace(text_trace)
 
-    legend_font = 13 if n_classes > 36 else 14
-    title_dims = "3D" if use_3d else "2D"
+    legend_font = 12 if n_classes > 36 else 13
     method_label = viz_method.upper() if viz_method == "pca" else "UMAP"
+    # Keep a stable viewport; do not grow height with legend length (that uncenters the plot).
+    # Plotly 6 scrolls an overflowing legend when the figure height is fixed.
+    fig_height = 720 if use_3d else 680
+    fig_width = 1100
     layout: dict[str, object] = {
         "font": dict(size=14),
+        "width": fig_width,
+        "height": fig_height,
         "title": dict(
             text=(
-                f"{title_dims} cluster {method_label} view "
-                f"({len(df):,} points, {n_classes} clusters)"
+                f"{method_label} · {len(df):,} pts · {n_classes} clusters"
+                "<br><sup>Legend: double-click to isolate · click to show/hide"
+                " · drag to pan · scroll to zoom</sup>"
             ),
             x=0.5,
             xanchor="center",
-            font=dict(size=18),
+            font=dict(size=15),
         ),
-        "hoverlabel": dict(font=dict(size=15)),
+        "hoverlabel": dict(font=dict(size=14), align="left"),
         "hovermode": "closest",
+        # 2D: pan with drag (Plotly default is zoom, which feels broken for exploration).
+        "dragmode": "pan",
         "legend": dict(
-            title=dict(text="Cluster", font=dict(size=15)),
+            # Keep the title on one line: multi-line HTML titles clip legend items in Plotly.
+            title=dict(
+                text="Cluster (dbl-click isolate)",
+                font=dict(size=13),
+            ),
             traceorder="normal",
             itemsizing="constant",
             font=dict(size=legend_font),
             yanchor="top",
             y=0.99,
-            x=1.02,
+            x=1.01,
             xanchor="left",
+            bgcolor="rgba(255,255,255,0.9)",
+            borderwidth=0,
         ),
-        "margin": dict(l=0, r=120, b=0, t=56),
+        # Symmetric-ish margins; leave room on the right for the legend without skewing the plot.
+        "margin": dict(l=60, r=220, b=50, t=70, pad=4),
     }
     if use_3d:
+        layout["dragmode"] = "orbit"
         layout["scene"] = dict(
+            aspectmode="data",
+            dragmode="orbit",
             xaxis=dict(
                 title=dict(text="Dim 1", font=axis_title_font),
                 tickfont=axis_tick_font,
@@ -1329,10 +1407,29 @@ def plot_cluster_viz(
                 tickfont=axis_tick_font,
             ),
             bgcolor="rgb(250,250,252)",
+            # Keep the 3D viewport centered in the available area (legend sits outside).
+            domain=dict(x=[0.0, 0.78], y=[0.0, 1.0]),
+            camera=dict(eye=dict(x=1.5, y=1.5, z=1.2)),
+        )
+    else:
+        # Equal aspect so PCA/UMAP space is not stretched; automargin keeps labels in frame.
+        layout["xaxis"] = dict(
+            title=dict(text="Dim 1", font=axis_title_font),
+            tickfont=axis_tick_font,
+            automargin=True,
+            scaleanchor="y",
+            scaleratio=1,
+            constrain="domain",
+        )
+        layout["yaxis"] = dict(
+            title=dict(text="Dim 2", font=axis_title_font),
+            tickfont=axis_tick_font,
+            automargin=True,
+            constrain="domain",
         )
     fig.update_layout(**layout)
 
-    fig.write_html(str(output_path))
+    fig.write_html(str(output_path), include_plotlyjs=True, full_html=True)
 
 
 def plot_metrics(df: pd.DataFrame, output_path: pathlib.Path) -> None:
@@ -1635,6 +1732,9 @@ def plot_cluster_entity_sankey(
     basename: str = "fit_cluster_entity_sankey",
     max_clusters: int | None = None,
     max_entities: int | None = None,
+    min_within_cluster_fraction: float = 0.0,
+    cluster_labels: dict[int, str] | None = None,
+    cluster_label_include_id: bool = False,
     inches_per_label: float = _SANKEY_DEFAULT_INCHES_PER_LABEL,
     min_fig_height: float = _SANKEY_DEFAULT_MIN_FIG_HEIGHT,
     min_band_height: float = _SANKEY_DEFAULT_MIN_BAND_HEIGHT,
@@ -1654,12 +1754,26 @@ def plot_cluster_entity_sankey(
         composition_df,
         max_clusters=max_clusters,
         max_entities=max_entities,
+        min_within_cluster_fraction=min_within_cluster_fraction,
     )
     if work.empty:
         return []
     work = work.copy()
     work["entity"] = work["entity"].astype(str)
-    work["cluster"] = work["cluster"].astype(str)
+    if cluster_labels:
+        work["cluster"] = (
+            work["cluster"]
+            .astype(int)
+            .map(
+                lambda cid: _format_cluster_sankey_label(
+                    int(cid),
+                    cluster_labels,
+                    include_id=cluster_label_include_id,
+                )
+            )
+        )
+    else:
+        work["cluster"] = work["cluster"].astype(str)
     left = work["entity"].to_numpy()
     right = work["cluster"].to_numpy()
     weights = work["count"].astype(float).to_numpy()
@@ -1688,6 +1802,18 @@ def plot_cluster_entity_sankey(
         written.append(path)
     plt.close(fig)
     return written
+
+
+def _format_cluster_sankey_label(
+    cluster_id: int,
+    cluster_labels: dict[int, str],
+    *,
+    include_id: bool,
+) -> str:
+    label = cluster_labels.get(cluster_id, str(cluster_id))
+    if include_id:
+        return f"{label} [{cluster_id}]"
+    return label
 
 
 _WORD_SPAN_RE = re.compile(r"\S+")
@@ -1838,6 +1964,7 @@ def build_fit_cluster_viz_plot_df(
     *,
     exclude_noise: bool = True,
     hdbscan_fit_scope: bool = True,
+    cluster_labels: dict[int, str] | None = None,
 ) -> tuple[pd.DataFrame | None, str]:
     """Build a :func:`plot_cluster_viz` frame from a :class:`~pelinker.reporting.ModelSelectionReport`."""
     cluster_viz = report.cluster_viz
@@ -1856,14 +1983,21 @@ def build_fit_cluster_viz_plot_df(
         cluster_viz, columns=viz_cols, index=report.assignments.index
     ).loc[assign.index]
     assign = assign.copy()
+    if "cluster" in assign.columns:
+        assign["cluster_id"] = assign["cluster"].astype(int)
     rename: dict[str, str] = {}
     if "cluster" in assign.columns:
         rename["cluster"] = "class"
     plot_assign = assign.rename(columns=rename)
+    if cluster_labels and "cluster_id" in plot_assign.columns:
+        plot_assign["class"] = plot_assign["cluster_id"].map(
+            lambda cid: cluster_labels.get(int(cid), str(cid))
+        )
     cols = [c for c in ("entity", "class") if c in plot_assign.columns]
     extra = [
         c
         for c in (
+            "cluster_id",
             "pmid",
             "mention",
             "a_abs",

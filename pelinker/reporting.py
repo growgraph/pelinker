@@ -447,9 +447,11 @@ def _ndarray_to_jsonable_nested(arr: np.ndarray) -> Any:
 LINKER_FIT_CLUSTERING_REPORT_BASENAME = "linker_fit.clustering_report.json.gz"
 LINKER_FIT_CLUSTER_COMPOSITION_BASENAME = "linker_fit.cluster_composition.json.gz"
 LINKER_FIT_EMERGENT_CLUSTERS_BASENAME = "linker_fit.emergent_clusters.json"
+LINKER_FIT_KB_OUT_BASENAME = "linker_fit.kb_out.json"
 LINKER_FIT_CLUSTER_KB_BASENAME = "linker_fit.cluster_kb.json"
 _FIT_CLUSTER_COMPOSITION_SCHEMA = "pelinker.fit_cluster_composition.v2"
 _EMERGENT_CLUSTERS_SCHEMA = "pelinker.emergent_clusters.v1"
+_KB_OUT_SCHEMA = "pelinker.kb_out.v1"
 MODEL_SELECTION_RUN_REPORT_BASENAME = "model_selection.run_report.json.gz"
 MODEL_SELECTION_SUMMARY_JSON_SCHEMA = "pelinker.model_selection.summary.v1"
 MODEL_SELECTION_SUMMARY_JSON_BASENAME = "model_selection.summary.json"
@@ -482,6 +484,11 @@ def linker_fit_cluster_composition_path(
 def linker_fit_emergent_clusters_path(report_dir: str | pathlib.Path) -> pathlib.Path:
     """Filesystem path for the emergent-cluster catalog JSON under ``report_dir``."""
     return pathlib.Path(report_dir).expanduser() / LINKER_FIT_EMERGENT_CLUSTERS_BASENAME
+
+
+def linker_fit_kb_out_path(report_dir: str | pathlib.Path) -> pathlib.Path:
+    """Filesystem path for the canonical KB-out catalog JSON under ``report_dir``."""
+    return pathlib.Path(report_dir).expanduser() / LINKER_FIT_KB_OUT_BASENAME
 
 
 def write_cluster_composition_json(
@@ -537,24 +544,60 @@ def write_emergent_clusters_json(
     *,
     indent: int = 2,
 ) -> None:
-    """Write :func:`~pelinker.cluster_composition_viz.build_emergent_clusters_catalog` output."""
+    """Write legacy emergent-cluster catalog or projection from KB-out."""
     p = pathlib.Path(path).expanduser()
     p.parent.mkdir(parents=True, exist_ok=True)
-    if str(payload.get("schema", "")) != _EMERGENT_CLUSTERS_SCHEMA:
+    schema = str(payload.get("schema", ""))
+    if schema not in (_EMERGENT_CLUSTERS_SCHEMA, _KB_OUT_SCHEMA):
         raise ValueError(
-            f"Expected schema {_EMERGENT_CLUSTERS_SCHEMA!r}, got {payload.get('schema')!r}"
+            f"Expected schema {_EMERGENT_CLUSTERS_SCHEMA!r} or {_KB_OUT_SCHEMA!r}, "
+            f"got {schema!r}"
+        )
+    if schema == _KB_OUT_SCHEMA:
+        from pelinker.kb_out import project_to_legacy_emergent_clusters
+
+        payload = project_to_legacy_emergent_clusters(payload)
+    with p.open("w", encoding="utf-8") as f:
+        json.dump(_json_normalize(payload), f, indent=indent, ensure_ascii=False)
+
+
+def write_kb_out_json(
+    path: str | pathlib.Path,
+    payload: dict[str, Any],
+    *,
+    indent: int = 2,
+) -> None:
+    """Write :func:`~pelinker.kb_out.build_kb_out_catalog` output."""
+    p = pathlib.Path(path).expanduser()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    if str(payload.get("schema", "")) != _KB_OUT_SCHEMA:
+        raise ValueError(
+            f"Expected schema {_KB_OUT_SCHEMA!r}, got {payload.get('schema')!r}"
         )
     with p.open("w", encoding="utf-8") as f:
         json.dump(_json_normalize(payload), f, indent=indent, ensure_ascii=False)
 
 
-def read_emergent_clusters_json(path: str | pathlib.Path) -> dict[str, Any]:
-    """Load emergent-cluster catalog JSON."""
+def read_kb_out_json(path: str | pathlib.Path) -> dict[str, Any]:
+    """Load KB-out catalog JSON."""
     p = pathlib.Path(path).expanduser()
     with p.open(encoding="utf-8") as f:
         raw: dict[str, Any] = json.load(f)
-    if str(raw.get("schema", "")) != _EMERGENT_CLUSTERS_SCHEMA:
-        raise ValueError(f"Unsupported emergent clusters schema: {raw.get('schema')!r}")
+    if str(raw.get("schema", "")) != _KB_OUT_SCHEMA:
+        raise ValueError(f"Unsupported KB-out schema: {raw.get('schema')!r}")
+    return raw
+
+
+def read_emergent_clusters_json(path: str | pathlib.Path) -> dict[str, Any]:
+    """Load emergent-cluster catalog JSON (legacy or KB-out schema)."""
+    p = pathlib.Path(path).expanduser()
+    with p.open(encoding="utf-8") as f:
+        raw: dict[str, Any] = json.load(f)
+    schema = str(raw.get("schema", ""))
+    if schema == _KB_OUT_SCHEMA:
+        return raw
+    if schema != _EMERGENT_CLUSTERS_SCHEMA:
+        raise ValueError(f"Unsupported emergent clusters schema: {schema!r}")
     return raw
 
 
@@ -565,9 +608,10 @@ def write_cluster_derived_labels_map_json(
     indent: int = 2,
 ) -> None:
     """
-    Write a cluster-derived labels map (``entity_id`` → ``cluster_name``) to a plain JSON file.
+    Write a KB-out labels map (``entity_id`` → ``display_name``) to a plain JSON file.
 
-    The file is human-readable and can be passed directly to a subsequent fit as a new KB
+    Thin export derived from :data:`linker_fit.kb_out.json` ``labels_map``.  The file is
+    human-readable and can be passed directly to a subsequent fit as a new KB
     ``labels_map``.  Parent directories are created when missing.
     """
     p = pathlib.Path(path).expanduser()

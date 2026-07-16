@@ -24,18 +24,20 @@ from pelinker.model import Linker
 from pelinker.cluster_composition_viz import (
     DEFAULT_MAX_CLUSTERS_FOR_PLOTS,
     build_cluster_composition_df,
-    build_emergent_clusters_catalog,
     cluster_entity_mass_summary,
 )
+from pelinker.kb_out import KbOutNamingConfig, cluster_labels_from_catalog
 from pelinker.reporting import (
     linker_fit_cluster_composition_path,
     linker_fit_cluster_kb_path,
     linker_fit_clustering_report_path,
     linker_fit_emergent_clusters_path,
+    linker_fit_kb_out_path,
     write_cluster_composition_json,
     write_cluster_derived_labels_map_json,
     write_clustering_report_json,
     write_emergent_clusters_json,
+    write_kb_out_json,
 )
 from pelinker.onto import NEGATIVE_LABEL
 from pelinker.util import expand_config_path
@@ -110,6 +112,9 @@ class FitCliConfig:
     kb_created_at: str | None = None
     kb_description: str = ""
     kb_entity_count: int | None = None
+    kb_out_name_min_fraction: float = 0.05
+    kb_out_name_top_n: int = 3
+    kb_out_ambiguity_min_capture: float = 0.10
     # Discriminator: auto = fit from parquet only if no text table; else embed then fit (legacy).
     # str (not Literal): OmegaConf structured configs reject Literal annotations on fields.
     pipeline: str = "embed_only"
@@ -148,6 +153,12 @@ class FitCliConfig:
             raise ValueError("max_mentions_negative must be >= 1 when provided")
         if self.clustering_sample_index < 0:
             raise ValueError("clustering_sample_index must be >= 0")
+        if not 0.0 <= self.kb_out_name_min_fraction <= 1.0:
+            raise ValueError("kb_out_name_min_fraction must be in [0, 1]")
+        if self.kb_out_name_top_n < 1:
+            raise ValueError("kb_out_name_top_n must be >= 1")
+        if not 0.0 <= self.kb_out_ambiguity_min_capture <= 1.0:
+            raise ValueError("kb_out_ambiguity_min_capture must be in [0, 1]")
 
 
 def _coerce_str_list(val: object) -> list[str]:
@@ -506,6 +517,16 @@ def _write_fit_outputs(
         exclude_noise=True,
         max_clusters=DEFAULT_MAX_CLUSTERS_FOR_PLOTS,
     )
+    catalog_raw = linker.kb_out_catalog
+    if catalog_raw is None:
+        raise RuntimeError("Linker.fit produced no KB-out catalog")
+    catalog = cast(dict[str, Any], catalog_raw)
+    cluster_labels = cluster_labels_from_catalog(catalog, label_kind="display")
+    if not composition_df.empty and cluster_labels:
+        composition_df = composition_df.copy()
+        composition_df["cluster_label"] = (
+            composition_df["cluster"].astype(int).map(cluster_labels)
+        )
     composition_json = linker_fit_cluster_composition_path(report_path_resolved)
     write_cluster_composition_json(
         composition_json,
@@ -516,19 +537,20 @@ def _write_fit_outputs(
     )
     logger.info("Wrote cluster composition artifact to %s", composition_json)
 
-    emergent_catalog = build_emergent_clusters_catalog(
-        linker.cluster_composition,
-        linker.cluster_consensus_names,
-        fit_report.assignments,
-        min_cluster_size=cfg.min_cluster_size,
-    )
+    kb_out_path = linker_fit_kb_out_path(report_path_resolved)
+    write_kb_out_json(kb_out_path, catalog)
+    logger.info("Wrote KB-out catalog to %s", kb_out_path)
+
     emergent_path = linker_fit_emergent_clusters_path(report_path_resolved)
-    write_emergent_clusters_json(emergent_path, emergent_catalog)
-    logger.info("Wrote emergent cluster catalog to %s", emergent_path)
+    write_emergent_clusters_json(emergent_path, catalog)
+    logger.info("Wrote legacy emergent cluster catalog to %s", emergent_path)
 
     cluster_kb_json = linker_fit_cluster_kb_path(report_path_resolved)
+    labels_map = catalog.get("labels_map", {})
+    if not isinstance(labels_map, dict):
+        raise RuntimeError("KB-out catalog labels_map must be a dict")
     write_cluster_derived_labels_map_json(
-        cluster_kb_json, linker.cluster_derived_labels_map
+        cluster_kb_json, {str(k): str(v) for k, v in labels_map.items()}
     )
     logger.info("Wrote cluster-derived KB labels map to %s", cluster_kb_json)
 
@@ -622,6 +644,11 @@ def fit(cfg: FitCliConfig) -> None:
 
     linker_fit_cfg = _build_linker_fit_config(cfg)
     kb_config = _build_kb_config(cfg, kb_path)
+    kb_out_naming = KbOutNamingConfig(
+        min_fraction=cfg.kb_out_name_min_fraction,
+        top_n=cfg.kb_out_name_top_n,
+        ambiguity_min_capture=cfg.kb_out_ambiguity_min_capture,
+    )
 
     linker = Linker(
         labels_map=labels_map,
@@ -638,12 +665,14 @@ def fit(cfg: FitCliConfig) -> None:
         fit_config=linker_fit_cfg,
         embedding_training=None,
         kb_config=kb_config,
+        kb_out_naming=kb_out_naming,
+        kb_in_labels_map_path=str(kb_path),
     )
 
-    logger.info("Fitted Linker model with %s entities", len(linker.vocabulary))
+    logger.info("Fitted Linker model with %s KB-out entities", len(linker.vocabulary))
     logger.info(
-        "Entity-level provisional clusters: %s distinct ids",
-        len(set(linker.cluster_assignments.values())),
+        "KB-out emergent clusters: %s distinct ids",
+        len(linker.cluster_id_to_entity_id),
     )
 
     if model_path is None or report_path_resolved is None:

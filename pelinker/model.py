@@ -63,9 +63,13 @@ from pelinker.reporting import (
     entity_negative_label_mask_01,
     subsample_diagnostics_stratified,
 )
+from pelinker.kb_out import (
+    KbOutFitProvenance,
+    KbOutNamingConfig,
+    build_kb_out_catalog,
+)
 from pelinker.linker_cluster_training import (
     cluster_composition_from_training_frame,
-    cluster_derived_labels_map,
     consensus_cluster_names,
     provisional_cluster_assignments_from_training_frame as _provisional_cluster_assignments_from_training_frame,
 )
@@ -106,6 +110,10 @@ _LINKER_LOAD_DEFAULTS: dict[str, object] = {
     "cluster_composition": None,
     "cluster_consensus_names": {},
     "cluster_derived_labels_map": {},
+    "kb_in_labels_map": {},
+    "kb_in_entity_clusters": {},
+    "cluster_id_to_entity_id": {},
+    "kb_out_catalog": None,
     "nlp_model_name": "en_core_web_trf",
     "_nlp": None,
     "screener_in_sample_metrics": None,
@@ -381,26 +389,49 @@ def _finalize_linker_cluster_state(
     *,
     kb_config: KBConfig | None,
     sampled_diag: LinkerFitDiagnostics,
+    fit_provenance: KbOutFitProvenance,
+    kb_out_naming: KbOutNamingConfig | None = None,
+    kb_in_labels_map_path: str | None = None,
 ) -> None:
     linker.cluster_composition = cluster_composition_from_training_frame(
         linker.training_cluster_frame
     )
     linker.cluster_consensus_names = consensus_cluster_names(linker.cluster_composition)
 
-    linker.cluster_assignments = _provisional_cluster_assignments_from_training_frame(
-        linker.labels_map,
+    linker.kb_in_labels_map = dict(linker.labels_map)
+    linker.kb_in_entity_clusters = _provisional_cluster_assignments_from_training_frame(
+        linker.kb_in_labels_map,
         linker.training_cluster_frame,
     )
-    linker.cluster_derived_labels_map = cluster_derived_labels_map(
-        linker.labels_map,
-        linker.cluster_assignments,
+    linker.cluster_assignments = dict(linker.kb_in_entity_clusters)
+
+    tcf = linker.training_cluster_frame
+    assert tcf is not None
+    assign_cols = ["entity", "cluster", "pmid", "mention"]
+    assign_cols.extend(c for c in MENTION_PROVENANCE_COLUMNS if c in tcf.columns)
+    assignments = tcf[assign_cols].copy()
+
+    linker.kb_out_catalog = build_kb_out_catalog(
         linker.cluster_composition,
+        assignments,
+        linker.kb_in_labels_map,
+        kb_config=kb_config,
+        fit_provenance=fit_provenance,
+        naming=kb_out_naming,
+        kb_in_labels_map_path=kb_in_labels_map_path,
     )
-    linker.vocabulary = sorted(linker.cluster_assignments.keys())
+    labels_map = linker.kb_out_catalog["labels_map"]
+    linker.labels_map = {str(k): str(v) for k, v in labels_map.items()}
+    linker.cluster_derived_labels_map = dict(linker.labels_map)
+    linker.cluster_id_to_entity_id = {
+        int(k): str(v)
+        for k, v in linker.kb_out_catalog.get("cluster_id_to_entity_id", {}).items()
+    }
+    linker.vocabulary = sorted(linker.labels_map.keys())
     if not linker.vocabulary:
         raise ValueError(
-            "No entity_ids received provisional cluster assignments after fit "
-            "(check labels_map and training entity labels)"
+            "No KB-out entity_ids after fit (no emergent clusters above noise; "
+            "check min_cluster_size and training data)"
         )
 
     if kb_config is not None:
@@ -547,6 +578,10 @@ class Linker:
         self.cluster_composition: ClusterCompositionSnapshot | None = None
         self.cluster_consensus_names: dict[int, str] = {}
         self.cluster_derived_labels_map: dict[str, str] = {}
+        self.kb_in_labels_map: dict[str, str] = {}
+        self.kb_in_entity_clusters: dict[str, int] = {}
+        self.cluster_id_to_entity_id: dict[int, str] = {}
+        self.kb_out_catalog: dict[str, object] | None = None
         self.screener: NegativeClassScreener | None = None
         self.screener_in_sample_metrics: NegativeScreenerInSampleMetrics | None = None
         self.clustering_fit_metrics: ClusteringFitMetrics | None = None
@@ -776,6 +811,8 @@ class Linker:
         embedding_training: EmbeddingTrainingConfig | None = None,
         embedding_metadata: EmbeddingModelMetadata | None = None,
         kb_config: KBConfig | None = None,
+        kb_out_naming: KbOutNamingConfig | None = None,
+        kb_in_labels_map_path: str | None = None,
     ) -> Linker:
         """
         Fit the Linker model with embeddings.
@@ -890,6 +927,8 @@ class Linker:
                 fit_cfg=fc,
                 min_cluster_size=min_cluster_size,
                 kb_config=kb_config,
+                kb_out_naming=kb_out_naming,
+                kb_in_labels_map_path=kb_in_labels_map_path,
             )
 
             return self
@@ -912,6 +951,8 @@ class Linker:
         fit_cfg: LinkerFitConfig,
         min_cluster_size: int,
         kb_config: KBConfig | None,
+        kb_out_naming: KbOutNamingConfig | None = None,
+        kb_in_labels_map_path: str | None = None,
     ) -> None:
         """Fit screeners, then PCA/UMAP + HDBSCAN on the clustering subsample; label full KB via predict."""
         prepared = prepared.copy()
@@ -1040,6 +1081,13 @@ class Linker:
             self,
             kb_config=kb_config,
             sampled_diag=sampled_diag,
+            fit_provenance=KbOutFitProvenance(
+                min_cluster_size=min_cluster_size,
+                clustering_sample_index=fit_cfg.clustering_sample_index,
+                seed=fit_cfg.base_seed,
+            ),
+            kb_out_naming=kb_out_naming,
+            kb_in_labels_map_path=kb_in_labels_map_path,
         )
 
     def _load_embeddings_from_file(
@@ -1667,19 +1715,11 @@ class Linker:
             if cluster_id == -1 or cluster_prob < threshold:
                 continue
 
-            # Find all entities in the same cluster
-            cluster_entities = [
-                entity_id
-                for entity_id, cid in self.cluster_assignments.items()
-                if cid == cluster_id
-            ]
-
-            # Skip clusters that have no mapped entities from the training vocabulary.
-            if not cluster_entities:
+            # Resolve KB-out entity for this HDBSCAN cluster.
+            predicted_entity = self.cluster_id_to_entity_id.get(cluster_id)
+            if predicted_entity is None:
                 continue
 
-            # For now, return the first entity in the cluster
-            predicted_entity = cluster_entities[0]
             row = self._entity_prediction_row(
                 item,
                 entity_id_predicted=predicted_entity,

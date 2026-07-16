@@ -161,18 +161,28 @@ def limit_composition_for_flow_plots(
     *,
     max_clusters: int | None = DEFAULT_MAX_CLUSTERS_FOR_PLOTS,
     max_entities: int | None = DEFAULT_MAX_ENTITIES_FOR_FLOW_PLOTS,
+    min_within_cluster_fraction: float = 0.0,
 ) -> pd.DataFrame:
     """
       Subset a long composition table for Sankey/bump charts.
 
       Keeps top clusters by mass and top entities by total mass (drops ``Other (...)`` rows
     from entity ranking, then re-adds per-cluster Other slices when needed).
+
+    When ``min_within_cluster_fraction`` > 0, entity slices below that share of their
+    cluster's total mass are rolled into ``Other (...)``.
     """
     if composition_df.empty:
         return composition_df
     work = composition_df.copy()
     work["cluster"] = work["cluster"].astype(int)
     work["entity"] = work["entity"].astype(str)
+
+    if min_within_cluster_fraction > 0.0:
+        work = _apply_within_cluster_fraction_floor(
+            work,
+            min_within_cluster_fraction=min_within_cluster_fraction,
+        )
 
     cluster_totals = work.groupby("cluster", sort=False)["count"].sum()
     keep_clusters = top_cluster_ids_by_mass(
@@ -203,6 +213,53 @@ def limit_composition_for_flow_plots(
             ignore_index=True,
         )
     return work
+
+
+def _apply_within_cluster_fraction_floor(
+    composition_df: pd.DataFrame,
+    *,
+    min_within_cluster_fraction: float,
+) -> pd.DataFrame:
+    """Roll entity slices below a within-cluster fraction into ``Other (...)``."""
+    if composition_df.empty or min_within_cluster_fraction <= 0.0:
+        return composition_df
+    parts: list[pd.DataFrame] = []
+    for cid, grp in composition_df.groupby("cluster", sort=False):
+        cluster_id = int(cid)
+        entity_rows = grp[~grp["entity"].astype(str).str.startswith("Other (")].copy()
+        other_rows = grp[grp["entity"].astype(str).str.startswith("Other (")]
+        other_mass = float(other_rows["count"].sum()) if len(other_rows) else 0.0
+        total = float(entity_rows["count"].sum()) + other_mass
+        if total <= 0.0:
+            parts.append(grp)
+            continue
+        keep_mask = (
+            entity_rows["count"].astype(float) / total >= min_within_cluster_fraction
+        )
+        kept = entity_rows.loc[keep_mask]
+        dropped_mass = float(entity_rows.loc[~keep_mask, "count"].sum())
+        rolled = other_mass + dropped_mass
+        if rolled > 0.0:
+            n_other = int((~keep_mask).sum()) + (
+                int(len(other_rows)) if len(other_rows) else 0
+            )
+            other_row = pd.DataFrame(
+                [
+                    {
+                        "cluster": cluster_id,
+                        "entity": f"Other ({n_other} terms)",
+                        "count": rolled,
+                    }
+                ]
+            )
+            if "cluster_label" in grp.columns:
+                other_row["cluster_label"] = grp["cluster_label"].iloc[0]
+            parts.append(pd.concat([kept, other_row], ignore_index=True))
+        else:
+            parts.append(kept)
+    if not parts:
+        return composition_df
+    return pd.concat(parts, ignore_index=True)
 
 
 def cluster_entity_mass_summary(assignments: pd.DataFrame) -> dict[str, int | float]:

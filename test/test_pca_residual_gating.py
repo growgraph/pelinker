@@ -203,7 +203,7 @@ def test_predict_with_clustering_adds_anomaly_metrics(monkeypatch) -> None:
     linker = Linker()
     linker.transformer = _DummyTransformer()
     linker.clusterer = object()
-    linker.cluster_assignments = {"e1": 0}
+    linker.cluster_id_to_entity_id = {0: "e1"}
     linker.screener = NegativeClassScreener(
         kind="lda", negative_label=NEGATIVE_LABEL, _estimator=None
     )
@@ -244,7 +244,7 @@ def test_predict_with_clustering_respects_cluster_probability_threshold(
     linker = Linker()
     linker.transformer = _DummyTransformer()
     linker.clusterer = object()
-    linker.cluster_assignments = {"e1": 0}
+    linker.cluster_id_to_entity_id = {0: "e1"}
     linker.screener = NegativeClassScreener(
         kind="lda", negative_label=NEGATIVE_LABEL, _estimator=None
     )
@@ -272,7 +272,7 @@ def test_predict_with_clustering_keeps_disjoint_spans(monkeypatch) -> None:
     linker = Linker()
     linker.transformer = _DummyTransformer()
     linker.clusterer = object()
-    linker.cluster_assignments = {"e1": 0}
+    linker.cluster_id_to_entity_id = {0: "e1"}
     linker.screener = NegativeClassScreener(
         kind="lda", negative_label=NEGATIVE_LABEL, _estimator=None
     )
@@ -304,7 +304,7 @@ def test_predict_with_clustering_overlap_prefers_shorter_span_on_score_tie(
     linker = Linker()
     linker.transformer = _DummyTransformer()
     linker.clusterer = object()
-    linker.cluster_assignments = {"e1": 0}
+    linker.cluster_id_to_entity_id = {0: "e1"}
     linker.screener = NegativeClassScreener(
         kind="lda", negative_label=NEGATIVE_LABEL, _estimator=None
     )
@@ -338,7 +338,7 @@ def test_predict_with_clustering_overlap_prefers_higher_score_over_shorter_span(
     linker = Linker()
     linker.transformer = _DummyTransformer()
     linker.clusterer = object()
-    linker.cluster_assignments = {"e1": 0}
+    linker.cluster_id_to_entity_id = {0: "e1"}
     linker.screener = NegativeClassScreener(
         kind="lda", negative_label=NEGATIVE_LABEL, _estimator=None
     )

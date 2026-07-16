@@ -146,7 +146,9 @@ def _embedding_metadata_to_json(
 def build_info_payload(state: ServerState) -> dict[str, Any]:
     linker = state.linker
     em = linker.embedding_metadata
-    cluster_ids = set(linker.cluster_assignments.values())
+    cluster_ids = set(linker.cluster_id_to_entity_id.keys()) or set(
+        linker.cluster_assignments.values()
+    )
     return {
         "resolved_model_path": state.resolved_model_path,
         "embedding_metadata": _embedding_metadata_to_json(em),

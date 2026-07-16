@@ -74,6 +74,24 @@ def test_limit_composition_for_flow_plots_entity_cap() -> None:
     assert len(entities) <= 3
 
 
+def test_limit_composition_for_flow_plots_min_within_cluster_fraction() -> None:
+    comp = pd.DataFrame(
+        {
+            "cluster": [0, 0, 0],
+            "entity": ["a", "b", "c"],
+            "count": [10.0, 1.0, 0.5],
+        }
+    )
+    limited = limit_composition_for_flow_plots(
+        comp, max_clusters=1, max_entities=10, min_within_cluster_fraction=0.10
+    )
+    entities = set(limited["entity"].astype(str))
+    assert "a" in entities
+    assert "b" not in entities
+    assert "c" not in entities
+    assert any(e.startswith("Other (") for e in entities)
+
+
 def test_emergent_clusters_catalog_entity_ids() -> None:
     assignments = pd.DataFrame(
         {

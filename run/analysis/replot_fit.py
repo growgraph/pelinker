@@ -8,7 +8,7 @@ Produces figures per report directory (emergent clusters only; HDBSCAN noise ``-
   - ``fit_cluster_entity_sankey.{png,pdf}``  – capped entity→cluster Sankey
 
 Reads ``linker_fit.clustering_report.json.gz``, ``linker_fit.cluster_composition.json.gz``,
-and ``linker_fit.emergent_clusters.json`` when present.
+``linker_fit.kb_out.json`` (or legacy ``linker_fit.emergent_clusters.json``) when present.
 
 With ``--pmid-text-table``, cluster viz hover text includes a five-word context window around
 each mention (resolved via ``pmid``, ``a_abs``, and ``b_abs`` provenance).
@@ -34,6 +34,7 @@ from pelinker.cluster_composition_viz import (
     top_cluster_ids_by_mass,
 )
 
+from pelinker.kb_out import cluster_labels_from_catalog
 from pelinker.plotting import (
     build_fit_cluster_viz_plot_df,
     enrich_fit_cluster_viz_plot_df_with_context,
@@ -44,13 +45,46 @@ from pelinker.reporting import (
     linker_fit_cluster_composition_path,
     linker_fit_clustering_report_path,
     linker_fit_emergent_clusters_path,
+    linker_fit_kb_out_path,
     read_cluster_composition_json,
     read_clustering_report_json,
     read_emergent_clusters_json,
+    read_kb_out_json,
 )
 
 _PIE_SAMPLE_MAX_CLUSTERS = 6
 _FIGURE_EXTS = ("png", "pdf")
+
+
+def _load_cluster_catalog(report_dir: pathlib.Path) -> dict | None:
+    kb_out_path = linker_fit_kb_out_path(report_dir)
+    if kb_out_path.exists():
+        return read_kb_out_json(kb_out_path)
+    emergent_path = linker_fit_emergent_clusters_path(report_dir)
+    if emergent_path.exists():
+        return read_emergent_clusters_json(emergent_path)
+    return None
+
+
+def _apply_cluster_labels_to_composition(
+    df: pd.DataFrame,
+    cluster_labels: dict[int, str],
+) -> pd.DataFrame:
+    if df.empty or not cluster_labels:
+        return df
+    out = df.copy()
+    out["cluster"] = out["cluster"].astype(int)
+    out["cluster_label"] = out["cluster"].map(
+        lambda cid: cluster_labels.get(int(cid), str(cid))
+    )
+    return out
+
+
+def _cluster_title(cluster_id: int, cluster_data: pd.DataFrame) -> str:
+    if "cluster_label" in cluster_data.columns and len(cluster_data):
+        label = str(cluster_data["cluster_label"].iloc[0])
+        return f"{label} (mass={cluster_data['count'].sum():.2f})"
+    return f"Cluster {cluster_id} (mass={cluster_data['count'].sum():.2f})"
 
 
 def plot_seaborn_bars(
@@ -59,13 +93,17 @@ def plot_seaborn_bars(
     save_dir: pathlib.Path | None = None,
     show: bool = False,
 ) -> list[pathlib.Path]:
+    if processed_df.empty:
+        return []
+    plot_df = processed_df.copy()
+    facet_col = "cluster_label" if "cluster_label" in plot_df.columns else "cluster"
     sns.set_theme(style="whitegrid")
     g = sns.catplot(
-        data=processed_df,
+        data=plot_df,
         y="entity",
         x="count",
         hue="entity",
-        col="cluster",
+        col=facet_col,
         col_wrap=3,
         kind="bar",
         sharey=False,
@@ -75,7 +113,7 @@ def plot_seaborn_bars(
         height=3.2,
         aspect=1.4,
     )
-    g.set_titles("Cluster {col_name}", weight="bold", size=11)
+    g.set_titles("{col_name}", weight="bold", size=11)
     g.set_axis_labels("Weighted mass", "")
     plt.tight_layout()
 
@@ -164,7 +202,7 @@ def plot_pie_grid(
             textprops={"fontsize": label_fontsize},
         )
         axes_flat[i].set_title(
-            f"Cluster {cluster} (mass={cluster_data['count'].sum():.2f})",
+            _cluster_title(int(cluster), cluster_data),
             fontweight="bold",
             fontsize=title_fontsize,
         )
@@ -282,6 +320,20 @@ def _load_composition_df(
         "HDBSCAN was fit and that pass ambient screener and manifold OOV gates."
     ),
 )
+@click.option(
+    "--sankey-min-frac",
+    type=float,
+    default=0.0,
+    show_default=True,
+    help="Drop entity slices below this within-cluster mass fraction in the Sankey (rolled into Other).",
+)
+@click.option(
+    "--cluster-label",
+    type=click.Choice(["display", "short"], case_sensitive=False),
+    default="display",
+    show_default=True,
+    help="Use KB-out display or short label for cluster facets and Sankey.",
+)
 def main(
     report_dir: pathlib.Path,
     top_n: int,
@@ -290,6 +342,8 @@ def main(
     show: bool,
     pmid_text_table: pathlib.Path | None,
     viz_all_kb: bool,
+    sankey_min_frac: float,
+    cluster_label: str,
 ) -> None:
     report_dir = report_dir.expanduser().resolve()
 
@@ -298,10 +352,14 @@ def main(
     summary = cluster_entity_mass_summary(report.assignments)
     n_emergent = int(summary["n_emergent_clusters"])
 
-    emergent_path = linker_fit_emergent_clusters_path(report_dir)
-    if emergent_path.exists():
-        catalog = read_emergent_clusters_json(emergent_path)
+    catalog = _load_cluster_catalog(report_dir)
+    if catalog is not None:
         n_emergent = int(catalog.get("n_emergent_clusters", n_emergent))
+
+    cluster_labels: dict[int, str] = {}
+    if catalog is not None:
+        label_kind = "short" if cluster_label == "short" else "display"
+        cluster_labels = cluster_labels_from_catalog(catalog, label_kind=label_kind)
 
     click.echo(
         f"Emergent clusters: {n_emergent} "
@@ -311,7 +369,7 @@ def main(
     if n_emergent > max_clusters:
         click.echo(
             f"Note: {n_emergent - max_clusters} smaller emergent clusters omitted from "
-            "figures; see linker_fit.emergent_clusters.json for the full catalog.",
+            "figures; see linker_fit.kb_out.json for the full catalog.",
             err=True,
         )
 
@@ -321,6 +379,7 @@ def main(
         top_n=top_n,
         max_clusters=max_clusters,
     )
+    processed_df = _apply_cluster_labels_to_composition(processed_df, cluster_labels)
     written: list[pathlib.Path] = []
     written += plot_seaborn_bars(processed_df, save_dir=report_dir, show=show)
     written += plot_pie_grid(processed_df, save_dir=report_dir, show=show)
@@ -340,6 +399,7 @@ def main(
         report,
         exclude_noise=True,
         hdbscan_fit_scope=not viz_all_kb,
+        cluster_labels=cluster_labels or None,
     )
     if (
         not viz_all_kb
@@ -366,6 +426,8 @@ def main(
         save_dir=report_dir,
         max_clusters=max_clusters,
         max_entities=max_entities,
+        min_within_cluster_fraction=sankey_min_frac,
+        cluster_labels=cluster_labels or None,
     )
 
     if written:
