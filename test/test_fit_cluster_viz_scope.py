@@ -85,6 +85,26 @@ def test_filter_assignments_for_cluster_viz_membership() -> None:
     assert len(all_kb) == 3
 
 
+def test_filter_assignments_includes_noise_when_requested() -> None:
+    assign = pd.DataFrame(
+        {
+            "entity": ["a", "b"],
+            "cluster": [0, -1],
+            "clustering_in_sample": [True, True],
+            "screener_pass": [True, True],
+            "manifold_oov_pass": [True, True],
+        }
+    )
+    with_noise = filter_assignments_for_cluster_viz(
+        assign, exclude_noise=False, hdbscan_fit_scope=True
+    )
+    assert set(with_noise["cluster"].astype(int)) == {0, -1}
+    without = filter_assignments_for_cluster_viz(
+        assign, exclude_noise=True, hdbscan_fit_scope=True
+    )
+    assert set(without["cluster"].astype(int)) == {0}
+
+
 def test_filter_assignments_legacy_report_without_membership_cols() -> None:
     assign = pd.DataFrame({"entity": ["a", "b"], "cluster": [0, 1]})
     out = filter_assignments_for_cluster_viz(assign, hdbscan_fit_scope=True)

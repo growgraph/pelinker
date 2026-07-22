@@ -2,6 +2,7 @@ import json
 
 import numpy as np
 import pandas as pd
+import pytest
 import torch
 from click.testing import CliRunner
 
@@ -266,6 +267,38 @@ def test_predict_with_clustering_respects_cluster_probability_threshold(
     )
 
     assert len(out) == 0
+
+
+def test_predict_with_clustering_default_threshold_drops_low_scores(
+    monkeypatch,
+) -> None:
+    from pelinker.model import DEFAULT_CLUSTER_MEMBERSHIP_THRESHOLD
+
+    linker = Linker()
+    linker.transformer = _DummyTransformer()
+    linker.clusterer = object()
+    linker.cluster_id_to_entity_id = {0: "e1"}
+    linker.screener = NegativeClassScreener(
+        kind="lda", negative_label=NEGATIVE_LABEL, _estimator=None
+    )
+
+    def _mock_approximate_predict(_clusterer, _umap_clustering):
+        return np.array([0, 0, -1]), np.array([0.9, 0.1, 0.99])
+
+    monkeypatch.setattr("pelinker.model.approximate_predict", _mock_approximate_predict)
+    vocabulary = [
+        MentionCandidate(mention="high", a=0, b=2, itext=0, a_abs=0, b_abs=2),
+        MentionCandidate(mention="low", a=0, b=2, itext=0, a_abs=3, b_abs=5),
+        MentionCandidate(mention="noise", a=0, b=2, itext=0, a_abs=6, b_abs=8),
+    ]
+    embeddings = torch.zeros((3, 4), dtype=torch.float32)
+
+    out, _anomaly = linker._predict_with_clustering(embeddings, vocabulary)
+
+    assert DEFAULT_CLUSTER_MEMBERSHIP_THRESHOLD == 0.3
+    assert len(out) == 1
+    assert out[0]["mention"] == "high"
+    assert float(out[0]["score"]) == pytest.approx(0.9)
 
 
 def test_predict_with_clustering_keeps_disjoint_spans(monkeypatch) -> None:

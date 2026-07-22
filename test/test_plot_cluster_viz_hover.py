@@ -48,6 +48,8 @@ def test_plot_cluster_viz_writes_html_with_legend_hint(tmp_path: pathlib.Path) -
             ],
             "cviz_00": [0.1, 0.2, 0.3],
             "cviz_01": [0.4, 0.5, 0.6],
+            "pmid": ["111", "222", "333"],
+            "mention": ["m1", "m2", "m3"],
             "cluster_score": [0.98765, 0.5, 0.12345],
             "context": [" ".join(["ctx"] * 40)] * 3,
         }
@@ -62,3 +64,14 @@ def test_plot_cluster_viz_writes_html_with_legend_hint(tmp_path: pathlib.Path) -
     assert "Cluster (dbl-click isolate)" in html
     assert "Cluster<br>" not in html
     assert '"dragmode":"pan"' in html or '"dragmode": "pan"' in html
+    # Hover order: cluster, pmid, mention, context, coords, cluster score.
+    # Plotly HTML-escapes tags in the figure JSON.
+    expected = (
+        "%{customdata[0]}\\u003c\\u002fb\\u003e"
+        "\\u003cbr\\u003ePMID: %{customdata[1]}"
+        "\\u003cbr\\u003eMention: %{customdata[2]}"
+        "\\u003cbr\\u003eContext: %{customdata[3]}"
+        "\\u003cbr\\u003eCoord: (%{x:.3f}, %{y:.3f})"
+        "\\u003cbr\\u003eCluster score: %{customdata[4]}"
+    )
+    assert expected in html

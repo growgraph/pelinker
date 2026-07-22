@@ -6,6 +6,7 @@ import pathlib
 
 import pandas as pd
 
+from pelinker.clustering_search_ranking import outer_score_from_summary_row
 from pelinker.grid_export import GRID_EXPORT_ID_COLUMNS, grid_export_column_order
 from pelinker.model_selection_checkpoint import (
     FailureRecord,
@@ -198,7 +199,9 @@ def mark_combination_done(
     flat = summary.to_flat_dict()
     ckpt.summaries_by_key[combination_key] = dict(flat)
     if singleton_score_key is not None:
-        ckpt.singleton_scores_by_key[singleton_score_key] = float(summary.dbcv.mean)
+        ckpt.singleton_scores_by_key[singleton_score_key] = float(
+            outer_score_from_summary_row(summary)
+        )
     save_checkpoint_atomic(ckpt_path, ckpt)
 
 

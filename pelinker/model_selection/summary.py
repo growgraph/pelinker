@@ -9,6 +9,12 @@ from typing import Any
 
 import pandas as pd
 
+from pelinker.clustering_search_ranking import (
+    METRICS_TWO_LEVEL_DOC,
+    OUTER_SCORE_COL,
+    attach_outer_scores,
+    pick_best_row,
+)
 from pelinker.config import ClusteringOptimizationConfig
 from pelinker.grid_export import (
     GRID_COL_CHOSEN_MIN_CLUSTER_SIZE,
@@ -77,11 +83,13 @@ def _json_float_metric(val: object) -> float | None:
 def _summary_combo_entry_from_row(row: pd.Series) -> dict[str, Any]:
     """One leaderboard row for ``model_selection.summary.json``."""
     out: dict[str, Any] = {
-        "combo_key": str(row["combo_key"]),
+        "combo_key": str(row["combo_key"]) if "combo_key" in row.index else None,
         "model": str(row["model"]),
         "layer": str(row["layer"]),
         "best_score": _json_float_metric(row.get("best_score")),
         "best_score_std": _json_float_metric(row.get("best_score_std")),
+        "outer_score": _json_float_metric(row.get(OUTER_SCORE_COL)),
+        "outer_score_std": _json_float_metric(row.get("outer_score_std")),
         "best_size": _json_float_metric(row.get("best_size")),
         "best_size_std": _json_float_metric(row.get("best_size_std")),
         "ari": _json_float_metric(row.get("ari")),
@@ -132,14 +140,26 @@ def build_model_selection_summary_payload(
     generated_at: str | None = None,
 ) -> dict[str, Any]:
     """
-    Compact top-level summary for replot: top screener/combined AUC combos and best DBCV.
+    Compact top-level summary for replot: top screener/combined AUC combos and best
+    outer DBCV+ARI (plus best DBCV for reference).
     """
     df_heatmap = df_results[~df_results["model"].isin(["fusion2", "fusion3"])].copy()
     top_screener = _ranked_summary_entries(df_heatmap, "screener_auc_mean", n=3)
     top_combined = _ranked_summary_entries(df_heatmap, "combined_auc_mean", n=3)
 
+    best_outer: dict[str, Any] | None = None
     best_dbcv: dict[str, Any] | None = None
     if not df_heatmap.empty and "best_score" in df_heatmap.columns:
+        scored = attach_outer_scores(df_heatmap, use_minmax=True)
+        try:
+            winner = pick_best_row(
+                scored, tie_break_cols=("model", "layer"), use_minmax=True
+            )
+            best_outer = _summary_combo_entry_from_row(pd.Series(winner))
+            best_outer["rank_metric"] = OUTER_SCORE_COL
+            best_outer["rank_value"] = _json_float_metric(winner.get(OUTER_SCORE_COL))
+        except ValueError:
+            best_outer = None
         dbcv_ranked = df_heatmap.dropna(subset=["best_score"]).nlargest(1, "best_score")
         if not dbcv_ranked.empty:
             best_dbcv = _summary_combo_entry_from_row(dbcv_ranked.iloc[0])
@@ -171,9 +191,11 @@ def build_model_selection_summary_payload(
         "report_dir": str(report_path.resolve()),
         "n_combinations": int(len(df_results)),
         "n_singleton_combinations": int(len(df_heatmap)),
+        "metrics": dict(METRICS_TWO_LEVEL_DOC),
         "rankings": {
             "top_by_screener_auc": top_screener,
             "top_by_combined_auc": top_combined,
+            "best_by_outer_dbcv_ari": best_outer,
             "best_by_dbcv": best_dbcv,
         },
         "best_combined_auc": best_combined,

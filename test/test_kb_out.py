@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import json
-
 import pandas as pd
 
 from pelinker.config import ClusterCompositionSnapshot, KBConfig
@@ -11,11 +9,11 @@ from pelinker.kb_out import (
     KbOutFitProvenance,
     KbOutNamingConfig,
     build_kb_out_catalog,
+    cluster_labels_from_catalog,
     find_ambiguous_entities,
     find_split_mentions,
     format_cluster_display_name,
     format_kb_out_entity_id,
-    project_to_legacy_emergent_clusters,
 )
 from pelinker.reporting import read_kb_out_json, write_kb_out_json
 
@@ -49,6 +47,7 @@ def test_build_kb_out_catalog_disambiguates_display_names() -> None:
             "cluster": [0, 0, 1, 1],
             "pmid": ["1", "1", "2", "2"],
             "mention": ["m", "m", "n", "n"],
+            "cluster_score": [0.9, 0.85, 0.8, 0.7],
         }
     )
     composition = ClusterCompositionSnapshot(
@@ -82,6 +81,47 @@ def test_build_kb_out_catalog_disambiguates_display_names() -> None:
         catalog["labels_map"][catalog["clusters"][0]["entity_id"]]
         == catalog["clusters"][0]["display_name"]
     )
+    labels = cluster_labels_from_catalog(catalog, label_kind="display")
+    assert labels[0] == catalog["clusters"][0]["display_name"]
+    assert "noise" in catalog
+    assert catalog["noise"]["n_mentions"] == 0
+    assert -1 not in {int(c["cluster_id"]) for c in catalog["clusters"]}
+    assert "-1" not in catalog["cluster_id_to_entity_id"]
+
+
+def test_build_kb_out_catalog_noise_diagnostic() -> None:
+    assignments = pd.DataFrame(
+        {
+            "entity": ["alpha", "alpha", "gamma"],
+            "cluster": [0, 0, -1],
+            "pmid": ["1", "1", "2"],
+            "mention": ["m", "m", "n"],
+            "cluster_score": [0.9, 0.8, 0.05],
+        }
+    )
+    composition = ClusterCompositionSnapshot(
+        global_property_mass={"alpha": 2, "gamma": 1},
+        cluster_within_fraction={
+            0: {"alpha": 1.0},
+            -1: {"gamma": 1.0},
+        },
+        cluster_fraction_of_property_mass={
+            0: {"alpha": 1.0},
+            -1: {"gamma": 1.0},
+        },
+    )
+    catalog = build_kb_out_catalog(
+        composition,
+        assignments,
+        {"e1": "alpha", "e2": "gamma"},
+        kb_config=None,
+        fit_provenance=KbOutFitProvenance(min_cluster_size=2),
+    )
+    assert catalog["n_noise_mentions"] == 1
+    assert catalog["noise"]["top_entities"][0]["entity"] == "gamma"
+    assert "-1" not in catalog["cluster_id_to_entity_id"]
+    labels = cluster_labels_from_catalog(catalog)
+    assert labels[-1] == "noise"
 
 
 def test_find_ambiguous_entities_polysemy() -> None:
@@ -131,6 +171,13 @@ def test_kb_out_json_round_trip(tmp_path) -> None:
         "n_emergent_clusters": 1,
         "n_noise_mentions": 0,
         "noise_fraction": 0.0,
+        "noise": {
+            "label": "noise",
+            "n_mentions": 0,
+            "noise_fraction": 0.0,
+            "top_entities": [],
+            "cluster_score_percentiles": {},
+        },
         "clusters": [],
         "entity_membership": {},
         "ambiguous_entities": [],
@@ -141,35 +188,4 @@ def test_kb_out_json_round_trip(tmp_path) -> None:
     write_kb_out_json(path, payload)
     loaded = read_kb_out_json(path)
     assert loaded["schema"] == "pelinker.kb_out.v1"
-    legacy = project_to_legacy_emergent_clusters(payload)
-    assert legacy["schema"] == "pelinker.emergent_clusters.v1"
-
-
-def test_project_to_legacy_emergent_clusters_components() -> None:
-    catalog = {
-        "schema": "pelinker.kb_out.v1",
-        "provenance": {"fit": {"min_cluster_size": 5}},
-        "n_emergent_clusters": 1,
-        "n_noise_mentions": 0,
-        "noise_fraction": 0.0,
-        "clusters": [
-            {
-                "cluster_id": 2,
-                "entity_id": "kb::C0002",
-                "display_name": "alpha-100",
-                "weighted_mass": 1.0,
-                "mention_count": 3,
-                "dominant_entity_fraction": 1.0,
-                "components": [
-                    {
-                        "entity": "alpha",
-                        "within_cluster_fraction": 1.0,
-                        "capture_fraction": 1.0,
-                    }
-                ],
-            }
-        ],
-    }
-    legacy = project_to_legacy_emergent_clusters(catalog)
-    assert legacy["clusters"][0]["top_entities"][0]["entity"] == "alpha"
-    json.dumps(legacy)
+    assert loaded["n_emergent_clusters"] == 1

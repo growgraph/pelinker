@@ -93,6 +93,9 @@ from pelinker.util import (
 
 logger = logging.getLogger(__name__)
 
+# Minimum HDBSCAN soft membership probability to emit a linked entity (nil below).
+DEFAULT_CLUSTER_MEMBERSHIP_THRESHOLD = 0.3
+
 _ROW_ID_COL = "_pelinker_row_id"
 
 _LINKER_LOAD_DEFAULTS: dict[str, object] = {
@@ -1464,7 +1467,7 @@ class Linker:
         self,
         texts: Sequence[str],
         max_length: int | None = None,
-        threshold: float = 0.0,
+        threshold: float = DEFAULT_CLUSTER_MEMBERSHIP_THRESHOLD,
         *,
         use_gpu: bool = False,
         include_mention_anomaly: bool = False,
@@ -1485,7 +1488,9 @@ class Linker:
 
         Each ``entities`` row includes ``score``: HDBSCAN approximate cluster
         membership probability from ``approximate_predict`` on UMAP coordinates.
-        The ``threshold`` argument drops rows whose ``score`` is below that minimum.
+        The ``threshold`` argument drops rows whose ``score`` is below that minimum
+        (default :data:`DEFAULT_CLUSTER_MEMBERSHIP_THRESHOLD`). Cluster ``-1``
+        (HDBSCAN noise) is always treated as nil and omitted.
 
         When ``include_mention_anomaly`` or ``include_debug_mentions`` is true,
         :attr:`LinkerPredictResult.debug_mentions` lists one diagnostic row per extracted
@@ -1612,7 +1617,7 @@ class Linker:
         self,
         embeddings: torch.Tensor,
         mentions: list[MentionCandidate],
-        threshold: float = 0.0,
+        threshold: float = DEFAULT_CLUSTER_MEMBERSHIP_THRESHOLD,
         *,
         mention_anomaly_rows: bool = False,
         kb_lemma_by_wg: dict[WordGrouping, dict[str, str]] | None = None,

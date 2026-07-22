@@ -10,8 +10,10 @@ import pandas as pd
 
 from pelinker.cluster_composition_viz import (
     HDBSCAN_NOISE_CLUSTER_ID,
+    NOISE_CLUSTER_LABEL,
     aggregate_cluster_entity_mass,
     cluster_entity_mass_summary,
+    cluster_score_percentile_summary,
     filter_emergent_assignments,
 )
 from pelinker.config import ClusterCompositionSnapshot, KBConfig
@@ -313,6 +315,25 @@ def build_kb_out_catalog(
     split_mentions = find_split_mentions(assignments)
 
     summary = cluster_entity_mass_summary(assignments)
+    score_pcts = cluster_score_percentile_summary(assignments)
+    noise_within = composition.cluster_within_fraction.get(HDBSCAN_NOISE_CLUSTER_ID, {})
+    noise_top = sorted(noise_within.items(), key=lambda kv: (-kv[1], kv[0]))[
+        : naming_cfg.top_n
+    ]
+    noise_diag: dict[str, Any] = {
+        "label": NOISE_CLUSTER_LABEL,
+        "n_mentions": int(summary["n_noise_mentions"]),
+        "noise_fraction": float(summary["noise_fraction"]),
+        "top_entities": [
+            {
+                "entity": ent,
+                "within_cluster_fraction": float(frac),
+            }
+            for ent, frac in noise_top
+        ],
+        "cluster_score_percentiles": score_pcts["noise"],
+    }
+
     kb_out_meta: dict[str, Any] = {
         "entity_count": len(labels_map),
     }
@@ -359,6 +380,7 @@ def build_kb_out_catalog(
         "n_emergent_clusters": int(summary["n_emergent_clusters"]),
         "n_noise_mentions": int(summary["n_noise_mentions"]),
         "noise_fraction": float(summary["noise_fraction"]),
+        "noise": noise_diag,
         "clusters": clusters_out,
         "entity_membership": entity_membership,
         "ambiguous_entities": ambiguous_entities,
@@ -370,46 +392,16 @@ def build_kb_out_catalog(
     }
 
 
-def project_to_legacy_emergent_clusters(catalog: dict[str, Any]) -> dict[str, Any]:
-    """Project a KB-out catalog to legacy ``pelinker.emergent_clusters.v1`` shape."""
-    fit_prov = catalog.get("provenance", {}).get("fit", {})
-    clusters_legacy: list[dict[str, Any]] = []
-    for cluster in catalog.get("clusters", []):
-        top_entities = [
-            {
-                "entity": comp["entity"],
-                "within_cluster_fraction": comp["within_cluster_fraction"],
-                "capture_fraction_of_entity_mass": comp["capture_fraction"],
-            }
-            for comp in cluster.get("components", [])
-        ]
-        clusters_legacy.append(
-            {
-                "cluster_id": cluster["cluster_id"],
-                "entity_id": cluster["entity_id"],
-                "display_name": cluster["display_name"],
-                "weighted_mass": cluster["weighted_mass"],
-                "mention_count": cluster["mention_count"],
-                "dominant_entity_fraction": cluster["dominant_entity_fraction"],
-                "top_entities": top_entities,
-            }
-        )
-    return {
-        "schema": "pelinker.emergent_clusters.v1",
-        "min_cluster_size": int(fit_prov.get("min_cluster_size", 0)),
-        "n_emergent_clusters": int(catalog.get("n_emergent_clusters", 0)),
-        "n_noise_mentions": int(catalog.get("n_noise_mentions", 0)),
-        "noise_fraction": float(catalog.get("noise_fraction", 0.0)),
-        "clusters": clusters_legacy,
-    }
-
-
 def cluster_labels_from_catalog(
     catalog: dict[str, Any],
     *,
     label_kind: str = "display",
 ) -> dict[int, str]:
-    """Build ``cluster_id → label`` from a KB-out or legacy emergent catalog."""
+    """Build ``cluster_id → label`` from a KB-out catalog.
+
+    Injects HDBSCAN noise (``-1`` → ``noise``) when the catalog has a ``noise`` block
+    or when any assignment-side consumer needs a display label for outliers.
+    """
     clusters = catalog.get("clusters", [])
     out: dict[int, str] = {}
     for cluster in clusters:
@@ -418,4 +410,12 @@ def cluster_labels_from_catalog(
             out[cid] = str(cluster.get("short_label", cluster.get("display_name", cid)))
         else:
             out[cid] = str(cluster.get("display_name", cid))
+    noise_block = catalog.get("noise")
+    if isinstance(noise_block, dict):
+        out.setdefault(
+            HDBSCAN_NOISE_CLUSTER_ID,
+            str(noise_block.get("label", NOISE_CLUSTER_LABEL)),
+        )
+    else:
+        out.setdefault(HDBSCAN_NOISE_CLUSTER_ID, NOISE_CLUSTER_LABEL)
     return out

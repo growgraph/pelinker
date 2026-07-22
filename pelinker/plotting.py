@@ -1271,15 +1271,19 @@ def plot_cluster_viz(
     if "cluster_score" in df.columns:
         df["cluster_score"] = df["cluster_score"].map(_format_hover_float)
 
-    hover_specs: list[tuple[str, str]] = [("cluster_hover", "Cluster")]
+    # Hover order: cluster, pmid, mention, context, coords, cluster score.
+    hover_before_coords: list[tuple[str, str]] = [("cluster_hover", "Cluster")]
     for col, label in (
         ("pmid", "PMID"),
         ("mention", "Mention"),
         ("context", "Context"),
-        ("cluster_score", "Cluster score"),
     ):
         if col in df.columns:
-            hover_specs.append((col, label))
+            hover_before_coords.append((col, label))
+    hover_after_coords: list[tuple[str, str]] = []
+    if "cluster_score" in df.columns:
+        hover_after_coords.append(("cluster_score", "Cluster score"))
+    hover_specs = hover_before_coords + hover_after_coords
 
     scatter_kwargs: dict[str, object] = {
         "x": "cviz_00",
@@ -1287,7 +1291,6 @@ def plot_cluster_viz(
         "color": "class",
         "color_discrete_map": color_discrete_map,
         "category_orders": {"class": class_order},
-        "hover_name": label_col,
         "labels": {"cviz_00": "Dim 1", "cviz_01": "Dim 2"},
         "template": "plotly_white",
         "custom_data": [c for c, _ in hover_specs],
@@ -1305,12 +1308,17 @@ def plot_cluster_viz(
     else:
         fig = px.scatter(df, **scatter_kwargs)
 
-    dim_z_line = "Dim 3: %{z:.3f}<br>" if use_3d else ""
-    hover_lines = (
-        "<b>%{hovertext}</b><br>"
-        f"Dim 1: %{{x:.3f}}<br>Dim 2: %{{y:.3f}}<br>{dim_z_line}"
-    )
-    for i, (_, label) in enumerate(hover_specs):
+    dim_z_line = ",%{z:.3f}" if use_3d else ""
+    hover_lines = ""
+    for i, (_, label) in enumerate(hover_before_coords):
+        if i == 0:
+            # Cluster name as the bold header (no "Cluster:" prefix).
+            hover_lines += f"<b>%{{customdata[{i}]}}</b><br>"
+        else:
+            hover_lines += f"{label}: %{{customdata[{i}]}}<br>"
+    hover_lines += f"Coord: (%{{x:.3f}}, %{{y:.3f}}{dim_z_line})<br>"
+    for j, (_, label) in enumerate(hover_after_coords):
+        i = len(hover_before_coords) + j
         hover_lines += f"{label}: %{{customdata[{i}]}}<br>"
     hover_lines += "<extra></extra>"
 
@@ -1702,6 +1710,7 @@ def _scale_sankey_weights_for_min_band(
     work: pd.DataFrame,
     weights: np.ndarray,
     *,
+    left_column: str,
     min_band_height: float,
 ) -> np.ndarray:
     """
@@ -1712,7 +1721,7 @@ def _scale_sankey_weights_for_min_band(
     """
     if min_band_height <= 0:
         return weights
-    left_totals = work.groupby("entity", sort=False)["count"].sum()
+    left_totals = work.groupby(left_column, sort=False)["count"].sum()
     right_totals = work.groupby("cluster", sort=False)["count"].sum()
     if left_totals.empty or right_totals.empty:
         return weights
@@ -1726,7 +1735,7 @@ def _scale_sankey_weights_for_min_band(
 
 
 def plot_cluster_entity_sankey(
-    composition_df: pd.DataFrame,
+    flow_df: pd.DataFrame,
     *,
     save_dir: pathlib.Path,
     basename: str = "fit_cluster_entity_sankey",
@@ -1740,18 +1749,18 @@ def plot_cluster_entity_sankey(
     min_band_height: float = _SANKEY_DEFAULT_MIN_BAND_HEIGHT,
 ) -> list[pathlib.Path]:
     """
-    Bipartite entity→cluster Sankey from a long composition table (cluster, entity, count).
+    Bipartite KB-in entity→cluster Sankey from a long flow table (cluster, entity, count).
 
-    pySankey sizes bands by weight only (no per-label height knob). ``inches_per_label``
-    sets figure height from the larger of the two label columns; ``min_band_height``
-    uniformly scales weights so the thinnest band is readable without changing ratios.
+    Expects unbundled entity mass (no pie/bar ``Other (...)`` rows). Caps by dropping
+    the long tail. pySankey sizes bands by weight only; ``inches_per_label`` sets
+    figure height; ``min_band_height`` uniformly scales weights for readability.
     """
-    if composition_df.empty:
+    if flow_df.empty:
         return []
-    from pelinker.cluster_composition_viz import limit_composition_for_flow_plots
+    from pelinker.cluster_composition_viz import limit_entity_flow_for_plots
 
-    work = limit_composition_for_flow_plots(
-        composition_df,
+    work = limit_entity_flow_for_plots(
+        flow_df,
         max_clusters=max_clusters,
         max_entities=max_entities,
         min_within_cluster_fraction=min_within_cluster_fraction,
@@ -1780,6 +1789,7 @@ def plot_cluster_entity_sankey(
     weights = _scale_sankey_weights_for_min_band(
         work,
         weights,
+        left_column="entity",
         min_band_height=min_band_height,
     )
 

@@ -11,7 +11,7 @@ from typing import Any
 import click
 import pandas as pd
 
-from pelinker.model import Linker
+from pelinker.model import DEFAULT_CLUSTER_MEMBERSHIP_THRESHOLD, Linker
 from pelinker.onto import MAX_LENGTH
 
 logger = logging.getLogger(__name__)
@@ -224,9 +224,12 @@ def _flatten_inputs(
 @click.option(
     "--thr-score",
     type=float,
-    default=0.5,
+    default=DEFAULT_CLUSTER_MEMBERSHIP_THRESHOLD,
     show_default=True,
-    help="Minimum cluster membership score (same role as server thr_score).",
+    help=(
+        "Minimum cluster membership score for emitted entities "
+        "(passed to Linker.predict threshold; same role as server thr_score)."
+    ),
 )
 @click.option(
     "--use-gpu",
@@ -322,7 +325,7 @@ def main(
         pres = linker.predict(
             texts,
             max_length=max_length,
-            threshold=0.0,
+            threshold=thr_score,
             use_gpu=use_gpu,
             include_mention_anomaly=want_mention_dump,
             include_prediction_kb_validation=kb_validation,

@@ -22,7 +22,7 @@ dependencies = [
   "spacy>=3.7.5,<4",
   "torch>=2.9.1",
   "transformers>=4.41.2,<5",
-  "umap-learn>=0.5.11",
+  "umap-learn[parametric-umap]>=0.5.11",
   "uvicorn>=0.42.0",
   "wordfreq>=3.1.1"
 ]

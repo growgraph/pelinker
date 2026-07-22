@@ -25,18 +25,16 @@ from pelinker.cluster_composition_viz import (
     DEFAULT_MAX_CLUSTERS_FOR_PLOTS,
     build_cluster_composition_df,
     cluster_entity_mass_summary,
+    cluster_score_percentile_summary,
+    with_noise_cluster_label,
 )
 from pelinker.kb_out import KbOutNamingConfig, cluster_labels_from_catalog
 from pelinker.reporting import (
     linker_fit_cluster_composition_path,
-    linker_fit_cluster_kb_path,
     linker_fit_clustering_report_path,
-    linker_fit_emergent_clusters_path,
     linker_fit_kb_out_path,
     write_cluster_composition_json,
-    write_cluster_derived_labels_map_json,
     write_clustering_report_json,
-    write_emergent_clusters_json,
     write_kb_out_json,
 )
 from pelinker.onto import NEGATIVE_LABEL
@@ -494,7 +492,11 @@ def _write_fit_outputs(
     if fit_report is None:
         raise RuntimeError("Linker.fit produced no clustering report to serialize")
 
-    mass_summary = cluster_entity_mass_summary(fit_report.assignments)
+    mass_summary: dict[str, Any] = dict(
+        cluster_entity_mass_summary(fit_report.assignments)
+    )
+    score_pcts = cluster_score_percentile_summary(fit_report.assignments)
+    mass_summary["cluster_score_percentiles"] = score_pcts
     logger.info(
         "HDBSCAN emergent clusters on clustering subsample: %s "
         "(comparable to model-selection report n_clusters_emergent at the same MCS); "
@@ -505,6 +507,13 @@ def _write_fit_outputs(
         mass_summary["n_noise_mentions"],
         mass_summary["noise_fraction"],
     )
+    emerg_p50 = score_pcts["emergent"].get("p50")
+    noise_p50 = score_pcts["noise"].get("p50")
+    logger.info(
+        "cluster_score percentiles (p50 emergent=%.3f, p50 noise=%.3f; full table in composition summary)",
+        emerg_p50 if emerg_p50 == emerg_p50 else float("nan"),
+        noise_p50 if noise_p50 == noise_p50 else float("nan"),
+    )
 
     report_json = linker_fit_clustering_report_path(report_path_resolved)
     write_clustering_report_json(report_json, fit_report)
@@ -514,24 +523,29 @@ def _write_fit_outputs(
         fit_report.assignments,
         top_n=3,
         weight_by_entity=True,
-        exclude_noise=True,
+        exclude_noise=False,
         max_clusters=DEFAULT_MAX_CLUSTERS_FOR_PLOTS,
     )
     catalog_raw = linker.kb_out_catalog
     if catalog_raw is None:
         raise RuntimeError("Linker.fit produced no KB-out catalog")
     catalog = cast(dict[str, Any], catalog_raw)
-    cluster_labels = cluster_labels_from_catalog(catalog, label_kind="display")
-    if not composition_df.empty and cluster_labels:
+    cluster_labels = with_noise_cluster_label(
+        cluster_labels_from_catalog(catalog, label_kind="display")
+    )
+    if not composition_df.empty:
         composition_df = composition_df.copy()
         composition_df["cluster_label"] = (
-            composition_df["cluster"].astype(int).map(cluster_labels)
+            composition_df["cluster"]
+            .astype(int)
+            .map(lambda cid: cluster_labels.get(int(cid), str(cid)))
         )
     composition_json = linker_fit_cluster_composition_path(report_path_resolved)
     write_cluster_composition_json(
         composition_json,
         composition_df,
         top_n=3,
+        exclude_noise=False,
         summary=mass_summary,
         max_clusters_in_rows=DEFAULT_MAX_CLUSTERS_FOR_PLOTS,
     )
@@ -540,19 +554,6 @@ def _write_fit_outputs(
     kb_out_path = linker_fit_kb_out_path(report_path_resolved)
     write_kb_out_json(kb_out_path, catalog)
     logger.info("Wrote KB-out catalog to %s", kb_out_path)
-
-    emergent_path = linker_fit_emergent_clusters_path(report_path_resolved)
-    write_emergent_clusters_json(emergent_path, catalog)
-    logger.info("Wrote legacy emergent cluster catalog to %s", emergent_path)
-
-    cluster_kb_json = linker_fit_cluster_kb_path(report_path_resolved)
-    labels_map = catalog.get("labels_map", {})
-    if not isinstance(labels_map, dict):
-        raise RuntimeError("KB-out catalog labels_map must be a dict")
-    write_cluster_derived_labels_map_json(
-        cluster_kb_json, {str(k): str(v) for k, v in labels_map.items()}
-    )
-    logger.info("Wrote cluster-derived KB labels map to %s", cluster_kb_json)
 
     logger.info("Saving model to %s", model_path)
     linker.dump(model_path)
@@ -567,10 +568,8 @@ def fit(cfg: FitCliConfig) -> None:
 
     - ``embeddings_parquet``: output path(s) for ``embed_only`` / ``both`` stage (A), or input
       parquet(s) for ``fit_only`` / ``both`` stage (B).
-    - ``report_path``: directory; fit stages write ``linker_fit.clustering_report.json.gz`` and
-      ``linker_fit.cluster_composition.json.gz`` there (see
-      :func:`pelinker.reporting.linker_fit_clustering_report_path` and
-      :func:`pelinker.reporting.linker_fit_cluster_composition_path`).
+    - ``report_path``: directory; fit stages write ``linker_fit.clustering_report.json.gz``,
+      ``linker_fit.cluster_composition.json.gz``, and ``linker_fit.kb_out.json`` there.
     - ``model_path``: filesystem path passed to ``Linker.dump`` for fit stages.
 
     Pipelines:

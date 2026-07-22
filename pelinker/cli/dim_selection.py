@@ -1,4 +1,4 @@
-"""CLI for model-selection grid search over embedding combinations."""
+"""CLI for PCA / UMAP dimension selection on one embedding combination."""
 
 from __future__ import annotations
 
@@ -6,24 +6,23 @@ import pathlib
 
 import click
 
-from pelinker.model_selection import run_model_selection
-from pelinker.model_selection_checkpoint import DEFAULT_CHECKPOINT_NAME, RunMode
+from pelinker.dim_selection import run_dim_selection
+from pelinker.dim_selection.checkpoint import DEFAULT_CHECKPOINT_NAME
+from pelinker.dim_selection.grids import DEFAULT_PCA_GRID, DEFAULT_UMAP_GRID
 from pelinker.onto import NEGATIVE_LABEL
-from pelinker.reporting import MODEL_SELECTION_RUN_REPORT_BASENAME
 
 _EPILOG = """
 MCS = min_cluster_size (HDBSCAN hyperparameter on the inner grid).
 
-Metrics (same two-level stack as dim selection):
+Metrics (same two-level stack as model selection):
 
   Inner (choose MCS): grid_objective=dbcv_ari_mean_minmax —
     min-max normalize mean DBCV and mean ARI on the MCS curve, average,
     smooth, and pick the left plateau.
 
-  Outer (rank model × layer): at each combo's pooled MCS, combine mean
-    DBCV and mean ARI with the same DBCV+ARI pooling (minmax across
-    candidates). best_score stays mean DBCV for heatmaps; outer_score
-    chooses the winner. Fusion proxies use resume-safe 0.5·(DBCV+ARI).
+  Outer (rank pca × umap cells): at each cell's pooled MCS, combine mean
+    DBCV and mean ARI with the same DBCV+ARI pooling (minmax across cells).
+    best_score stays mean DBCV for heatmaps; outer_score chooses the winner.
 """
 
 
@@ -32,31 +31,36 @@ Metrics (same two-level stack as dim selection):
     epilog=_EPILOG,
 )
 @click.option(
-    "--input-dir",
+    "--input-parquet",
     type=click.Path(path_type=pathlib.Path),
     required=True,
-    help="Directory containing parquet files",
+    help="Single mention-level embedding parquet (one model/layer).",
 )
 @click.option(
     "--report-path",
     type=click.Path(path_type=pathlib.Path),
     required=True,
-    help=(
-        "Directory for all run outputs. Canonical artifact: "
-        f"{MODEL_SELECTION_RUN_REPORT_BASENAME}."
-    ),
+    help="Directory for dim-selection outputs and checkpoint.",
 )
 @click.option(
-    "--umap-dim",
-    type=click.INT,
-    default=8,
-    help="UMAP dimensionality for clustering (range: 3-5)",
+    "--pca-grid",
+    type=click.STRING,
+    default=",".join(str(v) for v in DEFAULT_PCA_GRID),
+    show_default=True,
+    help="Comma-separated coarse PCA component values.",
 )
 @click.option(
-    "--pca-components",
-    type=click.INT,
-    default=100,
-    help="Number of PCA components for dimensionality reduction",
+    "--umap-grid",
+    type=click.STRING,
+    default=",".join(str(v) for v in DEFAULT_UMAP_GRID),
+    show_default=True,
+    help="Comma-separated coarse UMAP dimension values.",
+)
+@click.option(
+    "--refine/--no-refine",
+    default=True,
+    show_default=True,
+    help="After coarse search, evaluate a local neighborhood around the winner.",
 )
 @click.option(
     "--cluster-viz-method",
@@ -137,19 +141,32 @@ Metrics (same two-level stack as dim selection):
     "--prefix",
     type=click.STRING,
     default="res",
-    help="Optional prefix for input embedding files to differentiate between models",
+    help="Filename prefix used to parse model/layer from --input-parquet.",
+)
+@click.option(
+    "--model",
+    type=click.STRING,
+    default=None,
+    help="Override model name (default: parse from parquet filename).",
+)
+@click.option(
+    "--layer",
+    type=click.STRING,
+    default=None,
+    help="Override layer label (default: parse from parquet filename).",
 )
 @click.option(
     "--n-sample",
     type=click.INT,
-    default=1,
-    help="Number of samples/runs per (model, layer) combination",
+    default=3,
+    show_default=True,
+    help="Number of bootstrap samples per (pca, umap) cell.",
 )
 @click.option(
     "--selected-labels-kb-path",
     type=click.Path(path_type=pathlib.Path),
     default=None,
-    help="Optional path to selected labels KB CSV file. If provided, clustering will only use labels from this KB.",
+    help="Optional path to selected labels KB CSV. If provided, clustering uses only those labels.",
 )
 @click.option(
     "--max-scale",
@@ -164,7 +181,7 @@ Metrics (same two-level stack as dim selection):
     default=None,
     help=(
         "Inclusive lower bound for min_cluster_size on the grid. "
-        "Default: max(1, min_class_size // 2) (legacy: half of --min-class-size)."
+        "Default: max(1, min_class_size // 2)."
     ),
 )
 @click.option(
@@ -175,30 +192,12 @@ Metrics (same two-level stack as dim selection):
     help="Step between consecutive min_cluster_size values on the optimization grid.",
 )
 @click.option(
-    "--fusion-pairs",
-    type=click.INT,
-    default=5,
-    show_default=True,
-    help=(
-        "After scoring single embeddings (DBCV), evaluate fused pairs: "
-        "pick this many distinct pairs with highest sum of singleton DBCV. 0 disables."
-    ),
-)
-@click.option(
-    "--fusion-triples",
-    type=click.INT,
-    default=0,
-    show_default=True,
-    help=("Same as --fusion-pairs but for three-way fusions (costly). 0 disables."),
-)
-@click.option(
     "--resume/--no-resume",
     default=True,
     show_default=True,
     help=(
-        "If the checkpoint file exists and matches the run fingerprint, skip completed work. "
-        "If the file is missing, start fresh and create it. Use --no-resume to ignore an "
-        "existing checkpoint and reinitialize (overwrites on save)."
+        "If the checkpoint file exists and matches the run fingerprint, skip completed cells. "
+        "Use --no-resume to ignore an existing checkpoint and reinitialize."
     ),
 )
 @click.option(
@@ -221,21 +220,12 @@ Metrics (same two-level stack as dim selection):
     show_default=True,
     help="Estimator saved on Linker when fitting from this pipeline (analysis always logs both).",
 )
-@click.option(
-    "--mode",
-    type=click.Choice(["single", "fusion2", "fusion3", "all"]),
-    default="all",
-    show_default=True,
-    help=(
-        "single: only single-embedding combinations; fusion2/fusion3: only that fusion order "
-        "(requires prior singleton scores in checkpoint); all: singletons then enabled fusions."
-    ),
-)
 def main(
-    input_dir: pathlib.Path,
+    input_parquet: pathlib.Path,
     report_path: pathlib.Path,
-    umap_dim: int,
-    pca_components: int,
+    pca_grid: str,
+    umap_grid: str,
+    refine: bool,
     cluster_viz_method: str,
     min_class_size: int,
     seed: int,
@@ -250,23 +240,23 @@ def main(
     batch_size: int,
     n_sample: int,
     prefix: str,
+    model: str | None,
+    layer: str | None,
     selected_labels_kb_path: pathlib.Path | None,
     max_scale: int,
     min_scale: int | None,
     clustering_grid_step: int,
-    fusion_pairs: int,
-    fusion_triples: int,
     resume: bool,
     checkpoint_path: pathlib.Path | None,
-    mode: RunMode,
     negative_label: str,
     screener_kind: str,
 ) -> None:
-    run_model_selection(
-        input_dir=input_dir,
+    run_dim_selection(
+        input_parquet=input_parquet,
         report_path=report_path,
-        umap_dim=umap_dim,
-        pca_components=pca_components,
+        pca_grid=pca_grid,
+        umap_grid=umap_grid,
+        refine=refine,
         cluster_viz_method=cluster_viz_method,
         min_class_size=min_class_size,
         seed=seed,
@@ -281,15 +271,18 @@ def main(
         batch_size=batch_size,
         n_sample=n_sample,
         prefix=prefix,
+        model=model,
+        layer=layer,
         selected_labels_kb_path=selected_labels_kb_path,
         max_scale=max_scale,
         min_scale=min_scale,
         clustering_grid_step=clustering_grid_step,
-        fusion_pairs=fusion_pairs,
-        fusion_triples=fusion_triples,
         resume=resume,
         checkpoint_path=checkpoint_path,
-        mode=mode,
         negative_label=negative_label,
         screener_kind=screener_kind,
     )
+
+
+if __name__ == "__main__":
+    main()

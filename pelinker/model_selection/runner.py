@@ -23,6 +23,11 @@ from pelinker.clustering_fusion_ranking import (
     singleton_items_by_dbcv_score,
     top_k_fusion_candidates_by_dbcv_proxy,
 )
+from pelinker.clustering_search_ranking import (
+    OUTER_SCORE_COL,
+    attach_outer_scores,
+    pick_best_row,
+)
 from pelinker.grid_export import grid_export_rows_from_report
 from pelinker.model_selection.artifacts import (
     mark_combination_done,
@@ -132,9 +137,10 @@ def run_model_selection(
 
     Files should follow the pattern: <prefix>_<model>_<layer>.parquet
 
-    After scoring each (model, layer) alone (mean DBCV as ``best_score``), optionally
-    evaluates fused embeddings: pairs/triples with the highest sum of singleton DBCV
-    scores (see ``fusion_pairs`` / ``fusion_triples``), then clusters the
+    After scoring each (model, layer) alone (outer DBCV+ARI as the ranking score;
+    ``best_score`` remains mean DBCV), optionally evaluates fused embeddings:
+    pairs/triples with the highest sum of singleton outer scores
+    (see ``fusion_pairs`` / ``fusion_triples``), then clusters the
     concatenated mention-level vectors via :func:`~pelinker.selection.load_selection_frame`
     and per-bootstrap :func:`~pelinker.selection.evaluate_selection_sample`.
 
@@ -859,11 +865,13 @@ def run_model_selection(
     table.add_column("Best Size", justify="right", style="green")
     table.add_column("Clusters", justify="right", style="bright_blue")
     table.add_column("Properties", justify="right", style="magenta")
-    table.add_column("Best Score", justify="right", style="blue")
+    table.add_column("Outer", justify="right", style="blue")
+    table.add_column("DBCV", justify="right", style="bright_cyan")
     table.add_column("Scr AUC", justify="right", style="white")
     table.add_column("Comb AUC", justify="right", style="white")
 
-    for _, row in df_results.iterrows():
+    df_table = attach_outer_scores(df_results, use_minmax=True)
+    for _, row in df_table.iterrows():
         if n_sample > 1:
             best_size_str = f"{int(row['best_size'])} ± {row['best_size_std']:.1f}"
             clusters_str = (
@@ -873,6 +881,7 @@ def run_model_selection(
             properties_str = (
                 f"{int(row['number_properties'])} ± {row['number_properties_std']:.1f}"
             )
+            outer_str = f"{row[OUTER_SCORE_COL]:.3f} ± {row['outer_score_std']:.3f}"
             best_score_str = f"{row['best_score']:.3f} ± {row['best_score_std']:.3f}"
             sa = row.get("screener_auc_mean")
             ca = row.get("combined_auc_mean")
@@ -890,6 +899,7 @@ def run_model_selection(
             best_size_str = str(int(row["best_size"]))
             clusters_str = str(int(round(row["n_clusters_emergent"])))
             properties_str = str(int(row["number_properties"]))
+            outer_str = f"{row[OUTER_SCORE_COL]:.3f}"
             best_score_str = f"{row['best_score']:.3f}"
             sa = row.get("screener_auc_mean")
             ca = row.get("combined_auc_mean")
@@ -910,6 +920,7 @@ def run_model_selection(
             best_size_str,
             clusters_str,
             properties_str,
+            outer_str,
             best_score_str,
             scr_auc_str,
             comb_auc_str,
@@ -937,14 +948,33 @@ def run_model_selection(
                 f"[cyan]{fine_screener_eval_path}[/cyan]"
             )
 
-    top_idx = df_results["best_score"].idxmax()
-    top_row = df_results.loc[top_idx]
-    top_summary = clustering_search_summary_row_from_flat_dict(
-        {str(k): top_row[k] for k in top_row.index}
+    df_ranked = attach_outer_scores(df_results, use_minmax=True)
+    if df_ranked.empty:
+        console.print("[yellow]No completed combinations to rank.[/yellow]")
+        return
+    top = pick_best_row(
+        df_ranked,
+        tie_break_cols=("model", "layer"),
+        use_minmax=True,
+    )
+    top_flat = {str(k): top[k] for k in df_results.columns if k in top}
+    top_summary = clustering_search_summary_row_from_flat_dict(top_flat)
+    console.print(
+        f"\n[bold green]Best outer DBCV+ARI ({OUTER_SCORE_COL}): "
+        f"{float(top[OUTER_SCORE_COL]):.3f}[/bold green] "
+        f"(DBCV={float(top['best_score']):.3f}"
+        + (
+            f", ARI={float(top['ari']):.3f}"
+            if top.get("ari") is not None and not pd.isna(top.get("ari"))
+            else ""
+        )
+        + f") "
+        f"([cyan]{top['model']}[/cyan]/[yellow]{top['layer']}[/yellow])"
     )
     console.print(
-        f"\n[bold green]Best mean DBCV (best_score): {float(top_row['best_score']):.3f}[/bold green] "
-        f"([cyan]{top_row['model']}[/cyan]/[yellow]{top_row['layer']}[/yellow])"
+        "[dim]Inner MCS: DBCV+ARI (dbcv_ari_mean_minmax). "
+        "Outer ranking: DBCV+ARI (minmax across candidates). "
+        "best_score column remains mean DBCV.[/dim]"
     )
 
     if best_report is None:
@@ -1025,16 +1055,13 @@ def run_model_selection(
             "model": best_overall_model,
             "layer": best_overall_layer,
             "best_score": float(best_overall_score),
+            "rank_metric": "outer_dbcv_ari",
         }
         br_sel = df_results.loc[
             (df_results["model"].astype(str) == str(best_overall_model))
             & (df_results["layer"].astype(str) == str(best_overall_layer))
         ]
-        bk = (
-            br_sel.iloc[0]
-            if len(br_sel) > 0
-            else df_results.loc[df_results["best_score"].idxmax()]
-        )
+        bk = br_sel.iloc[0] if len(br_sel) > 0 else pd.Series(top_flat)
         sbk_mean = bk.get("screener_auc_mean")
         cb_mean = bk.get("combined_auc_mean")
         ob_mean = bk.get("oov_auc_mean")

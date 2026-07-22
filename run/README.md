@@ -21,6 +21,7 @@ run/
 │   └── merge_properties.py         # Merge properties from all sources
 ├── analysis/                    # Embedding quality & OOV diagnostics
 │   ├── model_selection.py          # Model selection over embedding combinations
+│   ├── dim_selection.py            # PCA/UMAP dim search for one embedding combo
 │   ├── oov_analysis.py             # Fit report + OOV mention dump → PDF figures
 │   ├── replot_dbcv_ari_scatter.py  # DBCV vs ARI scatter from existing grid CSV
 │   └── select_diverse_entities.py  # Select diverse entity subsets
@@ -278,7 +279,34 @@ Measures the quality of embeddings obtained from `embed_kb_corpus.py` by evaluat
   - Supports multiple sampling runs for statistical robustness
   - Shared mention-frame load with `pelinker-fit`: optional `--drop-rare-entities`, `--max-mentions-per-entity`, then `--clustering-sample-rows` (omit = all loaded rows)
   - **Optional**: `--selected-labels-kb-path` parameter to evaluate quality over a specific subset of labels from a selected knowledge base CSV file
-- **Metrics**: Best cluster size, number of properties, clustering score, adjusted Rand index (ARI)
+- **Metrics** (two-level, same as `dim_selection.py`):
+  - **MCS** (`min_cluster_size`): HDBSCAN hyperparameter — smallest cluster HDBSCAN will form; searched on an inner grid
+  - **Inner** (choose MCS): `grid_objective=dbcv_ari_mean_minmax` — min–max normalize mean DBCV and mean ARI on the MCS curve, average, smooth, pick the left plateau
+  - **Outer** (rank model×layer): at each combo’s pooled MCS, combine mean DBCV + mean ARI with the same DBCV+ARI pooling (minmax across candidates). Column `best_score` remains mean DBCV (heatmaps); `outer_score` chooses the winner
+
+### `dim_selection.py`
+
+Implementation: [`pelinker.dim_selection`](../../pelinker/dim_selection/) (shim: `run/analysis/dim_selection.py` → `pelinker.cli.dim_selection`).
+
+After model selection picks a winning embedding combo, search **`(pca_components, umap_dim)`** on that single parquet with the same clustering metrics stack.
+
+- **Purpose**: Choose robust PCA and UMAP dimensions for the transform pipeline (defaults today: 100 and 8)
+- **Input**: One mention-level parquet (`--input-parquet`); model/layer parsed from the filename (or `--model` / `--layer`)
+- **Search**: Coarse grid (default PCA `40,80,120,180` × UMAP `4,6,8,12`), then optional local refine around the winner (`--refine` / `--no-refine`)
+- **Outputs** (under `--report-path`):
+  - `dim_selection.results.csv` — per-cell mean DBCV / ARI / `outer_score` / pooled MCS
+  - `dim.outer.heatmap.png` / `dim.dbcv.heatmap.png` / `dim.ari.heatmap.png` — PCA × UMAP heatmaps
+  - `dim_selection.summary.json` — chosen dims + metrics documentation (includes MCS glossary)
+  - `dim_selection.state.json.gz` — resumable checkpoint
+- **Metrics**: identical two-level stack as model selection — **inner and outer both use DBCV+ARI**; MCS = `min_cluster_size`
+- **Example**:
+
+```bash
+uv run python -m pelinker.cli.dim_selection \
+  --input-parquet outputs/res_pubmedbert_1.parquet \
+  --report-path outputs/dim_selection \
+  --n-sample 3
+```
 
 ### `select_diverse_entities.py`
 
