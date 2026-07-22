@@ -143,6 +143,7 @@ def test_build_fit_cluster_viz_plot_df_scoped_vs_all_kb(
             screener_seed=13,
             ambient_screener=NegativeScreenerConfig(kind="lda"),
             projection_screener=ManifoldOovScreenerConfig(enabled=False),
+            predict_mode="legacy",
         ),
     )
     fit_report = linker.take_fit_clustering_report()

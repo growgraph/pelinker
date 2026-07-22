@@ -121,6 +121,12 @@ class FitCliConfig:
     # ``..._<model>_<layers>`` (see ``_parse_embedding_parquet_stem``).
     model_types: list[str] | None = None
     layers_specs: list[str] | None = None
+    # Compact = ParametricUMAP + MLP entity head (default). Legacy = UMAP + HDBSCAN predict.
+    predict_mode: str = "compact"
+    entity_head_hidden_layers: list[int] | None = None
+    """MLP hidden sizes for compact mode; default ``[256, 128, 128]`` when omitted."""
+    parametric_umap_n_training_epochs: int = 10
+    parametric_umap_batch_size: int | None = None
 
     def __post_init__(self) -> None:
         if self.pipeline not in _PIPELINE_VALUES:
@@ -136,6 +142,24 @@ class FitCliConfig:
             raise ValueError(
                 f"cluster_viz_method must be 'pca' or 'umap', got {self.cluster_viz_method!r}"
             )
+        if self.predict_mode not in ("compact", "legacy"):
+            raise ValueError(
+                f"predict_mode must be 'compact' or 'legacy', got {self.predict_mode!r}"
+            )
+        if self.parametric_umap_n_training_epochs < 1:
+            raise ValueError("parametric_umap_n_training_epochs must be >= 1")
+        if (
+            self.parametric_umap_batch_size is not None
+            and self.parametric_umap_batch_size < 1
+        ):
+            raise ValueError("parametric_umap_batch_size must be >= 1 when provided")
+        if self.entity_head_hidden_layers is not None:
+            if not self.entity_head_hidden_layers or any(
+                int(h) < 1 for h in self.entity_head_hidden_layers
+            ):
+                raise ValueError(
+                    "entity_head_hidden_layers must be a non-empty list of ints >= 1"
+                )
         if self.min_cluster_size < 2:
             raise ValueError("min_cluster_size must be >= 2")
         if self.clustering_sample_rows is not None and self.clustering_sample_rows < 1:
@@ -445,6 +469,11 @@ def _run_embed_stage(
 
 def _build_linker_fit_config(cfg: FitCliConfig) -> LinkerFitConfig:
     cap_seed = cfg.seed if cfg.mention_cap_seed is None else cfg.mention_cap_seed
+    hidden = (
+        tuple(int(h) for h in cfg.entity_head_hidden_layers)
+        if cfg.entity_head_hidden_layers is not None
+        else (256, 128, 128)
+    )
     return LinkerFitConfig(
         batch_size=cfg.batch_size,
         drop_rare_entities=cfg.drop_rare_entities,
@@ -463,6 +492,8 @@ def _build_linker_fit_config(cfg: FitCliConfig) -> LinkerFitConfig:
         projection_screener=ManifoldOovScreenerConfig(
             enabled=cfg.projection_enabled,
         ),
+        predict_mode=cfg.predict_mode,  # type: ignore[arg-type]
+        entity_head_hidden_layers=hidden,
     )
 
 
@@ -595,6 +626,8 @@ def fit(cfg: FitCliConfig) -> None:
         cluster_viz_method=cfg.cluster_viz_method,
         pca_seed=cfg.pca_seed,
         umap_seed=cfg.umap_seed,
+        parametric_umap_n_training_epochs=cfg.parametric_umap_n_training_epochs,
+        parametric_umap_batch_size=cfg.parametric_umap_batch_size,
     )
 
     input_text_table_path = expand_config_path(cfg.input_text_table_path)

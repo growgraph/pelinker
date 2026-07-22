@@ -28,6 +28,7 @@ from pelinker.config import (
     NegativeScreenerConfig,
     TransformConfig,
 )
+from pelinker.entity_head import EntityHead, fit_mlp_entity_head
 from pelinker.screener.projection_screener import (
     ManifoldOovScoreModel,
     build_projection_training_arrays,
@@ -52,7 +53,11 @@ from pelinker.selection import load_selection_frame
 from pelinker.transform import (
     EmbeddingTransformer,
     TransformArtifacts,
+    load_clustering_manifold,
+    parametric_umap_sidecar_dir,
+    save_clustering_manifold,
     score_transform_artifacts,
+    is_parametric_umap,
 )
 from pelinker.reporting import (
     ClusteringFitMetrics,
@@ -122,6 +127,8 @@ _LINKER_LOAD_DEFAULTS: dict[str, object] = {
     "screener_in_sample_metrics": None,
     "clustering_fit_metrics": None,
     "_fit_clustering_report": None,
+    "entity_head": None,
+    "predict_mode": "legacy",
 }
 
 
@@ -590,6 +597,8 @@ class Linker:
         self.clustering_fit_metrics: ClusteringFitMetrics | None = None
         self.projection: ManifoldOovScoreModel | None = kwargs.pop("projection", None)
         self._projection_cv_payload: dict[str, object] | None = None
+        self.entity_head: EntityHead | None = kwargs.pop("entity_head", None)
+        self.predict_mode: str = kwargs.pop("predict_mode", "legacy")
         self._hf_tokenizer = None
         self._hf_model = None
         self._hf_models_by_type: dict[str, tuple[object, object]] = {}
@@ -651,7 +660,21 @@ class Linker:
         self._fit_clustering_report = None
         path = _linker_artifact_gz_path(file_spec)
         path.parent.mkdir(parents=True, exist_ok=True)
-        joblib.dump(self, path, compress=3)
+
+        manifold = None
+        if self.transformer is not None and is_parametric_umap(self.transformer.umap):
+            manifold = self.transformer.umap
+            # Avoid pickling Keras nets inside joblib; restore after dump.
+            self.transformer.umap = None
+            sidecar = parametric_umap_sidecar_dir(path)
+            save_clustering_manifold(manifold, sidecar)
+            logger.info("Wrote ParametricUMAP sidecar to %s", sidecar)
+
+        try:
+            joblib.dump(self, path, compress=3)
+        finally:
+            if manifold is not None and self.transformer is not None:
+                self.transformer.umap = manifold
 
     @classmethod
     def load(cls, file_spec: str | pathlib.Path) -> Linker:
@@ -660,6 +683,11 @@ class Linker:
         for field, default in _LINKER_LOAD_DEFAULTS.items():
             if field not in pe_model.__dict__:
                 setattr(pe_model, field, default)
+        sidecar = parametric_umap_sidecar_dir(path)
+        if pe_model.transformer is not None and pe_model.transformer.umap is None:
+            if sidecar.is_dir():
+                pe_model.transformer.umap = load_clustering_manifold(sidecar)
+                logger.info("Loaded ParametricUMAP sidecar from %s", sidecar)
         return pe_model
 
     def take_fit_clustering_report(self) -> ModelSelectionReport | None:
@@ -997,6 +1025,14 @@ class Linker:
             )
 
         self.transform_config = transform_config
+        # Align manifold with predict mode (compact → ParametricUMAP; legacy → standard UMAP).
+        if fit_cfg.predict_mode == "compact":
+            transform_config = replace(transform_config, manifold_kind="parametric")
+        else:
+            transform_config = replace(transform_config, manifold_kind="umap")
+        self.transform_config = transform_config
+        self.predict_mode = fit_cfg.predict_mode
+
         cl_result = fit_manifold_clustering(
             manifold_fit,
             transform_config=transform_config,
@@ -1079,6 +1115,24 @@ class Linker:
             screener_pass=screener_pass,
             manifold_oov_pass=manifold_oov_pass,
         )
+
+        if fit_cfg.predict_mode == "compact":
+            logger.info(
+                "Fitting MLP entity head hidden_layers=%s on full-manifold labels",
+                fit_cfg.entity_head_hidden_layers,
+            )
+            self.entity_head = fit_mlp_entity_head(
+                full_artifacts.umap_clustering,
+                cluster_labels,
+                hidden_layer_sizes=tuple(
+                    int(h) for h in fit_cfg.entity_head_hidden_layers
+                ),
+                random_state=fit_cfg.base_seed,
+            )
+            # Compact artifacts do not ship HDBSCAN prediction_data.
+            self.clusterer = None
+        else:
+            self.entity_head = None
 
         _finalize_linker_cluster_state(
             self,
@@ -1626,10 +1680,11 @@ class Linker:
         Predict entities using clustering approach.
 
         Mentions classified as negative by the screener are dropped immediately: no
-        PCA/UMAP, no HDBSCAN ``approximate_predict``, and no anomaly metrics for them.
+        PCA/UMAP, no cluster assignment, and no anomaly metrics for them.
 
-        Each entity row includes ``score``: HDBSCAN soft cluster membership from
-        ``approximate_predict`` on UMAP coordinates (same scale as ``threshold``).
+        Each entity row includes ``score``: MLP ``max(predict_proba)`` in compact mode,
+        or HDBSCAN soft cluster membership from ``approximate_predict`` in legacy mode
+        (same scale as ``threshold``).
 
         Args:
             embeddings: Tensor of shape (n_mentions, embedding_dim)
@@ -1642,9 +1697,15 @@ class Linker:
             returned only when ``mention_anomaly_rows`` is true (requires
             ``kb_lemma_by_wg``).
         """
-        if self.transformer is None or self.clusterer is None or self.screener is None:
+        if self.transformer is None or self.screener is None:
             raise ValueError(
-                "Screener, Transformer and Clusterer must be fitted before prediction"
+                "Screener and Transformer must be fitted before prediction"
+            )
+        use_head = self.entity_head is not None
+        if not use_head and self.clusterer is None:
+            raise ValueError(
+                "Either entity_head (compact) or clusterer (legacy) must be fitted "
+                "before prediction"
             )
         if mention_anomaly_rows and kb_lemma_by_wg is None:
             raise ValueError(
@@ -1685,7 +1746,12 @@ class Linker:
 
         emb_k = embeddings_np[idx_keep]
         _umap_k, _, res_k, mah_k, ent_k = self.transformer.transform(emb_k)
-        cl_k, cp_k = approximate_predict(self.clusterer, _umap_k)
+        if use_head:
+            assert self.entity_head is not None
+            cl_k, cp_k = self.entity_head.predict(_umap_k)
+        else:
+            assert self.clusterer is not None
+            cl_k, cp_k = approximate_predict(self.clusterer, _umap_k)
         cl_arr = cl_k.astype(np.int64, copy=False)
         cp_arr = np.asarray(cp_k, dtype=np.float64).ravel()
         combined_k = np.maximum.reduce(

@@ -22,6 +22,7 @@ run/
 ├── analysis/                    # Embedding quality & OOV diagnostics
 │   ├── model_selection.py          # Model selection over embedding combinations
 │   ├── dim_selection.py            # PCA/UMAP dim search for one embedding combo
+│   ├── compact_predict_study.py    # Legacy vs ParametricUMAP+MLP quality/size gates
 │   ├── oov_analysis.py             # Fit report + OOV mention dump → PDF figures
 │   ├── replot_dbcv_ari_scatter.py  # DBCV vs ARI scatter from existing grid CSV
 │   └── select_diverse_entities.py  # Select diverse entity subsets
@@ -284,6 +285,15 @@ Measures the quality of embeddings obtained from `embed_kb_corpus.py` by evaluat
   - **Inner** (choose MCS): `grid_objective=dbcv_ari_mean_minmax` — min–max normalize mean DBCV and mean ARI on the MCS curve, average, smooth, pick the left plateau
   - **Outer** (rank model×layer): at each combo’s pooled MCS, combine mean DBCV + mean ARI with the same DBCV+ARI pooling (minmax across candidates). Column `best_score` remains mean DBCV (heatmaps); `outer_score` chooses the winner
 
+### `compact_predict_study.py`
+
+Compares **legacy** (UMAP + HDBSCAN `approximate_predict`) vs **compact** (ParametricUMAP + MLP entity head) on one embeddings parquet before trusting the production compact default.
+
+- **Arms**: A legacy, B compact (shipped), C iso-manifold, D iso-head, E LinearSVC underfit control
+- **Gates**: entity-id agreement vs A ≥ 0.95, emit-rate within ±10%, size ≤ 15 MB or ≥5× smaller, latency ≤ 1.5× A
+- **Outputs**: `arms.csv`, `summary.json` with explicit pass/fail under `--report-dir`
+- **Example**: `uv run python run/analysis/compact_predict_study.py --embeddings-parquet … --report-dir …`
+
 ### `dim_selection.py`
 
 Implementation: [`pelinker.dim_selection`](../../pelinker/dim_selection/) (shim: `run/analysis/dim_selection.py` → `pelinker.cli.dim_selection`).
@@ -293,6 +303,7 @@ After model selection picks a winning embedding combo, search **`(pca_components
 - **Purpose**: Choose robust PCA and UMAP dimensions for the transform pipeline (defaults today: 100 and 8)
 - **Input**: One mention-level parquet (`--input-parquet`); model/layer parsed from the filename (or `--model` / `--layer`)
 - **Search**: Coarse grid (default PCA `40,80,120,180` × UMAP `4,6,8,12`), then optional local refine around the winner (`--refine` / `--no-refine`)
+- **Sampling**: same mention-frame load as model selection / fit — optional `--drop-rare-entities`, `--max-mentions-per-entity`, then `--clustering-sample-rows` (omit = all loaded rows)
 - **Outputs** (under `--report-path`):
   - `dim_selection.results.csv` — per-cell mean DBCV / ARI / `outer_score` / pooled MCS
   - `dim.outer.heatmap.png` / `dim.dbcv.heatmap.png` / `dim.ari.heatmap.png` — PCA × UMAP heatmaps
@@ -303,9 +314,10 @@ After model selection picks a winning embedding combo, search **`(pca_components
 
 ```bash
 uv run python -m pelinker.cli.dim_selection \
-  --input-parquet outputs/res_pubmedbert_1.parquet \
-  --report-path outputs/dim_selection \
-  --n-sample 3
+  --input-parquet /home/alexander/data/pelinker/experiment.d/res_pubmedbert_2.parquet \
+  --report-path reports/dim_selection_2 \
+  --n-sample 3 \
+  --clustering-sample-rows 10000
 ```
 
 ### `select_diverse_entities.py`

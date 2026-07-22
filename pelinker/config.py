@@ -18,6 +18,8 @@ GridObjectiveSpec = Literal[
 ]
 
 ScreenerKind = Literal["lda", "svm"]
+ManifoldKind = Literal["parametric", "umap"]
+PredictMode = Literal["compact", "legacy"]
 
 _GRID_OBJECTIVES: frozenset[str] = frozenset(
     ("dbcv", "ari", "dbcv_ari_mean_minmax", "dbcv_ari_mean_raw")
@@ -300,6 +302,10 @@ class LinkerFitConfig:
     """Max rows of :class:`~pelinker.reporting.LinkerFitDiagnostics` stored on the fit report."""
     diagnostics_random_state: int = 0
     """Stratified subsample seed for training diagnostics."""
+    predict_mode: PredictMode = "compact"
+    """``compact``: ParametricUMAP + MLP entity head (no shipped HDBSCAN). ``legacy``: UMAP + HDBSCAN ``approximate_predict``."""
+    entity_head_hidden_layers: tuple[int, ...] = (256, 128, 128)
+    """Hidden layer sizes for the compact MLP entity head (ignored in ``legacy`` mode)."""
 
     def to_clustering_sample_config(self) -> ClusteringOptimizationConfig:
         """Build a :class:`ClusteringOptimizationConfig` for load + subsample helpers."""
@@ -330,6 +336,14 @@ class LinkerFitConfig:
             raise ValueError("clustering_sample_index must be >= 0")
         if self.diagnostics_sample_size < 1:
             raise ValueError("diagnostics_sample_size must be >= 1")
+        if self.predict_mode not in ("compact", "legacy"):
+            raise ValueError(
+                f"predict_mode must be 'compact' or 'legacy', got {self.predict_mode!r}"
+            )
+        if not self.entity_head_hidden_layers:
+            raise ValueError("entity_head_hidden_layers must be a non-empty tuple")
+        if any(int(h) < 1 for h in self.entity_head_hidden_layers):
+            raise ValueError("entity_head_hidden_layers values must be >= 1")
 
 
 @dataclass
@@ -440,6 +454,12 @@ class TransformConfig:
     """Number of UMAP dimensions for clustering (typically 3-5)."""
     umap_metric: str = "cosine"
     """Distance metric for UMAP (default: 'cosine')."""
+    manifold_kind: ManifoldKind = "umap"
+    """Clustering manifold: ``parametric`` (ParametricUMAP) or ``umap`` (standard UMAP). Compact fit forces ``parametric``."""
+    parametric_umap_n_training_epochs: int = 10
+    """ParametricUMAP training epochs over the UMAP graph (ignored for ``manifold_kind='umap'``)."""
+    parametric_umap_batch_size: int | None = None
+    """ParametricUMAP edge batch size; ``None`` uses library default."""
 
     # Cluster-space visualization (reduces umap_clustering coords for plotting)
     cluster_viz_components: int = 3
@@ -471,3 +491,15 @@ class TransformConfig:
                 "cluster_viz_method must be 'pca' or 'umap', "
                 f"got {self.cluster_viz_method!r}"
             )
+        if self.manifold_kind not in ("parametric", "umap"):
+            raise ValueError(
+                "manifold_kind must be 'parametric' or 'umap', "
+                f"got {self.manifold_kind!r}"
+            )
+        if self.parametric_umap_n_training_epochs < 1:
+            raise ValueError("parametric_umap_n_training_epochs must be >= 1")
+        if (
+            self.parametric_umap_batch_size is not None
+            and self.parametric_umap_batch_size < 1
+        ):
+            raise ValueError("parametric_umap_batch_size must be >= 1 when provided")

@@ -3246,6 +3246,7 @@ dependencies = [
   {name = "scikit-optimize"},
   {name = "sentence-transformers"},
   {name = "spacy"},
+  {name = "tf-keras"},
   {name = "torch"},
   {name = "transformers"},
   {name = "uvicorn"},
@@ -3290,6 +3291,7 @@ requires-dist = [
   {name = "scikit-optimize", specifier = ">=0.10.2"},
   {name = "sentence-transformers", specifier = ">=3.0.1,<4"},
   {name = "spacy", specifier = ">=3.7.5,<4"},
+  {name = "tf-keras", specifier = ">=2.16.0"},
   {name = "torch", specifier = ">=2.9.1"},
   {name = "transformers", specifier = ">=4.41.2,<5"},
   {name = "uvicorn", specifier = ">=0.42.0"},
@@ -5276,6 +5278,18 @@ source = {registry = "https://pypi.org/simple"}
 version = "3.3.0"
 wheels = [
   {hash = "sha256:cf642efadaf0a8ebbbf4bc7a31cec2f9b5f21a9f726f4ccbb08192c9c26f43a5", size = 7734, upload-time = "2025-12-29T12:55:20.718Z", url = "https://files.pythonhosted.org/packages/33/d1/8bb87d21e9aeb323cc03034f5eaf2c8f69841e40e4853c2627edf8111ed3/termcolor-3.3.0-py3-none-any.whl"}
+]
+
+[[package]]
+dependencies = [
+  {name = "tensorflow"}
+]
+name = "tf-keras"
+sdist = {hash = "sha256:f9af0f2546cd5532de0fae7a481f34a1ca2253737d4cd1000f6b713dc733f770", size = 1255377, upload-time = "2026-03-18T22:12:02.103Z", url = "https://files.pythonhosted.org/packages/76/80/b005b59f9ccdbabc1b6cd07ca1126cbd4d902288438f0c00072f91a43c6f/tf_keras-2.21.0.tar.gz"}
+source = {registry = "https://pypi.org/simple"}
+version = "2.21.0"
+wheels = [
+  {hash = "sha256:f858bf3d97f892304e7fbcf5eb0942ed91674e27204f940a85de8c93cf07fe62", size = 1694939, upload-time = "2026-03-18T22:12:00.662Z", url = "https://files.pythonhosted.org/packages/c5/d2/5220e3b93444f1c57c092ab5eb2c30cdc762a6e412234750f2d6a85b3769/tf_keras-2.21.0-py3-none-any.whl"}
 ]
 
 [[package]]

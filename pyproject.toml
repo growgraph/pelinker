@@ -20,6 +20,7 @@ dependencies = [
   "scikit-optimize>=0.10.2",
   "sentence-transformers>=3.0.1,<4",
   "spacy>=3.7.5,<4",
+  "tf-keras>=2.16.0",
   "torch>=2.9.1",
   "transformers>=4.41.2,<5",
   "umap-learn[parametric-umap]>=0.5.11",
