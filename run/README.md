@@ -306,9 +306,13 @@ After model selection picks a winning embedding combo, search **`(pca_components
 - **Sampling**: same mention-frame load as model selection / fit — optional `--drop-rare-entities`, `--max-mentions-per-entity`, then `--clustering-sample-rows` (omit = all loaded rows)
 - **Outputs** (under `--report-path`):
   - `dim_selection.results.csv` — per-cell mean DBCV / ARI / `outer_score` / pooled MCS
-  - `dim.outer.heatmap.png` / `dim.dbcv.heatmap.png` / `dim.ari.heatmap.png` — PCA × UMAP heatmaps
-  - `dim_selection.summary.json` — chosen dims + metrics documentation (includes MCS glossary)
+  - `dim.outer.heatmap.{png,pdf}` / `dim.dbcv.heatmap.{png,pdf}` / `dim.ari.heatmap.{png,pdf}` — PCA × UMAP heatmaps
+  - `dim.outer.surface.{png,pdf}` — 3D surface of outer (combined DBCV+ARI) score over PCA × UMAP
+  - `dim.metrics.violin.{png,pdf}` — per-bootstrap DBCV / ARI violins across cells (`n_sample` ≥ 2)
+  - `dim.dbcv_vs_ari.{png,pdf}` — DBCV vs ARI scatter (one point/ellipse per cell)
+  - `dim_selection.summary.json` — chosen dims + metrics documentation (includes MCS glossary) + figure list
   - `dim_selection.state.json.gz` — resumable checkpoint
+  - `results_grid_per_sample.csv` — per-sample MCS grid curves (feeds violin / DBCV–ARI scatter)
 - **Metrics**: identical two-level stack as model selection — **inner and outer both use DBCV+ARI**; MCS = `min_cluster_size`
 - **Example**:
 

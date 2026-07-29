@@ -94,9 +94,21 @@ def test_run_dim_selection_coarse_then_refine(
         "pelinker.dim_selection.runner.plot_metrics_with_error_bars",
         lambda *_a, **_k: None,
     )
-    # Avoid matplotlib write noise for heatmaps in CI.
+    # Avoid matplotlib write noise for summary figures in CI.
     monkeypatch.setattr(
         "pelinker.dim_selection.summary.write_dim_heatmaps",
+        lambda *_a, **_k: [],
+    )
+    monkeypatch.setattr(
+        "pelinker.dim_selection.summary.write_dim_outer_surface",
+        lambda *_a, **_k: [],
+    )
+    monkeypatch.setattr(
+        "pelinker.dim_selection.summary.write_dim_metrics_violin",
+        lambda *_a, **_k: [],
+    )
+    monkeypatch.setattr(
+        "pelinker.dim_selection.summary.write_dim_dbcv_vs_ari",
         lambda *_a, **_k: [],
     )
 
@@ -191,6 +203,18 @@ def test_fingerprint_mismatch_aborts(
     )
     monkeypatch.setattr(
         "pelinker.dim_selection.summary.write_dim_heatmaps",
+        lambda *_a, **_k: [],
+    )
+    monkeypatch.setattr(
+        "pelinker.dim_selection.summary.write_dim_outer_surface",
+        lambda *_a, **_k: [],
+    )
+    monkeypatch.setattr(
+        "pelinker.dim_selection.summary.write_dim_metrics_violin",
+        lambda *_a, **_k: [],
+    )
+    monkeypatch.setattr(
+        "pelinker.dim_selection.summary.write_dim_dbcv_vs_ari",
         lambda *_a, **_k: [],
     )
 

@@ -522,6 +522,7 @@ def run_dim_selection(
         layer=resolved_layer,
         n_sample=n_sample,
         refine=refine,
+        grid_csv_path=detail_path,
     )
 
     table = Table(title="Dim selection results (outer DBCV+ARI at pooled MCS)")
