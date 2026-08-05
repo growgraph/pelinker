@@ -130,7 +130,7 @@ _LINKER_LOAD_DEFAULTS: dict[str, object] = {
     "kb_in_entity_clusters": {},
     "cluster_id_to_entity_id": {},
     "kb_out_catalog": None,
-    "nlp_model_name": "en_core_web_trf",
+    "nlp_model_name": "en_core_web_lg",
     "_nlp": None,
     "screener_in_sample_metrics": None,
     "clustering_fit_metrics": None,
@@ -865,7 +865,7 @@ class Linker:
         self._hf_tokenizer = None
         self._hf_model = None
         self._hf_models_by_type: dict[str, tuple[object, object]] = {}
-        self.nlp_model_name: str = kwargs.pop("nlp_model_name", "en_core_web_trf")
+        self.nlp_model_name: str = kwargs.pop("nlp_model_name", "en_core_web_lg")
         self._nlp: object | None = None
         self._fit_clustering_report: ModelSelectionReport | None = None
 
@@ -1817,7 +1817,7 @@ class Linker:
 
         Tokenization uses the spaCy pipeline named by ``nlp_model_name`` (set from
         ``EmbeddingTrainingConfig.nlp_model`` during corpus embedding, else default
-        ``en_core_web_trf``).
+        ``en_core_web_lg``).
 
         Each ``entities`` row includes ``score``: HDBSCAN approximate cluster
         membership probability from ``approximate_predict`` on UMAP coordinates.

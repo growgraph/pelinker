@@ -95,7 +95,7 @@ Embeds a knowledge base corpus using the same pipeline as **stage (A)** of `peli
 | `--use-gpu` | `false` | Move encoder inference to CUDA (if available). | Use this for speed on large corpora. |
 | `--input-buffer-rows` | `1000` | Rows per pandas chunk when reading the text table. | I/O chunking only; does not control model forward memory. |
 | `--encoder-batch-size` | `200` | Number of table rows encoded per transformer forward pass. | Primary OOM control knob; lower when GPU runs out of memory. |
-| `--nlp-model` | `en_core_web_trf` | spaCy pipeline used for tokenization/lemma processing around mention extraction. | Ensure the model is installed in the `uv` env. |
+| `--nlp-model` | `en_core_web_lg` | spaCy pipeline used for tokenization/lemma processing around mention extraction. | Ensure the model is installed in the `uv` env. |
 | `--max-input-buffers` | *(unset)* | Stop after this many read chunks (`input_buffer_rows` each, except final partial chunk). | Useful for smoke tests without scanning the full corpus. |
 | `--negatives-per-positive` | `0.0` | Number of synthetic negative mentions sampled per positive mention. | `0` disables negatives; `1.0` means roughly one negative per positive. |
 | `--negative-label` | `__NEGATIVE__` | Label assigned to sampled negative rows. | Keep this distinct from all real KB labels. |
@@ -176,7 +176,7 @@ Hydra’s **`hydra.output_subdir`** defaults to **`null`** here (no `.hydra` fol
 | `input_buffer_rows` | `1000` | Stage (A): rows per pandas read pass over the text table (I/O buffer; does **not** control GPU memory). |
 | `encoder_batch_size` | `200` | Stage (A): table rows per encoder forward pass—**lower this if the GPU runs out of memory**. |
 | `batch_size` | `1000` | Stage (B): rows per batch when **reading large embedding parquet files**; same role as `model_selection.py --batch-size`. |
-| `nlp_model` | `en_core_web_trf` | spaCy pipeline for mention extraction (`uv run spacy download en_core_web_trf`). |
+| `nlp_model` | `en_core_web_lg` | spaCy pipeline for mention extraction (`uv run spacy download en_core_web_lg`). |
 | `max_input_buffers` | *(unset)* | Stage (A): stop after this many text-table read passes (each up to `input_buffer_rows` rows); unrelated to `encoder_batch_size`. |
 | **`kb_name`** | stem of `kb_path` | Display name stored in `KBConfig`. |
 | **`kb_version`** | `0.1.0` | KB version string stored on the model. |

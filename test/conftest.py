@@ -4,13 +4,13 @@ import pandas as pd
 from importlib.resources import files
 from pelinker.util import load_models, split_text_into_batches
 
-SPACY_MODEL = "en_core_web_trf"
+SPACY_MODEL = "en_core_web_lg"
 
 
 def _load_spacy_or_skip(name: str):
     """Skip rather than error when the pipeline is not installed locally / in CI.
 
-    ``en_core_web_trf`` is a large out-of-band download (``spacy download``), so a fresh
+    ``en_core_web_lg`` is a large out-of-band download (``spacy download``), so a fresh
     checkout would otherwise report errors that say nothing about the code under test.
     Install it to run these for real; see the ``heavy`` marker in ``pyproject.toml``.
     """

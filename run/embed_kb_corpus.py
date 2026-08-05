@@ -62,7 +62,7 @@ logger = logging.getLogger(__name__)
 @click.option(
     "--nlp-model",
     type=click.STRING,
-    default="en_core_web_trf",
+    default="en_core_web_lg",
     help="spaCy model to use for tokenization/lemmas.",
 )
 @click.option(

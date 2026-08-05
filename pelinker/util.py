@@ -164,7 +164,7 @@ def text_to_tokens_embeddings(
         span pairs from ``offset_mapping`` are dropped).
     """
 
-    encoding = tokenizer.batch_encode_plus(
+    encoding = tokenizer(
         texts,
         max_length=MAX_LENGTH,
         return_offsets_mapping=True,

@@ -1,0 +1,44 @@
+name: test
+
+on:
+    pull_request:
+    push:
+        branches: [main]
+
+jobs:
+    pytest:
+        runs-on: ubuntu-latest
+        timeout-minutes: 60
+        steps:
+        -   uses: actions/checkout@v5
+        -   name: Install uv
+            uses: astral-sh/setup-uv@v7
+            with:
+                version: "0.10.12"
+                enable-cache: true
+        -   name: Install dependencies (including dev)
+            run: uv sync --extra dev
+
+        # The spaCy pipeline is a ~400 MB out-of-band download. Without it the tests that
+        # exercise tokenization, span mapping and the HF embedding path skip silently --
+        # which is how a removed transformers API once reached main unnoticed. Cache it so
+        # those tests actually run on every PR.
+        -   name: Cache spaCy model
+            id: cache-spacy
+            uses: actions/cache@v4
+            with:
+                path: .venv/lib/python*/site-packages/en_core_web_lg
+                key: spacy-en_core_web_lg-3.8.0-${{ runner.os }}
+        -   name: Download spaCy model
+            if: steps.cache-spacy.outputs.cache-hit != 'true'
+            run: uv run spacy download en_core_web_lg
+
+        -   name: Cache Hugging Face weights
+            uses: actions/cache@v4
+            with:
+                path: ~/.cache/huggingface
+                key: hf-${{ runner.os }}-${{ hashFiles('uv.lock') }}
+                restore-keys: hf-${{ runner.os }}-
+
+        -   name: Run tests
+            run: uv run pytest test

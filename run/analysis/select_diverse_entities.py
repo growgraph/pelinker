@@ -222,7 +222,7 @@ def run(
 
     # Load spacy model for texts_to_vrep
     logger.info("Loading spaCy model")
-    nlp = spacy.load("en_core_web_trf")
+    nlp = spacy.load("en_core_web_lg")
 
     # Filter rows where both id and label are not null
     df_filtered = df[[id_column, label_column]].dropna()

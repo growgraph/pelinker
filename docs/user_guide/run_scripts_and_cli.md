@@ -8,7 +8,7 @@ From the repository root, use **`uv`** so dependencies match `uv.lock`:
 
 ```bash
 uv sync --all-groups
-uv run spacy download en_core_web_trf
+uv run spacy download en_core_web_lg
 ```
 
 Documentation site builds (optional):

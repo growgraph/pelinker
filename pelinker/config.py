@@ -172,7 +172,7 @@ class EmbeddingTrainingConfig:
     """Rows read per ``pandas.read_csv(..., chunksize=...)`` pass over the text table (I/O buffer only)."""
     encoder_batch_size: int = 200
     """How many table rows are encoded per transformer forward pass; lower if GPU memory is tight."""
-    nlp_model: str = "en_core_web_trf"
+    nlp_model: str = "en_core_web_lg"
     max_input_buffers: int | None = None
     """If set, stop after this many text-table read passes (each up to ``input_buffer_rows`` rows)."""
     negatives_per_positive: float = 0.0

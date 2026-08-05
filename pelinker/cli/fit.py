@@ -110,7 +110,7 @@ class FitCliConfig:
     embeddings_parquet: Any = MISSING
     input_text_table_path: str | None = None
     use_gpu: bool = False
-    nlp_model: str = "en_core_web_trf"
+    nlp_model: str = "en_core_web_lg"
     # Stage (A): text table I/O buffer rows, encoder batch size (GPU), optional cap on read passes.
     input_buffer_rows: int = 1000
     encoder_batch_size: int = 200

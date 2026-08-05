@@ -58,7 +58,7 @@ for model in "${mtypes[@]}"; do
                --output-parquet-path "$output_file" \
                --kb-csv-path "$KB_CSV_PATH" \
                --model-type "$model" \
-               --nlp-model en_core_web_trf \
+               --nlp-model en_core_web_lg \
                --layers-spec "$layer" \
                --encoder-batch-size 100 \
                --input-buffer-rows 2000 \

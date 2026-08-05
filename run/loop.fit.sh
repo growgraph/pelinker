@@ -108,7 +108,7 @@ for model in "${mtypes[@]}"; do
             report_path="$report_dir" \
             model_type="$model" \
             layers_spec="$layer_trimmed" \
-            nlp_model=en_core_web_trf \
+            nlp_model=en_core_web_lg \
             encoder_batch_size=100 \
             input_buffer_rows=2000 \
             use_gpu=true
