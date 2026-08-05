@@ -1,4 +1,4 @@
-"""Regression tests for cluster-entity flow plots."""
+"""Regression tests for KB-in entity→cluster flow plots."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ import pandas as pd
 from pelinker.plotting import plot_cluster_entity_sankey
 
 
-def _composition_df() -> pd.DataFrame:
+def _flow_df() -> pd.DataFrame:
     rows: list[dict[str, object]] = []
     for cluster in range(4):
         for entity in ("expresses", "binds to", "regulates"):
@@ -31,7 +31,7 @@ def test_plot_cluster_entity_sankey_writes_non_blank_figure(
     tmp_path: pathlib.Path,
 ) -> None:
     written = plot_cluster_entity_sankey(
-        _composition_df(),
+        _flow_df(),
         save_dir=tmp_path,
         max_clusters=4,
         max_entities=3,

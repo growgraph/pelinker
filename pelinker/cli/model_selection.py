@@ -11,8 +11,26 @@ from pelinker.model_selection_checkpoint import DEFAULT_CHECKPOINT_NAME, RunMode
 from pelinker.onto import NEGATIVE_LABEL
 from pelinker.reporting import MODEL_SELECTION_RUN_REPORT_BASENAME
 
+_EPILOG = """
+MCS = min_cluster_size (HDBSCAN hyperparameter on the inner grid).
 
-@click.command(context_settings={"help_option_names": ["-h", "--help"]})
+Metrics (same two-level stack as dim selection):
+
+  Inner (choose MCS): grid_objective=dbcv_ari_mean_minmax —
+    min-max normalize mean DBCV and mean ARI on the MCS curve, average,
+    smooth, and pick the left plateau.
+
+  Outer (rank model × layer): at each combo's pooled MCS, combine mean
+    DBCV and mean ARI with the same DBCV+ARI pooling (minmax across
+    candidates). best_score stays mean DBCV for heatmaps; outer_score
+    chooses the winner. Fusion proxies use resume-safe 0.5·(DBCV+ARI).
+"""
+
+
+@click.command(
+    context_settings={"help_option_names": ["-h", "--help"]},
+    epilog=_EPILOG,
+)
 @click.option(
     "--input-dir",
     type=click.Path(path_type=pathlib.Path),
@@ -46,6 +64,23 @@ from pelinker.reporting import MODEL_SELECTION_RUN_REPORT_BASENAME
     default="pca",
     show_default=True,
     help="Reducer for cluster-space visualization (PCA or UMAP on clustering coords).",
+)
+@click.option(
+    "--manifold-kind",
+    type=click.Choice(["umap", "parametric"], case_sensitive=False),
+    default="umap",
+    show_default=True,
+    help=(
+        "Clustering manifold to search on. Must match the manifold the fit will use "
+        "(pelinker-fit predict_mode=compact implies 'parametric'), or the chosen "
+        "min_cluster_size is transferred across a coordinate-system change."
+    ),
+)
+@click.option(
+    "--umap-n-neighbors",
+    type=click.INT,
+    default=None,
+    help="UMAP n_neighbors; omit for the library default (15). Scale-dependent.",
 )
 @click.option(
     "--min-class-size",
@@ -219,6 +254,8 @@ def main(
     umap_dim: int,
     pca_components: int,
     cluster_viz_method: str,
+    manifold_kind: str,
+    umap_n_neighbors: int | None,
     min_class_size: int,
     seed: int,
     pca_seed: int,
@@ -250,6 +287,8 @@ def main(
         umap_dim=umap_dim,
         pca_components=pca_components,
         cluster_viz_method=cluster_viz_method,
+        manifold_kind=manifold_kind.lower(),
+        umap_n_neighbors=umap_n_neighbors,
         min_class_size=min_class_size,
         seed=seed,
         pca_seed=pca_seed,

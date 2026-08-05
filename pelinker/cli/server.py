@@ -21,7 +21,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from starlette.middleware.gzip import GZipMiddleware
 
 from pelinker.config import EmbeddingModelMetadata, KBConfig
-from pelinker.model import Linker
+from pelinker.model import DEFAULT_CLUSTER_MEMBERSHIP_THRESHOLD, Linker
 from pelinker.onto import MAX_LENGTH
 
 logger = logging.getLogger(__name__)
@@ -38,7 +38,7 @@ class ServerCliConfig:
     port: int = 8599
     """Path to the dumped linker **without** ``.gz`` (same as ``Linker.dump`` / ``Linker.load``). If omitted, uses the packaged store path built from ``model_type`` and ``layers_spec``."""
     model_file_spec: str | None = None
-    thr_score: float = 0.5
+    thr_score: float = DEFAULT_CLUSTER_MEMBERSHIP_THRESHOLD
     use_gpu: bool = False
     cors_allow_origins: list[str] = field(default_factory=lambda: ["*"])
 
@@ -146,7 +146,9 @@ def _embedding_metadata_to_json(
 def build_info_payload(state: ServerState) -> dict[str, Any]:
     linker = state.linker
     em = linker.embedding_metadata
-    cluster_ids = set(linker.cluster_assignments.values())
+    cluster_ids = set(linker.cluster_id_to_entity_id.keys()) or set(
+        linker.cluster_assignments.values()
+    )
     return {
         "resolved_model_path": state.resolved_model_path,
         "embedding_metadata": _embedding_metadata_to_json(em),
@@ -245,7 +247,7 @@ def create_app(cfg: ServerCliConfig) -> FastAPI:
             pres = state.linker.predict(
                 body.texts,
                 max_length=max_len,
-                threshold=0.0,
+                threshold=thr_s,
                 use_gpu=use_gpu,
             )
             r = pres.filter_by_score(thr_s).to_dict(public_entity_fields=True)
@@ -267,7 +269,7 @@ def create_app(cfg: ServerCliConfig) -> FastAPI:
             pres = state.linker.predict(
                 body.texts,
                 max_length=max_len,
-                threshold=0.0,
+                threshold=thr_s,
                 use_gpu=use_gpu,
                 include_mention_anomaly=True,
                 include_prediction_kb_validation=body.kb_validation,

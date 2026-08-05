@@ -160,6 +160,7 @@ def test_linker_fit_assigns_all_manifold_rows_when_clustering_sample_capped(
             clustering_sample_index=0,
             screener_seed=13,
             projection_screener=ManifoldOovScreenerConfig(enabled=False),
+            predict_mode="legacy",
         ),
     )
     fit_report = linker.take_fit_clustering_report()

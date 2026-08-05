@@ -1,17 +1,117 @@
 """
 Configurable transformation pipeline for embedding reduction.
 
-Pipeline: LLM embeddings -> PCA -> UMAP (clustering) -> HDBSCAN
+Pipeline: LLM embeddings -> PCA -> UMAP/ParametricUMAP (clustering) -> HDBSCAN
 Visualization: umap_clustering -> PCA or UMAP -> plot coords
 """
+
+from __future__ import annotations
+
+import logging
+import pathlib
+from dataclasses import dataclass
 
 import numpy as np
 import pandas as pd
 import umap
-from dataclasses import dataclass
 from sklearn.decomposition import PCA
 
 from pelinker.config import TransformConfig
+
+logger = logging.getLogger(__name__)
+
+# Union type for clustering manifold (standard UMAP or ParametricUMAP).
+ClusteringManifold = umap.UMAP
+
+
+def is_parametric_umap(obj: object) -> bool:
+    return type(obj).__name__ == "ParametricUMAP"
+
+
+def parametric_umap_sidecar_dir(file_spec: str | pathlib.Path) -> pathlib.Path:
+    """Directory beside a linker artifact for ParametricUMAP ``save`` / ``load``."""
+    p = pathlib.Path(file_spec).expanduser()
+    if p.suffix == ".gz":
+        stem = p.name[: -len(".gz")]
+        return p.with_name(stem + ".parametric_umap")
+    return p.with_name(p.name + ".parametric_umap")
+
+
+def save_clustering_manifold(
+    manifold: ClusteringManifold | None, path: str | pathlib.Path
+) -> None:
+    """Persist a ParametricUMAP for predict (encoder + picklable state).
+
+    umap-learn's ``ParametricUMAP.save`` tries to serialize ``parametric_model`` as
+    Keras 3, which fails on ``UMAPModel``. Predict only needs the encoder, so we
+    save ``encoder.keras`` and pickle the UMAP object with ``parametric_model`` cleared.
+    """
+    import pickle
+
+    if manifold is None:
+        return
+    if not is_parametric_umap(manifold):
+        raise TypeError(
+            f"save_clustering_manifold only supports ParametricUMAP; got {type(manifold)!r}"
+        )
+    out = pathlib.Path(path)
+    out.mkdir(parents=True, exist_ok=True)
+
+    encoder = manifold.encoder
+    if encoder is not None:
+        encoder_path = out / "encoder.keras"
+        encoder.save(str(encoder_path))
+        logger.info("Wrote ParametricUMAP encoder to %s", encoder_path)
+
+    parametric_model = manifold.parametric_model
+    raw_data = getattr(manifold, "_raw_data", None)
+    manifold.parametric_model = None
+    manifold.encoder = None
+    if hasattr(manifold, "_raw_data"):
+        delattr(manifold, "_raw_data")
+    try:
+        model_pkl = out / "model.pkl"
+        with model_pkl.open("wb") as fh:
+            pickle.dump(manifold, fh, pickle.HIGHEST_PROTOCOL)
+        logger.info("Wrote ParametricUMAP pickle to %s", model_pkl)
+    finally:
+        manifold.parametric_model = parametric_model
+        manifold.encoder = encoder
+        if raw_data is not None:
+            manifold._raw_data = raw_data
+
+
+def load_clustering_manifold(path: str | pathlib.Path) -> ClusteringManifold:
+    """Load a ParametricUMAP written by :func:`save_clustering_manifold`."""
+    from umap.parametric_umap import load_ParametricUMAP
+
+    return load_ParametricUMAP(str(pathlib.Path(path)), verbose=False)
+
+
+def _build_clustering_manifold(
+    config: TransformConfig, *, n_neighbors: int
+) -> ClusteringManifold:
+    if config.manifold_kind == "parametric":
+        from umap.parametric_umap import ParametricUMAP
+
+        kwargs: dict[str, object] = {
+            "n_neighbors": n_neighbors,
+            "n_components": config.umap_components,
+            "metric": config.umap_metric,
+            "random_state": config.umap_seed,
+        }
+        if config.parametric_umap_batch_size is not None:
+            kwargs["batch_size"] = config.parametric_umap_batch_size
+        pumap = ParametricUMAP(**kwargs)
+        # Not a constructor kwarg in umap-learn 0.5.x — set after init.
+        pumap.n_training_epochs = int(config.parametric_umap_n_training_epochs)
+        return pumap
+    return umap.UMAP(
+        n_neighbors=n_neighbors,
+        n_components=config.umap_components,
+        metric=config.umap_metric,
+        random_state=config.umap_seed,
+    )
 
 
 @dataclass(frozen=True)
@@ -63,11 +163,11 @@ class TransformArtifacts:
 
 class EmbeddingTransformer:
     """
-    Transform embeddings through PCA and UMAP reduction.
+    Transform embeddings through PCA and UMAP / ParametricUMAP reduction.
 
     Pipeline:
         1. PCA: Reduce embeddings to pca_components dimensions
-        2. UMAP: Further reduce PCA output to umap_components (for clustering / HDBSCAN)
+        2. UMAP or ParametricUMAP: Further reduce PCA output to umap_components
         3. Cluster viz: Reduce umap_clustering to cluster_viz_components (PCA or UMAP)
     """
 
@@ -80,7 +180,7 @@ class EmbeddingTransformer:
         """
         self.config = config or TransformConfig()
         self.pca: PCA | None = None
-        self.umap: umap.UMAP | None = None
+        self.umap: ClusteringManifold | None = None
         self.cluster_viz_pca: PCA | None = None
         self.cluster_viz_umap: umap.UMAP | None = None
         self._mahalanobis_eps = 1e-12
@@ -130,7 +230,7 @@ class EmbeddingTransformer:
         spectral_entropy = -np.sum(p * np.log(p + self._entropy_log_eps), axis=1)
         return residual_norms, mahalanobis, spectral_entropy
 
-    def fit(self, embeddings: np.ndarray) -> "EmbeddingTransformer":
+    def fit(self, embeddings: np.ndarray) -> EmbeddingTransformer:
         """
         Fit the transformation pipeline on training embeddings.
 
@@ -151,17 +251,14 @@ class EmbeddingTransformer:
         embeddings_normed = self._l2_normalize_rows(embeddings)
         pca_reduced = self.pca.fit_transform(embeddings_normed)
 
-        # UMAP requires n_neighbors < n_samples; cap the default (15) for tiny frames.
-        n_neighbors = min(15, max(2, n_samples - 1))
-        if n_neighbors >= n_samples:
-            n_neighbors = max(1, n_samples - 1)
+        n_neighbors = self.config.resolve_n_neighbors(n_samples)
 
-        # Fit UMAP for clustering
-        self.umap = umap.UMAP(
-            n_neighbors=n_neighbors,
-            n_components=self.config.umap_components,
-            metric=self.config.umap_metric,
-            random_state=self.config.umap_seed,
+        self.umap = _build_clustering_manifold(self.config, n_neighbors=n_neighbors)
+        logger.info(
+            "Fitting clustering manifold kind=%s n_neighbors=%s n_components=%s",
+            self.config.manifold_kind,
+            n_neighbors,
+            self.config.umap_components,
         )
         self.umap.fit(pca_reduced)
 

@@ -334,3 +334,12 @@ def test_cluster_composition_json_roundtrip(tmp_path: Path) -> None:
     assert len(back) == 2
     assert float(back.iloc[0]["count"]) == pytest.approx(1.5)
     assert meta["schema"] == "pelinker.fit_cluster_composition.v2"
+    assert meta["exclude_noise"] is False
+
+
+def test_cluster_composition_json_exclude_noise_flag(tmp_path: Path) -> None:
+    df = pd.DataFrame({"cluster": [0], "entity": ["p1"], "count": [1.0]})
+    path = tmp_path / "comp.json.gz"
+    write_cluster_composition_json(path, df, top_n=3, exclude_noise=True)
+    _, meta = read_cluster_composition_json(path)
+    assert meta["exclude_noise"] is True

@@ -3,16 +3,17 @@
 from __future__ import annotations
 
 import math
-from typing import Any
+from collections.abc import Sequence
 
+import numpy as np
 import pandas as pd
-
-from pelinker.config import ClusterCompositionSnapshot
 
 ENTITY_WEIGHTING_INV_SQRT = "inv_sqrt_mention_count"
 HDBSCAN_NOISE_CLUSTER_ID = -1
+NOISE_CLUSTER_LABEL = "noise"
 DEFAULT_MAX_CLUSTERS_FOR_PLOTS = 48
 DEFAULT_MAX_ENTITIES_FOR_FLOW_PLOTS = 24
+_CLUSTER_SCORE_PERCENTILES = (10, 25, 50, 75, 90)
 
 
 def entity_mention_weights(entities: pd.Series) -> pd.Series:
@@ -84,17 +85,119 @@ def top_cluster_ids_by_mass(
     mass: pd.DataFrame,
     *,
     max_clusters: int | None,
+    always_include: Sequence[int] | None = None,
 ) -> list[int]:
-    """Cluster ids ordered by descending total mass (optionally truncated)."""
+    """Cluster ids ordered by descending total mass (optionally truncated).
+
+    ``always_include`` ids present in ``mass`` are appended after the truncated
+    ranking (so noise ``-1`` is not dropped when capping emergent clusters).
+    """
     if mass.empty:
         return []
     totals = (
         mass.groupby("cluster", sort=False)["count"].sum().sort_values(ascending=False)
     )
-    ids = [int(c) for c in totals.index.tolist()]
+    present = {int(c) for c in totals.index.tolist()}
+    force = [int(c) for c in (always_include or ()) if int(c) in present]
+    force_set = set(force)
+    ranked = [int(c) for c in totals.index.tolist() if int(c) not in force_set]
     if max_clusters is not None and max_clusters > 0:
-        return ids[: int(max_clusters)]
-    return ids
+        ranked = ranked[: int(max_clusters)]
+    return ranked + force
+
+
+def with_noise_cluster_label(cluster_labels: dict[int, str] | None) -> dict[int, str]:
+    """Copy labels and ensure HDBSCAN noise maps to :data:`NOISE_CLUSTER_LABEL`."""
+    out = dict(cluster_labels) if cluster_labels else {}
+    out.setdefault(HDBSCAN_NOISE_CLUSTER_ID, NOISE_CLUSTER_LABEL)
+    return out
+
+
+def cluster_score_percentile_summary(
+    assignments: pd.DataFrame,
+) -> dict[str, dict[str, float]]:
+    """Percentiles of ``cluster_score`` overall, emergent-only, and noise rows."""
+    empty = {f"p{p}": float("nan") for p in _CLUSTER_SCORE_PERCENTILES}
+    if "cluster_score" not in assignments.columns or len(assignments) == 0:
+        return {"overall": dict(empty), "emergent": dict(empty), "noise": dict(empty)}
+
+    scores = pd.to_numeric(assignments["cluster_score"], errors="coerce")
+    clusters = (
+        assignments["cluster"].astype(int)
+        if "cluster" in assignments.columns
+        else pd.Series(dtype=int)
+    )
+
+    def _pcts(vals: pd.Series) -> dict[str, float]:
+        finite = vals.to_numpy(dtype=np.float64)
+        finite = finite[np.isfinite(finite)]
+        if finite.size == 0:
+            return dict(empty)
+        qs = np.percentile(finite, list(_CLUSTER_SCORE_PERCENTILES))
+        return {
+            f"p{p}": float(q)
+            for p, q in zip(_CLUSTER_SCORE_PERCENTILES, qs, strict=True)
+        }
+
+    emergent_mask = clusters != HDBSCAN_NOISE_CLUSTER_ID
+    noise_mask = clusters == HDBSCAN_NOISE_CLUSTER_ID
+    return {
+        "overall": _pcts(scores),
+        "emergent": _pcts(scores.loc[emergent_mask]) if len(clusters) else dict(empty),
+        "noise": _pcts(scores.loc[noise_mask]) if len(clusters) else dict(empty),
+    }
+
+
+def limit_entity_flow_for_plots(
+    flow_df: pd.DataFrame,
+    *,
+    max_clusters: int | None = DEFAULT_MAX_CLUSTERS_FOR_PLOTS,
+    max_entities: int | None = DEFAULT_MAX_ENTITIES_FOR_FLOW_PLOTS,
+    min_within_cluster_fraction: float = 0.0,
+) -> pd.DataFrame:
+    """
+    Subset a KB-in entity→cluster flow table for Sankey charts.
+
+    Keeps top clusters by mass and top entities by total mass; drops the rest
+    (no synthetic ``Other`` labels). Thin within-cluster edges below
+    ``min_within_cluster_fraction`` are dropped.
+    """
+    if flow_df.empty:
+        return flow_df
+    work = flow_df.copy()
+    work["cluster"] = work["cluster"].astype(int)
+    work["entity"] = work["entity"].astype(str)
+    work["count"] = work["count"].astype(float)
+
+    always = (
+        [HDBSCAN_NOISE_CLUSTER_ID]
+        if HDBSCAN_NOISE_CLUSTER_ID in set(work["cluster"].astype(int))
+        else None
+    )
+    keep_clusters = top_cluster_ids_by_mass(
+        work, max_clusters=max_clusters, always_include=always
+    )
+    if keep_clusters:
+        work = work.loc[work["cluster"].isin(keep_clusters)]
+    if work.empty:
+        return work
+
+    if max_entities is not None and max_entities > 0:
+        entity_mass = work.groupby("entity", sort=False)["count"].sum()
+        top_entities = set(
+            entity_mass.sort_values(ascending=False)
+            .head(int(max_entities))
+            .index.astype(str)
+        )
+        work = work.loc[work["entity"].isin(top_entities)]
+
+    if min_within_cluster_fraction > 0.0 and not work.empty:
+        cluster_totals = work.groupby("cluster", sort=False)["count"].transform("sum")
+        work = work.loc[
+            work["count"] / cluster_totals >= min_within_cluster_fraction
+        ].reset_index(drop=True)
+
+    return work.reset_index(drop=True)
 
 
 def _bundle_top_n_and_other(
@@ -136,6 +239,7 @@ def build_cluster_composition_df(
     ``1 / sqrt(n_mentions(entity))`` instead of unit weight.
 
     ``max_clusters`` keeps only the largest emergent clusters by total mass (for plots).
+    When ``exclude_noise`` is false, noise (``-1``) is always retained if present.
     """
     counts = aggregate_cluster_entity_mass(
         assignments,
@@ -144,13 +248,22 @@ def build_cluster_composition_df(
     )
     if counts.empty:
         return counts
-    keep_ids = top_cluster_ids_by_mass(counts, max_clusters=max_clusters)
+    always = (
+        [HDBSCAN_NOISE_CLUSTER_ID]
+        if not exclude_noise
+        and HDBSCAN_NOISE_CLUSTER_ID in set(counts["cluster"].astype(int))
+        else None
+    )
+    keep_ids = top_cluster_ids_by_mass(
+        counts, max_clusters=max_clusters, always_include=always
+    )
+    keep_set = set(keep_ids)
     counts = counts.loc[counts["cluster"].isin(keep_ids)]
     return pd.concat(
         [
             _bundle_top_n_and_other(int(cid), grp, top_n=top_n)
             for cid, grp in counts.groupby("cluster", sort=True)
-            if int(cid) in keep_ids
+            if int(cid) in keep_set
         ],
         ignore_index=True,
     )
@@ -161,12 +274,16 @@ def limit_composition_for_flow_plots(
     *,
     max_clusters: int | None = DEFAULT_MAX_CLUSTERS_FOR_PLOTS,
     max_entities: int | None = DEFAULT_MAX_ENTITIES_FOR_FLOW_PLOTS,
+    min_within_cluster_fraction: float = 0.0,
 ) -> pd.DataFrame:
     """
       Subset a long composition table for Sankey/bump charts.
 
       Keeps top clusters by mass and top entities by total mass (drops ``Other (...)`` rows
     from entity ranking, then re-adds per-cluster Other slices when needed).
+
+    When ``min_within_cluster_fraction`` > 0, entity slices below that share of their
+    cluster's total mass are rolled into ``Other (...)``.
     """
     if composition_df.empty:
         return composition_df
@@ -174,15 +291,33 @@ def limit_composition_for_flow_plots(
     work["cluster"] = work["cluster"].astype(int)
     work["entity"] = work["entity"].astype(str)
 
+    if min_within_cluster_fraction > 0.0:
+        work = _apply_within_cluster_fraction_floor(
+            work,
+            min_within_cluster_fraction=min_within_cluster_fraction,
+        )
+
     cluster_totals = work.groupby("cluster", sort=False)["count"].sum()
+    mass_for_rank = cluster_totals.reset_index()
+    if "cluster" not in mass_for_rank.columns:
+        mass_for_rank = mass_for_rank.rename(
+            columns={mass_for_rank.columns[0]: "cluster"}
+        )
+    always = (
+        [HDBSCAN_NOISE_CLUSTER_ID]
+        if HDBSCAN_NOISE_CLUSTER_ID in set(work["cluster"].astype(int))
+        else None
+    )
     keep_clusters = top_cluster_ids_by_mass(
-        cluster_totals.reset_index().rename(columns={"index": "cluster"}),
+        mass_for_rank,
         max_clusters=max_clusters,
+        always_include=always,
     )
     if not keep_clusters and max_clusters is not None:
         keep_clusters = top_cluster_ids_by_mass(
-            cluster_totals.reset_index().rename(columns={"index": "cluster"}),
+            mass_for_rank,
             max_clusters=None,
+            always_include=always,
         )
     work = work.loc[work["cluster"].isin(keep_clusters)]
 
@@ -205,6 +340,53 @@ def limit_composition_for_flow_plots(
     return work
 
 
+def _apply_within_cluster_fraction_floor(
+    composition_df: pd.DataFrame,
+    *,
+    min_within_cluster_fraction: float,
+) -> pd.DataFrame:
+    """Roll entity slices below a within-cluster fraction into ``Other (...)``."""
+    if composition_df.empty or min_within_cluster_fraction <= 0.0:
+        return composition_df
+    parts: list[pd.DataFrame] = []
+    for cid, grp in composition_df.groupby("cluster", sort=False):
+        cluster_id = int(cid)
+        entity_rows = grp[~grp["entity"].astype(str).str.startswith("Other (")].copy()
+        other_rows = grp[grp["entity"].astype(str).str.startswith("Other (")]
+        other_mass = float(other_rows["count"].sum()) if len(other_rows) else 0.0
+        total = float(entity_rows["count"].sum()) + other_mass
+        if total <= 0.0:
+            parts.append(grp)
+            continue
+        keep_mask = (
+            entity_rows["count"].astype(float) / total >= min_within_cluster_fraction
+        )
+        kept = entity_rows.loc[keep_mask]
+        dropped_mass = float(entity_rows.loc[~keep_mask, "count"].sum())
+        rolled = other_mass + dropped_mass
+        if rolled > 0.0:
+            n_other = int((~keep_mask).sum()) + (
+                int(len(other_rows)) if len(other_rows) else 0
+            )
+            other_row = pd.DataFrame(
+                [
+                    {
+                        "cluster": cluster_id,
+                        "entity": f"Other ({n_other} terms)",
+                        "count": rolled,
+                    }
+                ]
+            )
+            if "cluster_label" in grp.columns:
+                other_row["cluster_label"] = grp["cluster_label"].iloc[0]
+            parts.append(pd.concat([kept, other_row], ignore_index=True))
+        else:
+            parts.append(kept)
+    if not parts:
+        return composition_df
+    return pd.concat(parts, ignore_index=True)
+
+
 def cluster_entity_mass_summary(assignments: pd.DataFrame) -> dict[str, int | float]:
     """Counts for fit logs and composition JSON metadata."""
     if "cluster" not in assignments.columns:
@@ -222,75 +404,4 @@ def cluster_entity_mass_summary(assignments: pd.DataFrame) -> dict[str, int | fl
         "n_emergent_clusters": count_emergent_clusters(assignments),
         "n_noise_mentions": n_noise,
         "noise_fraction": float(n_noise) / float(n_rows) if n_rows > 0 else 0.0,
-    }
-
-
-def build_emergent_clusters_catalog(
-    composition: ClusterCompositionSnapshot,
-    consensus_names: dict[int, str],
-    assignments: pd.DataFrame,
-    *,
-    min_cluster_size: int,
-    top_entities_per_cluster: int = 5,
-    weight_by_entity: bool = True,
-) -> dict[str, Any]:
-    """
-    Build JSON-serializable emergent-cluster catalog with stable cluster entity ids.
-
-      Each cluster gets ``entity_id`` ``cluster:{id}``, display name, mass, and top entities
-      with within-cluster fractions.
-    """
-    mass = aggregate_cluster_entity_mass(
-        assignments, weight_by_entity=weight_by_entity, exclude_noise=True
-    )
-    cluster_totals: dict[int, float] = {}
-    if not mass.empty:
-        for cid, grp in mass.groupby("cluster", sort=False):
-            cluster_totals[int(cid)] = float(grp["count"].sum())
-
-    ordered_ids = sorted(
-        cluster_totals.keys(),
-        key=lambda c: (-cluster_totals[c], c),
-    )
-
-    clusters_out: list[dict[str, Any]] = []
-    for cid in ordered_ids:
-        if cid == HDBSCAN_NOISE_CLUSTER_ID:
-            continue
-        mass_frac = composition.cluster_within_fraction.get(cid, {})
-        capture = composition.cluster_fraction_of_property_mass.get(cid, {})
-        top_sorted = sorted(mass_frac.items(), key=lambda kv: (-kv[1], kv[0]))[
-            :top_entities_per_cluster
-        ]
-        top_entities = [
-            {
-                "entity": ent,
-                "within_cluster_fraction": float(frac),
-                "capture_fraction_of_entity_mass": float(capture.get(ent, 0.0)),
-            }
-            for ent, frac in top_sorted
-        ]
-        dominant_fraction = float(top_sorted[0][1]) if top_sorted else 0.0
-        emergent = filter_emergent_assignments(assignments)
-        mention_count = int((emergent["cluster"].astype(int) == cid).sum())
-        clusters_out.append(
-            {
-                "cluster_id": int(cid),
-                "entity_id": f"cluster:{cid}",
-                "display_name": consensus_names.get(cid, str(cid)),
-                "weighted_mass": cluster_totals.get(cid, 0.0),
-                "mention_count": mention_count,
-                "dominant_entity_fraction": dominant_fraction,
-                "top_entities": top_entities,
-            }
-        )
-
-    summary = cluster_entity_mass_summary(assignments)
-    return {
-        "schema": "pelinker.emergent_clusters.v1",
-        "min_cluster_size": int(min_cluster_size),
-        "n_emergent_clusters": int(summary["n_emergent_clusters"]),
-        "n_noise_mentions": int(summary["n_noise_mentions"]),
-        "noise_fraction": float(summary["noise_fraction"]),
-        "clusters": clusters_out,
     }

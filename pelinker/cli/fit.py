@@ -15,6 +15,7 @@ from pelinker.config import (
     EmbeddingTrainingConfig,
     KBConfig,
     LinkerFitConfig,
+    DistillationGateConfig,
     ManifoldOovScreenerConfig,
     NegativeScreenerConfig,
     TransformConfig,
@@ -24,18 +25,18 @@ from pelinker.model import Linker
 from pelinker.cluster_composition_viz import (
     DEFAULT_MAX_CLUSTERS_FOR_PLOTS,
     build_cluster_composition_df,
-    build_emergent_clusters_catalog,
     cluster_entity_mass_summary,
+    cluster_score_percentile_summary,
+    with_noise_cluster_label,
 )
+from pelinker.kb_out import KbOutNamingConfig, cluster_labels_from_catalog
 from pelinker.reporting import (
     linker_fit_cluster_composition_path,
-    linker_fit_cluster_kb_path,
     linker_fit_clustering_report_path,
-    linker_fit_emergent_clusters_path,
+    linker_fit_kb_out_path,
     write_cluster_composition_json,
-    write_cluster_derived_labels_map_json,
     write_clustering_report_json,
-    write_emergent_clusters_json,
+    write_kb_out_json,
 )
 from pelinker.onto import NEGATIVE_LABEL
 from pelinker.util import expand_config_path
@@ -63,8 +64,20 @@ class FitCliConfig:
     model_type: str = "pubmedbert"
     layers_spec: str = "1"
     kb_path: str = MISSING
-    pca_components: int = 100
-    umap_dim: int = 8
+    selection_report: str | None = None
+    """``selected_hyperparameters.json`` (or the report dir containing it) from
+    ``pelinker-model-selection`` / ``pelinker-dim-selection``.
+
+    Fills in ``pca_components``, ``umap_dim``, ``umap_n_neighbors`` and
+    ``min_cluster_size`` when those are not set explicitly here. Explicit overrides always
+    win, and any disagreement is logged rather than silently resolved."""
+    pca_components: int | None = None
+    """PCA components; omit to take the selection report's value, else 100."""
+    umap_dim: int | None = None
+    """UMAP output dimension; omit to take the selection report's value, else 8."""
+    umap_n_neighbors: int | None = None
+    """UMAP ``n_neighbors``; omit for the library default (15). Scale-dependent — see
+    ``pelinker-scale-curve`` when the fit N differs markedly from the selection N."""
     cluster_viz_method: str = "pca"
     drop_rare_entities: bool = False
     min_mentions_per_entity: int = 20
@@ -83,7 +96,13 @@ class FitCliConfig:
     clustering_sample_index: int = 0
     """Bootstrap index for clustering subsample (match model-selection ``sample_idx``)."""
     # Stage-B HDBSCAN ``min_cluster_size`` (choose upstream, e.g. ``pelinker.model_selection``).
-    min_cluster_size: int = 20
+    min_cluster_size: int | None = None
+    """Explicit HDBSCAN ``min_cluster_size``. Omit to resolve from ``scale_curve_path``,
+    or fall back to 20 when neither is given. An explicit value always wins."""
+    scale_curve_path: str | None = None
+    """``scale_curve.json`` from ``pelinker-scale-curve``. When set (and
+    ``min_cluster_size`` is not), ``min_cluster_size`` is extrapolated to this fit's
+    realized manifold row count instead of transferred verbatim from the selection run."""
     # Filesystem base path for ``Linker.dump`` (``.gz`` added by the linker).
     model_path: str | None = None
     # Directory for fit-time reports (``linker_fit.clustering_report.json``).
@@ -110,6 +129,9 @@ class FitCliConfig:
     kb_created_at: str | None = None
     kb_description: str = ""
     kb_entity_count: int | None = None
+    kb_out_name_min_fraction: float = 0.05
+    kb_out_name_top_n: int = 3
+    kb_out_ambiguity_min_capture: float = 0.10
     # Discriminator: auto = fit from parquet only if no text table; else embed then fit (legacy).
     # str (not Literal): OmegaConf structured configs reject Literal annotations on fields.
     pipeline: str = "embed_only"
@@ -118,6 +140,25 @@ class FitCliConfig:
     # ``..._<model>_<layers>`` (see ``_parse_embedding_parquet_stem``).
     model_types: list[str] | None = None
     layers_specs: list[str] | None = None
+    # Compact = ParametricUMAP + MLP entity head (default). Legacy = UMAP + HDBSCAN predict.
+    predict_mode: str = "compact"
+    entity_head_hidden_layers: list[int] | None = None
+    """MLP hidden sizes for compact mode; default ``[256, 128, 128]`` when omitted."""
+    entity_head_holdout_fraction: float = 0.15
+    """Rows withheld from entity-head training to measure distillation fidelity.
+    Set ``0.0`` to train on every row and skip the measurement (pre-fidelity behaviour)."""
+    entity_head_holdout_group_col: str = "pmid"
+    """Column kept whole across the holdout split, so correlated mentions from one
+    document cannot straddle it and inflate the measured agreement."""
+    entity_head_holdout_seed: int = 13
+    distillation_gates_enabled: bool = True
+    distillation_min_entity_agreement: float = 0.95
+    distillation_max_emit_rate_rel_delta: float = 0.10
+    distillation_emit_rate_threshold: float = 0.3
+    distillation_on_failure: str = "warn"
+    """``warn`` keeps the fitted model and records the failure; ``raise`` aborts the fit."""
+    parametric_umap_n_training_epochs: int = 10
+    parametric_umap_batch_size: int | None = None
 
     def __post_init__(self) -> None:
         if self.pipeline not in _PIPELINE_VALUES:
@@ -133,8 +174,35 @@ class FitCliConfig:
             raise ValueError(
                 f"cluster_viz_method must be 'pca' or 'umap', got {self.cluster_viz_method!r}"
             )
-        if self.min_cluster_size < 2:
+        if self.predict_mode not in ("compact", "legacy"):
+            raise ValueError(
+                f"predict_mode must be 'compact' or 'legacy', got {self.predict_mode!r}"
+            )
+        if self.parametric_umap_n_training_epochs < 1:
+            raise ValueError("parametric_umap_n_training_epochs must be >= 1")
+        if (
+            self.parametric_umap_batch_size is not None
+            and self.parametric_umap_batch_size < 1
+        ):
+            raise ValueError("parametric_umap_batch_size must be >= 1 when provided")
+        if self.entity_head_hidden_layers is not None:
+            if not self.entity_head_hidden_layers or any(
+                int(h) < 1 for h in self.entity_head_hidden_layers
+            ):
+                raise ValueError(
+                    "entity_head_hidden_layers must be a non-empty list of ints >= 1"
+                )
+        if self.min_cluster_size is not None and self.min_cluster_size < 2:
             raise ValueError("min_cluster_size must be >= 2")
+        if self.umap_n_neighbors is not None and self.umap_n_neighbors < 2:
+            raise ValueError("umap_n_neighbors must be >= 2 when provided")
+        if not 0.0 <= self.entity_head_holdout_fraction < 1.0:
+            raise ValueError("entity_head_holdout_fraction must be in [0, 1)")
+        if self.distillation_on_failure not in ("warn", "raise"):
+            raise ValueError(
+                "distillation_on_failure must be 'warn' or 'raise', "
+                f"got {self.distillation_on_failure!r}"
+            )
         if self.clustering_sample_rows is not None and self.clustering_sample_rows < 1:
             raise ValueError("clustering_sample_rows must be >= 1 when provided")
         if self.min_mentions_per_entity < 1:
@@ -148,6 +216,12 @@ class FitCliConfig:
             raise ValueError("max_mentions_negative must be >= 1 when provided")
         if self.clustering_sample_index < 0:
             raise ValueError("clustering_sample_index must be >= 0")
+        if not 0.0 <= self.kb_out_name_min_fraction <= 1.0:
+            raise ValueError("kb_out_name_min_fraction must be in [0, 1]")
+        if self.kb_out_name_top_n < 1:
+            raise ValueError("kb_out_name_top_n must be >= 1")
+        if not 0.0 <= self.kb_out_ambiguity_min_capture <= 1.0:
+            raise ValueError("kb_out_ambiguity_min_capture must be in [0, 1]")
 
 
 def _coerce_str_list(val: object) -> list[str]:
@@ -434,8 +508,123 @@ def _run_embed_stage(
         )
 
 
+DEFAULT_PCA_COMPONENTS = 100
+DEFAULT_UMAP_DIM = 8
+
+
+@dataclass(frozen=True)
+class _ResolvedSelection:
+    """Transform dims after merging explicit overrides with a selection report."""
+
+    pca_components: int
+    umap_dim: int
+    umap_n_neighbors: int | None
+    min_cluster_size: int | None
+
+
+def _resolve_selection_hyperparameters(cfg: FitCliConfig) -> _ResolvedSelection:
+    """Merge ``selection_report`` into the transform dims; explicit values win.
+
+    Every substitution and every disagreement is logged, so a fit never silently runs on
+    dims that differ from the ones the search actually chose.
+    """
+    selected = None
+    if cfg.selection_report:
+        from pelinker.selected_hyperparameters import load_selected_hyperparameters
+
+        path = expand_config_path(cfg.selection_report)
+        assert path is not None
+        selected = load_selected_hyperparameters(path)
+        logger.info(
+            "Loaded selection report from %s (%s: %s/%s, pca=%d, umap=%d, mcs=%d, "
+            "manifold=%s, N=%s)",
+            path,
+            selected.source,
+            selected.model,
+            selected.layer,
+            selected.pca_components,
+            selected.umap_dim,
+            selected.min_cluster_size,
+            selected.manifold_kind,
+            selected.n_rows_realized,
+        )
+        implied = "parametric" if cfg.predict_mode == "compact" else "umap"
+        if selected.manifold_kind != implied:
+            logger.warning(
+                "Selection ran on manifold_kind=%r but predict_mode=%r implies %r. "
+                "min_cluster_size=%d was chosen on different coordinates than this fit "
+                "will use; re-run the search with --manifold-kind %s to align them.",
+                selected.manifold_kind,
+                cfg.predict_mode,
+                implied,
+                selected.min_cluster_size,
+                implied,
+            )
+
+    def _pick(name: str, explicit, from_report, fallback):
+        if explicit is not None:
+            if from_report is not None and from_report != explicit:
+                logger.info(
+                    "%s=%s set explicitly, overriding selection report value %s",
+                    name,
+                    explicit,
+                    from_report,
+                )
+            return explicit
+        if from_report is not None:
+            return from_report
+        return fallback
+
+    return _ResolvedSelection(
+        pca_components=_pick(
+            "pca_components",
+            cfg.pca_components,
+            None if selected is None else selected.pca_components,
+            DEFAULT_PCA_COMPONENTS,
+        ),
+        umap_dim=_pick(
+            "umap_dim",
+            cfg.umap_dim,
+            None if selected is None else selected.umap_dim,
+            DEFAULT_UMAP_DIM,
+        ),
+        umap_n_neighbors=_pick(
+            "umap_n_neighbors",
+            cfg.umap_n_neighbors,
+            None if selected is None else selected.umap_n_neighbors,
+            None,
+        ),
+        min_cluster_size=_pick(
+            "min_cluster_size",
+            cfg.min_cluster_size,
+            None if selected is None else selected.min_cluster_size,
+            None,
+        ),
+    )
+
+
 def _build_linker_fit_config(cfg: FitCliConfig) -> LinkerFitConfig:
     cap_seed = cfg.seed if cfg.mention_cap_seed is None else cfg.mention_cap_seed
+    scale_curve = None
+    if cfg.scale_curve_path:
+        # Imported lazily: only fits that opt into the curve pay for the import.
+        from pelinker.scale_curve import load_scale_curve
+
+        curve_path = expand_config_path(cfg.scale_curve_path)
+        assert curve_path is not None
+        scale_curve = load_scale_curve(curve_path)
+        logger.info(
+            "Loaded scale curve from %s (%d rungs, slope=%.3f, R2=%.3f)",
+            curve_path,
+            scale_curve.n_rungs,
+            scale_curve.log_slope,
+            scale_curve.r_squared,
+        )
+    hidden = (
+        tuple(int(h) for h in cfg.entity_head_hidden_layers)
+        if cfg.entity_head_hidden_layers is not None
+        else (256, 128, 128)
+    )
     return LinkerFitConfig(
         batch_size=cfg.batch_size,
         drop_rare_entities=cfg.drop_rare_entities,
@@ -454,6 +643,19 @@ def _build_linker_fit_config(cfg: FitCliConfig) -> LinkerFitConfig:
         projection_screener=ManifoldOovScreenerConfig(
             enabled=cfg.projection_enabled,
         ),
+        predict_mode=cfg.predict_mode,  # type: ignore[arg-type]
+        entity_head_hidden_layers=hidden,
+        entity_head_holdout_fraction=cfg.entity_head_holdout_fraction,
+        entity_head_holdout_group_col=cfg.entity_head_holdout_group_col,
+        entity_head_holdout_seed=cfg.entity_head_holdout_seed,
+        distillation_gates=DistillationGateConfig(
+            enabled=cfg.distillation_gates_enabled,
+            min_entity_agreement=cfg.distillation_min_entity_agreement,
+            max_emit_rate_rel_delta=cfg.distillation_max_emit_rate_rel_delta,
+            emit_rate_threshold=cfg.distillation_emit_rate_threshold,
+            on_failure=cfg.distillation_on_failure,  # type: ignore[arg-type]
+        ),
+        scale_curve=scale_curve,
     )
 
 
@@ -483,7 +685,11 @@ def _write_fit_outputs(
     if fit_report is None:
         raise RuntimeError("Linker.fit produced no clustering report to serialize")
 
-    mass_summary = cluster_entity_mass_summary(fit_report.assignments)
+    mass_summary: dict[str, Any] = dict(
+        cluster_entity_mass_summary(fit_report.assignments)
+    )
+    score_pcts = cluster_score_percentile_summary(fit_report.assignments)
+    mass_summary["cluster_score_percentiles"] = score_pcts
     logger.info(
         "HDBSCAN emergent clusters on clustering subsample: %s "
         "(comparable to model-selection report n_clusters_emergent at the same MCS); "
@@ -494,6 +700,13 @@ def _write_fit_outputs(
         mass_summary["n_noise_mentions"],
         mass_summary["noise_fraction"],
     )
+    emerg_p50 = score_pcts["emergent"].get("p50")
+    noise_p50 = score_pcts["noise"].get("p50")
+    logger.info(
+        "cluster_score percentiles (p50 emergent=%.3f, p50 noise=%.3f; full table in composition summary)",
+        emerg_p50 if emerg_p50 == emerg_p50 else float("nan"),
+        noise_p50 if noise_p50 == noise_p50 else float("nan"),
+    )
 
     report_json = linker_fit_clustering_report_path(report_path_resolved)
     write_clustering_report_json(report_json, fit_report)
@@ -503,34 +716,37 @@ def _write_fit_outputs(
         fit_report.assignments,
         top_n=3,
         weight_by_entity=True,
-        exclude_noise=True,
+        exclude_noise=False,
         max_clusters=DEFAULT_MAX_CLUSTERS_FOR_PLOTS,
     )
+    catalog_raw = linker.kb_out_catalog
+    if catalog_raw is None:
+        raise RuntimeError("Linker.fit produced no KB-out catalog")
+    catalog = cast(dict[str, Any], catalog_raw)
+    cluster_labels = with_noise_cluster_label(
+        cluster_labels_from_catalog(catalog, label_kind="display")
+    )
+    if not composition_df.empty:
+        composition_df = composition_df.copy()
+        composition_df["cluster_label"] = (
+            composition_df["cluster"]
+            .astype(int)
+            .map(lambda cid: cluster_labels.get(int(cid), str(cid)))
+        )
     composition_json = linker_fit_cluster_composition_path(report_path_resolved)
     write_cluster_composition_json(
         composition_json,
         composition_df,
         top_n=3,
+        exclude_noise=False,
         summary=mass_summary,
         max_clusters_in_rows=DEFAULT_MAX_CLUSTERS_FOR_PLOTS,
     )
     logger.info("Wrote cluster composition artifact to %s", composition_json)
 
-    emergent_catalog = build_emergent_clusters_catalog(
-        linker.cluster_composition,
-        linker.cluster_consensus_names,
-        fit_report.assignments,
-        min_cluster_size=cfg.min_cluster_size,
-    )
-    emergent_path = linker_fit_emergent_clusters_path(report_path_resolved)
-    write_emergent_clusters_json(emergent_path, emergent_catalog)
-    logger.info("Wrote emergent cluster catalog to %s", emergent_path)
-
-    cluster_kb_json = linker_fit_cluster_kb_path(report_path_resolved)
-    write_cluster_derived_labels_map_json(
-        cluster_kb_json, linker.cluster_derived_labels_map
-    )
-    logger.info("Wrote cluster-derived KB labels map to %s", cluster_kb_json)
+    kb_out_path = linker_fit_kb_out_path(report_path_resolved)
+    write_kb_out_json(kb_out_path, catalog)
+    logger.info("Wrote KB-out catalog to %s", kb_out_path)
 
     logger.info("Saving model to %s", model_path)
     linker.dump(model_path)
@@ -545,10 +761,8 @@ def fit(cfg: FitCliConfig) -> None:
 
     - ``embeddings_parquet``: output path(s) for ``embed_only`` / ``both`` stage (A), or input
       parquet(s) for ``fit_only`` / ``both`` stage (B).
-    - ``report_path``: directory; fit stages write ``linker_fit.clustering_report.json.gz`` and
-      ``linker_fit.cluster_composition.json.gz`` there (see
-      :func:`pelinker.reporting.linker_fit_clustering_report_path` and
-      :func:`pelinker.reporting.linker_fit_cluster_composition_path`).
+    - ``report_path``: directory; fit stages write ``linker_fit.clustering_report.json.gz``,
+      ``linker_fit.cluster_composition.json.gz``, and ``linker_fit.kb_out.json`` there.
     - ``model_path``: filesystem path passed to ``Linker.dump`` for fit stages.
 
     Pipelines:
@@ -568,12 +782,17 @@ def fit(cfg: FitCliConfig) -> None:
 
     kb_path, labels_map, _kb_labels = _load_kb_labels_map(cfg)
 
+    resolved = _resolve_selection_hyperparameters(cfg)
+
     transform_config = TransformConfig(
-        pca_components=cfg.pca_components,
-        umap_components=cfg.umap_dim,
+        pca_components=resolved.pca_components,
+        umap_components=resolved.umap_dim,
+        umap_n_neighbors=resolved.umap_n_neighbors,
         cluster_viz_method=cfg.cluster_viz_method,
         pca_seed=cfg.pca_seed,
         umap_seed=cfg.umap_seed,
+        parametric_umap_n_training_epochs=cfg.parametric_umap_n_training_epochs,
+        parametric_umap_batch_size=cfg.parametric_umap_batch_size,
     )
 
     input_text_table_path = expand_config_path(cfg.input_text_table_path)
@@ -622,6 +841,11 @@ def fit(cfg: FitCliConfig) -> None:
 
     linker_fit_cfg = _build_linker_fit_config(cfg)
     kb_config = _build_kb_config(cfg, kb_path)
+    kb_out_naming = KbOutNamingConfig(
+        min_fraction=cfg.kb_out_name_min_fraction,
+        top_n=cfg.kb_out_name_top_n,
+        ambiguity_min_capture=cfg.kb_out_ambiguity_min_capture,
+    )
 
     linker = Linker(
         labels_map=labels_map,
@@ -634,16 +858,18 @@ def fit(cfg: FitCliConfig) -> None:
     linker.fit(
         embeddings=embed_paths if len(embed_paths) > 1 else embed_paths[0],
         transform_config=transform_config,
-        min_cluster_size=cfg.min_cluster_size,
+        min_cluster_size=resolved.min_cluster_size,
         fit_config=linker_fit_cfg,
         embedding_training=None,
         kb_config=kb_config,
+        kb_out_naming=kb_out_naming,
+        kb_in_labels_map_path=str(kb_path),
     )
 
-    logger.info("Fitted Linker model with %s entities", len(linker.vocabulary))
+    logger.info("Fitted Linker model with %s KB-out entities", len(linker.vocabulary))
     logger.info(
-        "Entity-level provisional clusters: %s distinct ids",
-        len(set(linker.cluster_assignments.values())),
+        "KB-out emergent clusters: %s distinct ids",
+        len(linker.cluster_id_to_entity_id),
     )
 
     if model_path is None or report_path_resolved is None:

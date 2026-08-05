@@ -14,6 +14,8 @@ import numpy as np
 import pandas as pd
 
 from pelinker.config import ScreenerKind
+from pelinker.distillation import DistillationFidelityMetrics
+from pelinker.scaling import MinClusterSizeProvenance
 
 logger = logging.getLogger(__name__)
 
@@ -391,6 +393,25 @@ class ModelSelectionReport:
     """Stratified-subsampled PCA quality + screener / manifold OOV scores (linker fit only)."""
     mention_quality: pd.DataFrame | None = None
     """All mentions (pos+neg) with PCA quality scores and oov_label; cluster=-1 for negatives."""
+    distillation_fidelity: DistillationFidelityMetrics | None = None
+    """Held-out agreement between the compact entity head and its HDBSCAN teacher.
+
+    ``None`` for legacy fits (no student) and when the holdout was disabled or skipped.
+    """
+    min_cluster_size_provenance: MinClusterSizeProvenance | None = None
+    """Where :attr:`hyperparameters` ``min_cluster_size`` came from (linker fit only).
+
+    Explicit, extrapolated from a scale curve, or the bare default — recorded so a fitted
+    model never carries an unexplained hyperparameter.
+    """
+    n_rows_realized: int | None = None
+    """Mention rows this draw actually clustered on.
+
+    The realized N, **not** the ``clustering_sample_rows`` cap: when the frame is smaller
+    than the cap, or the cap is unset, the two differ. Sample-size-dependent
+    hyperparameters (``min_cluster_size``, and through it HDBSCAN ``min_samples``) are
+    only interpretable against this number — see :mod:`pelinker.scaling`.
+    """
 
 
 def n_clusters_at_min_cluster_size(
@@ -446,10 +467,9 @@ def _ndarray_to_jsonable_nested(arr: np.ndarray) -> Any:
 # Basenames for artifacts under one report directory (``pelinker-fit`` / clustering search).
 LINKER_FIT_CLUSTERING_REPORT_BASENAME = "linker_fit.clustering_report.json.gz"
 LINKER_FIT_CLUSTER_COMPOSITION_BASENAME = "linker_fit.cluster_composition.json.gz"
-LINKER_FIT_EMERGENT_CLUSTERS_BASENAME = "linker_fit.emergent_clusters.json"
-LINKER_FIT_CLUSTER_KB_BASENAME = "linker_fit.cluster_kb.json"
+LINKER_FIT_KB_OUT_BASENAME = "linker_fit.kb_out.json"
 _FIT_CLUSTER_COMPOSITION_SCHEMA = "pelinker.fit_cluster_composition.v2"
-_EMERGENT_CLUSTERS_SCHEMA = "pelinker.emergent_clusters.v1"
+_KB_OUT_SCHEMA = "pelinker.kb_out.v1"
 MODEL_SELECTION_RUN_REPORT_BASENAME = "model_selection.run_report.json.gz"
 MODEL_SELECTION_SUMMARY_JSON_SCHEMA = "pelinker.model_selection.summary.v1"
 MODEL_SELECTION_SUMMARY_JSON_BASENAME = "model_selection.summary.json"
@@ -465,11 +485,6 @@ def linker_fit_clustering_report_path(report_dir: str | pathlib.Path) -> pathlib
     return pathlib.Path(report_dir).expanduser() / LINKER_FIT_CLUSTERING_REPORT_BASENAME
 
 
-def linker_fit_cluster_kb_path(report_dir: str | pathlib.Path) -> pathlib.Path:
-    """Filesystem path for the cluster-derived KB labels-map JSON under ``report_dir``."""
-    return pathlib.Path(report_dir).expanduser() / LINKER_FIT_CLUSTER_KB_BASENAME
-
-
 def linker_fit_cluster_composition_path(
     report_dir: str | pathlib.Path,
 ) -> pathlib.Path:
@@ -479,9 +494,9 @@ def linker_fit_cluster_composition_path(
     )
 
 
-def linker_fit_emergent_clusters_path(report_dir: str | pathlib.Path) -> pathlib.Path:
-    """Filesystem path for the emergent-cluster catalog JSON under ``report_dir``."""
-    return pathlib.Path(report_dir).expanduser() / LINKER_FIT_EMERGENT_CLUSTERS_BASENAME
+def linker_fit_kb_out_path(report_dir: str | pathlib.Path) -> pathlib.Path:
+    """Filesystem path for the KB-out catalog JSON under ``report_dir``."""
+    return pathlib.Path(report_dir).expanduser() / LINKER_FIT_KB_OUT_BASENAME
 
 
 def write_cluster_composition_json(
@@ -490,7 +505,8 @@ def write_cluster_composition_json(
     *,
     top_n: int = 3,
     weighting: str = "inv_sqrt_mention_count",
-    summary: dict[str, int | float] | None = None,
+    exclude_noise: bool = False,
+    summary: dict[str, Any] | None = None,
     max_clusters_in_rows: int | None = None,
     indent: int = 2,
 ) -> None:
@@ -503,7 +519,7 @@ def write_cluster_composition_json(
         "schema": _FIT_CLUSTER_COMPOSITION_SCHEMA,
         "top_n": int(top_n),
         "weighting": weighting or ENTITY_WEIGHTING_INV_SQRT,
-        "exclude_noise": True,
+        "exclude_noise": bool(exclude_noise),
         "rows": _dataframe_to_jsonable_records(composition_df),
     }
     if summary is not None:
@@ -531,49 +547,31 @@ def read_cluster_composition_json(
     return pd.DataFrame(raw["rows"]), meta
 
 
-def write_emergent_clusters_json(
+def write_kb_out_json(
     path: str | pathlib.Path,
     payload: dict[str, Any],
     *,
     indent: int = 2,
 ) -> None:
-    """Write :func:`~pelinker.cluster_composition_viz.build_emergent_clusters_catalog` output."""
+    """Write :func:`~pelinker.kb_out.build_kb_out_catalog` output."""
     p = pathlib.Path(path).expanduser()
     p.parent.mkdir(parents=True, exist_ok=True)
-    if str(payload.get("schema", "")) != _EMERGENT_CLUSTERS_SCHEMA:
+    if str(payload.get("schema", "")) != _KB_OUT_SCHEMA:
         raise ValueError(
-            f"Expected schema {_EMERGENT_CLUSTERS_SCHEMA!r}, got {payload.get('schema')!r}"
+            f"Expected schema {_KB_OUT_SCHEMA!r}, got {payload.get('schema')!r}"
         )
     with p.open("w", encoding="utf-8") as f:
         json.dump(_json_normalize(payload), f, indent=indent, ensure_ascii=False)
 
 
-def read_emergent_clusters_json(path: str | pathlib.Path) -> dict[str, Any]:
-    """Load emergent-cluster catalog JSON."""
+def read_kb_out_json(path: str | pathlib.Path) -> dict[str, Any]:
+    """Load KB-out catalog JSON."""
     p = pathlib.Path(path).expanduser()
     with p.open(encoding="utf-8") as f:
         raw: dict[str, Any] = json.load(f)
-    if str(raw.get("schema", "")) != _EMERGENT_CLUSTERS_SCHEMA:
-        raise ValueError(f"Unsupported emergent clusters schema: {raw.get('schema')!r}")
+    if str(raw.get("schema", "")) != _KB_OUT_SCHEMA:
+        raise ValueError(f"Unsupported KB-out schema: {raw.get('schema')!r}")
     return raw
-
-
-def write_cluster_derived_labels_map_json(
-    path: str | pathlib.Path,
-    labels_map: dict[str, str],
-    *,
-    indent: int = 2,
-) -> None:
-    """
-    Write a cluster-derived labels map (``entity_id`` → ``cluster_name``) to a plain JSON file.
-
-    The file is human-readable and can be passed directly to a subsequent fit as a new KB
-    ``labels_map``.  Parent directories are created when missing.
-    """
-    p = pathlib.Path(path).expanduser()
-    p.parent.mkdir(parents=True, exist_ok=True)
-    with p.open("w", encoding="utf-8") as f:
-        json.dump(labels_map, f, indent=indent, ensure_ascii=False)
 
 
 def model_selection_run_report_path(report_dir: str | pathlib.Path) -> pathlib.Path:
@@ -672,6 +670,19 @@ def clustering_report_to_jsonable_dict(report: ModelSelectionReport) -> dict[str
         "hyperparameters": {
             "min_cluster_size": int(report.hyperparameters.min_cluster_size),
         },
+        "min_cluster_size_provenance": (
+            None
+            if report.min_cluster_size_provenance is None
+            else report.min_cluster_size_provenance.to_jsonable()
+        ),
+        "distillation_fidelity": (
+            None
+            if report.distillation_fidelity is None
+            else report.distillation_fidelity.to_jsonable()
+        ),
+        "n_rows_realized": (
+            None if report.n_rows_realized is None else int(report.n_rows_realized)
+        ),
         "best_score": _json_normalize(float(report.best_score)),
         "number_properties": int(report.number_properties),
         "n_clusters_emergent": int(report.n_clusters_emergent),
@@ -859,6 +870,12 @@ class ClusteringSearchSummaryRow:
     dbcv: MeanWithUncertainty
     ari: MeanWithUncertainty | None
     all_screener_cv: AllScreenerCvResult | None = None
+    n_rows_realized: MeanWithUncertainty | None = None
+    """Mean (and std) realized mention-row count across this combination's draws.
+
+    ``best_size`` is only interpretable against this scale; carrying it here is what lets
+    :mod:`pelinker.scaling` fit ``min_cluster_size*(N)`` across runs.
+    """
 
     def to_flat_dict(self) -> dict[str, str | float | None]:
         """Keys aligned with grid CSV / checkpoint / ``plot_heatmap`` expectations."""
@@ -878,6 +895,9 @@ class ClusteringSearchSummaryRow:
             "best_score": d.mean,
             "best_score_std": d.std,
         }
+        nrr = self.n_rows_realized
+        row["n_rows_realized"] = None if nrr is None else nrr.mean
+        row["n_rows_realized_std"] = 0.0 if nrr is None else nrr.std
         if self.ari is None:
             row["ari"] = None
             row["ari_std"] = 0.0
@@ -910,6 +930,16 @@ def clustering_search_summary_row_from_flat_dict(
             mean=float(ari_raw),
             std=float(row.get("ari_std") or 0.0),
         )
+    # Absent in checkpoints written before n_rows_realized existed; stays None there.
+    nrr_raw = row.get("n_rows_realized")
+    nrr_block: MeanWithUncertainty | None
+    if nrr_raw is None or (isinstance(nrr_raw, float) and math.isnan(nrr_raw)):
+        nrr_block = None
+    else:
+        nrr_block = MeanWithUncertainty(
+            mean=float(nrr_raw),
+            std=float(row.get("n_rows_realized_std") or 0.0),
+        )
     return ClusteringSearchSummaryRow(
         model=str(row["model"]),
         layer=str(row["layer"]),
@@ -933,6 +963,7 @@ def clustering_search_summary_row_from_flat_dict(
         ),
         ari=ari_block,
         all_screener_cv=_all_screener_cv_from_flat_row(row),
+        n_rows_realized=nrr_block,
     )
 
 
@@ -1008,6 +1039,17 @@ def summarize_clustering_reports_for_search(
     acv_reports = [r.all_screener_cv for r in reports if r.all_screener_cv is not None]
     pooled_acv = _pool_all_screener_cv_results(acv_reports) if acv_reports else None
 
+    rows_realized = [
+        float(r.n_rows_realized) for r in reports if r.n_rows_realized is not None
+    ]
+    n_rows_block: MeanWithUncertainty | None = None
+    if rows_realized:
+        arr_rows = np.array(rows_realized, dtype=np.float64)
+        n_rows_block = MeanWithUncertainty(
+            mean=float(np.mean(arr_rows)),
+            std=float(np.std(arr_rows)) if len(arr_rows) > 1 else 0.0,
+        )
+
     return ClusteringSearchSummaryRow(
         model=model,
         layer=layer,
@@ -1031,6 +1073,7 @@ def summarize_clustering_reports_for_search(
         ),
         ari=ari_block,
         all_screener_cv=pooled_acv,
+        n_rows_realized=n_rows_block,
     )
 
 

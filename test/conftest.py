@@ -4,6 +4,31 @@ import pandas as pd
 from importlib.resources import files
 from pelinker.util import load_models, split_text_into_batches
 
+SPACY_MODEL = "en_core_web_trf"
+
+
+def _load_spacy_or_skip(name: str):
+    """Skip rather than error when the pipeline is not installed locally / in CI.
+
+    ``en_core_web_trf`` is a large out-of-band download (``spacy download``), so a fresh
+    checkout would otherwise report errors that say nothing about the code under test.
+    Install it to run these for real; see the ``heavy`` marker in ``pyproject.toml``.
+    """
+    try:
+        return spacy.load(name)
+    except OSError:
+        pytest.skip(
+            f"spaCy model {name!r} not installed (run: uv run spacy download {name})"
+        )
+
+
+def _load_hf_or_skip(model_type: str, flag: bool):
+    """Skip rather than error when HF weights cannot be fetched (offline CI, no cache)."""
+    try:
+        return load_models(model_type, flag)
+    except Exception as exc:  # network, auth, cache miss — all mean "cannot run here"
+        pytest.skip(f"transformer weights for {model_type!r} unavailable: {exc}")
+
 
 @pytest.fixture(scope="module")
 def df_properties():
@@ -13,25 +38,22 @@ def df_properties():
 
 @pytest.fixture(scope="module")
 def nlp():
-    return spacy.load("en_core_web_trf")
+    return _load_spacy_or_skip(SPACY_MODEL)
 
 
 @pytest.fixture(scope="module")
 def tokenizer_model_biobert_stsb():
-    tokenizer, model = load_models("biobert-stsb", True)
-    return tokenizer, model
+    return _load_hf_or_skip("biobert-stsb", True)
 
 
 @pytest.fixture(scope="module")
 def tokenizer_model_pubmedbert():
-    tokenizer, model = load_models("pubmedbert", False)
-    return tokenizer, model
+    return _load_hf_or_skip("pubmedbert", False)
 
 
 @pytest.fixture(scope="module")
 def tokenizer_model_scibert():
-    tokenizer, model = load_models("scibert", False)
-    return tokenizer, model
+    return _load_hf_or_skip("scibert", False)
 
 
 @pytest.fixture(scope="module")

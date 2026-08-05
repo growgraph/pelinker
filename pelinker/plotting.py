@@ -1,22 +1,27 @@
 import colorsys
 import pathlib
 import re
-from dataclasses import replace
 
 import matplotlib
 import numpy as np
 import pandas as pd
 
 from pySankey.sankey import sankey
+from pelinker.analysis import (
+    grid_solver_overrides_active,
+    resolve_chosen_min_cluster_size_by_combo_from_grid,
+    should_resolve_chosen_min_cluster_size,
+    solve_pooled_grid_from_metrics_list,
+)
 from pelinker.clustering_grid import SmoothedGridOptimumResult
 from pelinker.config import ClusteringOptimizationConfig, GridObjectiveSpec
 from pelinker.grid_export import (
     apply_chosen_min_cluster_size_to_grid,
     has_grid_points_for_dbcv_ari_scatter,
-    per_combo_metrics_from_grid,
     select_grid_points_at_chosen_min_cluster_size,
 )
 from pelinker.reporting import LinkerFitDiagnostics, ModelSelectionReport
+from pelinker.scaling import ScaleCurve
 import seaborn as sns
 
 # Force a non-interactive backend because this project only saves plots to files.
@@ -341,136 +346,6 @@ def _draw_arity_marker(
     ax.add_patch(fb)
 
 
-def _grid_solver_config(
-    optimization_config: ClusteringOptimizationConfig | None,
-    *,
-    grid_cluster_count_reward: float | None = None,
-    grid_n_entities: int | None = None,
-    grid_objective: GridObjectiveSpec | None = None,
-    optimization_method: str | None = None,
-) -> ClusteringOptimizationConfig:
-    """Merge optional solver overrides into ``optimization_config`` (or defaults)."""
-    base = optimization_config or ClusteringOptimizationConfig()
-    overrides: dict[str, object] = {}
-    if grid_cluster_count_reward is not None:
-        overrides["grid_cluster_count_reward"] = grid_cluster_count_reward
-    if grid_n_entities is not None:
-        overrides["grid_n_entities"] = grid_n_entities
-    if grid_objective is not None:
-        overrides["grid_objective"] = grid_objective
-    if optimization_method is not None:
-        overrides["optimization_method"] = optimization_method
-    return replace(base, **overrides) if overrides else base
-
-
-def _grid_solver_kwargs_active(
-    *,
-    optimization_config: ClusteringOptimizationConfig | None,
-    grid_cluster_count_reward: float | None,
-    grid_n_entities: int | None,
-    grid_objective: GridObjectiveSpec | None,
-    optimization_method: str | None,
-) -> bool:
-    return any(
-        v is not None
-        for v in (
-            optimization_config,
-            grid_cluster_count_reward,
-            grid_n_entities,
-            grid_objective,
-            optimization_method,
-        )
-    )
-
-
-def _should_resolve_chosen_min_cluster_size(
-    *,
-    chosen_min_cluster_size: float | None,
-    optimization_config: ClusteringOptimizationConfig | None,
-    grid_cluster_count_reward: float | None,
-    grid_n_entities: int | None,
-    grid_objective: GridObjectiveSpec | None,
-    optimization_method: str | None,
-) -> bool:
-    if chosen_min_cluster_size is not None:
-        return False
-    return _grid_solver_kwargs_active(
-        optimization_config=optimization_config,
-        grid_cluster_count_reward=grid_cluster_count_reward,
-        grid_n_entities=grid_n_entities,
-        grid_objective=grid_objective,
-        optimization_method=optimization_method,
-    )
-
-
-def solve_pooled_grid_from_metrics_list(
-    metrics_list: list[pd.DataFrame],
-    optimization_config: ClusteringOptimizationConfig | None = None,
-    *,
-    grid_cluster_count_reward: float | None = None,
-    grid_n_entities: int | None = None,
-    grid_objective: GridObjectiveSpec | None = None,
-    optimization_method: str | None = None,
-) -> SmoothedGridOptimumResult:
-    """Pooled grid solve on per-sample metric tables; returns full diagnostics."""
-    from pelinker.analysis import pooled_grid_solve_from_metrics_dfs
-
-    cfg = _grid_solver_config(
-        optimization_config,
-        grid_cluster_count_reward=grid_cluster_count_reward,
-        grid_n_entities=grid_n_entities,
-        grid_objective=grid_objective,
-        optimization_method=optimization_method,
-    )
-    return pooled_grid_solve_from_metrics_dfs(metrics_list, cfg)
-
-
-def solve_pooled_grid_by_combo_from_grid(
-    df_grid: pd.DataFrame,
-    optimization_config: ClusteringOptimizationConfig | None = None,
-    *,
-    grid_cluster_count_reward: float | None = None,
-    grid_n_entities: int | None = None,
-    grid_objective: GridObjectiveSpec | None = None,
-    optimization_method: str | None = None,
-) -> dict[tuple[str, str], SmoothedGridOptimumResult]:
-    """Pooled grid solve per (model, layer) from a grid export CSV frame."""
-    cfg = _grid_solver_config(
-        optimization_config,
-        grid_cluster_count_reward=grid_cluster_count_reward,
-        grid_n_entities=grid_n_entities,
-        grid_objective=grid_objective,
-        optimization_method=optimization_method,
-    )
-    solved: dict[tuple[str, str], SmoothedGridOptimumResult] = {}
-    from pelinker.analysis import pooled_grid_solve_from_metrics_dfs
-
-    for combo, metrics_list in per_combo_metrics_from_grid(df_grid).items():
-        solved[combo] = pooled_grid_solve_from_metrics_dfs(metrics_list, cfg)
-    return solved
-
-
-def resolve_chosen_min_cluster_size_by_combo_from_grid(
-    df_grid: pd.DataFrame,
-    optimization_config: ClusteringOptimizationConfig | None = None,
-    *,
-    grid_cluster_count_reward: float | None = None,
-    grid_n_entities: int | None = None,
-    grid_objective: GridObjectiveSpec | None = None,
-    optimization_method: str | None = None,
-) -> dict[tuple[str, str], int]:
-    """Re-solve ``chosen_min_cluster_size`` per (model, layer) from a grid export CSV frame."""
-    solved = solve_pooled_grid_by_combo_from_grid(
-        df_grid,
-        optimization_config,
-        grid_cluster_count_reward=grid_cluster_count_reward,
-        grid_n_entities=grid_n_entities,
-        grid_objective=grid_objective,
-        optimization_method=optimization_method,
-    )
-    return {combo: result.chosen_min_cluster_size for combo, result in solved.items()}
-
-
 def plot_dbcv_vs_ari_from_grid(
     df_grid: pd.DataFrame,
     output_path: pathlib.Path,
@@ -501,7 +376,7 @@ def plot_dbcv_vs_ari_from_grid(
         return False
 
     df_plot = df_grid
-    if _grid_solver_kwargs_active(
+    if grid_solver_overrides_active(
         optimization_config=optimization_config,
         grid_cluster_count_reward=grid_cluster_count_reward,
         grid_n_entities=grid_n_entities,
@@ -683,7 +558,7 @@ def plot_metrics_with_error_bars(
         grid_objective: Override :attr:`~pelinker.config.ClusteringOptimizationConfig.grid_objective`.
         optimization_method: Override :attr:`~pelinker.config.ClusteringOptimizationConfig.optimization_method`.
     """
-    if grid_solve is None and _should_resolve_chosen_min_cluster_size(
+    if grid_solve is None and should_resolve_chosen_min_cluster_size(
         chosen_min_cluster_size=chosen_min_cluster_size,
         optimization_config=optimization_config,
         grid_cluster_count_reward=grid_cluster_count_reward,
@@ -1155,6 +1030,48 @@ def _sorted_class_labels_natural(class_series: pd.Series) -> list[str]:
     return sorted(labels, key=sort_key)
 
 
+_CLUSTER_VIZ_LEGEND_MAX_CHARS = 28
+_CLUSTER_VIZ_HOVER_WRAP = 48
+
+
+def _truncate_legend_label(
+    label: str, *, max_chars: int = _CLUSTER_VIZ_LEGEND_MAX_CHARS
+) -> str:
+    """Shorten long KB-out display names for the Plotly legend."""
+    text = str(label).strip()
+    if len(text) <= max_chars:
+        return text
+    return text[: max(1, max_chars - 1)].rstrip("-_ ") + "…"
+
+
+def _wrap_hover_html(text: str, *, width: int = _CLUSTER_VIZ_HOVER_WRAP) -> str:
+    """Insert ``<br>`` breaks so long hover strings stay readable."""
+    raw = str(text).replace("\n", " ").strip()
+    if not raw or width < 8:
+        return raw
+    parts: list[str] = []
+    remaining = raw
+    while len(remaining) > width:
+        cut = remaining.rfind(" ", 0, width + 1)
+        if cut < width // 3:
+            cut = width
+        parts.append(remaining[:cut].rstrip())
+        remaining = remaining[cut:].lstrip()
+    if remaining:
+        parts.append(remaining)
+    return "<br>".join(parts)
+
+
+def _format_hover_float(value: object) -> str:
+    """Format a numeric hover value to at most 3 decimal places."""
+    if value is None or (isinstance(value, float) and np.isnan(value)):
+        return ""
+    try:
+        return f"{float(value):.3f}"
+    except (TypeError, ValueError):
+        return str(value)
+
+
 def _distinct_category_hex_colors(n: int) -> list[str]:
     """
     One distinct color per category for large palettes (e.g. ~50 HDBSCAN clusters).
@@ -1196,8 +1113,23 @@ def plot_cluster_viz(
     show_rate = max(len(df) // 20, 1)
     df.loc[df.index % show_rate != 0, "show_label"] = ""
 
-    df["class"] = df["class"].astype(str)
-    class_order = _sorted_class_labels_natural(df["class"])
+    df["class_full"] = df["class"].astype(str)
+    # Stable short legend keys; full name stays in hover via class_full.
+    unique_full = _sorted_class_labels_natural(df["class_full"])
+    full_to_legend: dict[str, str] = {}
+    used_legend: set[str] = set()
+    for full in unique_full:
+        base = _truncate_legend_label(full)
+        legend = base
+        suffix = 2
+        while legend in used_legend:
+            trim = max(1, _CLUSTER_VIZ_LEGEND_MAX_CHARS - len(f"…{suffix}") - 1)
+            legend = f"{base[:trim].rstrip('-_ ')}…{suffix}"
+            suffix += 1
+        used_legend.add(legend)
+        full_to_legend[full] = legend
+    df["class"] = df["class_full"].map(full_to_legend)
+    class_order = [full_to_legend[f] for f in unique_full]
     n_classes = len(class_order)
     color_discrete_map = dict(
         zip(class_order, _distinct_category_hex_colors(n_classes), strict=True)
@@ -1206,18 +1138,27 @@ def plot_cluster_viz(
     axis_title_font = dict(size=15)
     axis_tick_font = dict(size=13)
 
-    hover_specs: list[tuple[str, str]] = []
+    df["cluster_hover"] = df["class_full"].map(_wrap_hover_html)
+    if "context" in df.columns:
+        df["context"] = df["context"].map(
+            lambda v: _wrap_hover_html("" if pd.isna(v) else str(v))
+        )
+    if "cluster_score" in df.columns:
+        df["cluster_score"] = df["cluster_score"].map(_format_hover_float)
+
+    # Hover order: cluster, pmid, mention, context, coords, cluster score.
+    hover_before_coords: list[tuple[str, str]] = [("cluster_hover", "Cluster")]
     for col, label in (
         ("pmid", "PMID"),
         ("mention", "Mention"),
         ("context", "Context"),
-        ("a_abs", "a_abs"),
-        ("b_abs", "b_abs"),
-        ("screener_score", "Screener"),
-        ("cluster_score", "Cluster score"),
     ):
         if col in df.columns:
-            hover_specs.append((col, label))
+            hover_before_coords.append((col, label))
+    hover_after_coords: list[tuple[str, str]] = []
+    if "cluster_score" in df.columns:
+        hover_after_coords.append(("cluster_score", "Cluster score"))
+    hover_specs = hover_before_coords + hover_after_coords
 
     scatter_kwargs: dict[str, object] = {
         "x": "cviz_00",
@@ -1225,12 +1166,10 @@ def plot_cluster_viz(
         "color": "class",
         "color_discrete_map": color_discrete_map,
         "category_orders": {"class": class_order},
-        "hover_name": label_col,
         "labels": {"cviz_00": "Dim 1", "cviz_01": "Dim 2"},
         "template": "plotly_white",
+        "custom_data": [c for c, _ in hover_specs],
     }
-    if hover_specs:
-        scatter_kwargs["custom_data"] = [c for c, _ in hover_specs]
     if use_3d:
         scatter_kwargs["z"] = "cviz_02"
         scatter_kwargs["labels"] = {
@@ -1244,13 +1183,17 @@ def plot_cluster_viz(
     else:
         fig = px.scatter(df, **scatter_kwargs)
 
-    dim_z_line = "Dim 3: %{z:.4f}<br>" if use_3d else ""
-    hover_lines = (
-        "<b>%{hovertext}</b><br>"
-        "Cluster: <b>%{fullData.name}</b><br>"
-        f"Dim 1: %{{x:.4f}}<br>Dim 2: %{{y:.4f}}<br>{dim_z_line}"
-    )
-    for i, (_, label) in enumerate(hover_specs):
+    dim_z_line = ",%{z:.3f}" if use_3d else ""
+    hover_lines = ""
+    for i, (_, label) in enumerate(hover_before_coords):
+        if i == 0:
+            # Cluster name as the bold header (no "Cluster:" prefix).
+            hover_lines += f"<b>%{{customdata[{i}]}}</b><br>"
+        else:
+            hover_lines += f"{label}: %{{customdata[{i}]}}<br>"
+    hover_lines += f"Coord: (%{{x:.3f}}, %{{y:.3f}}{dim_z_line})<br>"
+    for j, (_, label) in enumerate(hover_after_coords):
+        i = len(hover_before_coords) + j
         hover_lines += f"{label}: %{{customdata[{i}]}}<br>"
     hover_lines += "<extra></extra>"
 
@@ -1286,36 +1229,54 @@ def plot_cluster_viz(
         )
     fig.add_trace(text_trace)
 
-    legend_font = 13 if n_classes > 36 else 14
-    title_dims = "3D" if use_3d else "2D"
+    legend_font = 12 if n_classes > 36 else 13
     method_label = viz_method.upper() if viz_method == "pca" else "UMAP"
+    # Keep a stable viewport; do not grow height with legend length (that uncenters the plot).
+    # Plotly 6 scrolls an overflowing legend when the figure height is fixed.
+    fig_height = 720 if use_3d else 680
+    fig_width = 1100
     layout: dict[str, object] = {
         "font": dict(size=14),
+        "width": fig_width,
+        "height": fig_height,
         "title": dict(
             text=(
-                f"{title_dims} cluster {method_label} view "
-                f"({len(df):,} points, {n_classes} clusters)"
+                f"{method_label} · {len(df):,} pts · {n_classes} clusters"
+                "<br><sup>Legend: double-click to isolate · click to show/hide"
+                " · drag to pan · scroll to zoom</sup>"
             ),
             x=0.5,
             xanchor="center",
-            font=dict(size=18),
+            font=dict(size=15),
         ),
-        "hoverlabel": dict(font=dict(size=15)),
+        "hoverlabel": dict(font=dict(size=14), align="left"),
         "hovermode": "closest",
+        # 2D: pan with drag (Plotly default is zoom, which feels broken for exploration).
+        "dragmode": "pan",
         "legend": dict(
-            title=dict(text="Cluster", font=dict(size=15)),
+            # Keep the title on one line: multi-line HTML titles clip legend items in Plotly.
+            title=dict(
+                text="Cluster (dbl-click isolate)",
+                font=dict(size=13),
+            ),
             traceorder="normal",
             itemsizing="constant",
             font=dict(size=legend_font),
             yanchor="top",
             y=0.99,
-            x=1.02,
+            x=1.01,
             xanchor="left",
+            bgcolor="rgba(255,255,255,0.9)",
+            borderwidth=0,
         ),
-        "margin": dict(l=0, r=120, b=0, t=56),
+        # Symmetric-ish margins; leave room on the right for the legend without skewing the plot.
+        "margin": dict(l=60, r=220, b=50, t=70, pad=4),
     }
     if use_3d:
+        layout["dragmode"] = "orbit"
         layout["scene"] = dict(
+            aspectmode="data",
+            dragmode="orbit",
             xaxis=dict(
                 title=dict(text="Dim 1", font=axis_title_font),
                 tickfont=axis_tick_font,
@@ -1329,10 +1290,29 @@ def plot_cluster_viz(
                 tickfont=axis_tick_font,
             ),
             bgcolor="rgb(250,250,252)",
+            # Keep the 3D viewport centered in the available area (legend sits outside).
+            domain=dict(x=[0.0, 0.78], y=[0.0, 1.0]),
+            camera=dict(eye=dict(x=1.5, y=1.5, z=1.2)),
+        )
+    else:
+        # Equal aspect so PCA/UMAP space is not stretched; automargin keeps labels in frame.
+        layout["xaxis"] = dict(
+            title=dict(text="Dim 1", font=axis_title_font),
+            tickfont=axis_tick_font,
+            automargin=True,
+            scaleanchor="y",
+            scaleratio=1,
+            constrain="domain",
+        )
+        layout["yaxis"] = dict(
+            title=dict(text="Dim 2", font=axis_title_font),
+            tickfont=axis_tick_font,
+            automargin=True,
+            constrain="domain",
         )
     fig.update_layout(**layout)
 
-    fig.write_html(str(output_path))
+    fig.write_html(str(output_path), include_plotlyjs=True, full_html=True)
 
 
 def plot_metrics(df: pd.DataFrame, output_path: pathlib.Path) -> None:
@@ -1605,6 +1585,7 @@ def _scale_sankey_weights_for_min_band(
     work: pd.DataFrame,
     weights: np.ndarray,
     *,
+    left_column: str,
     min_band_height: float,
 ) -> np.ndarray:
     """
@@ -1615,7 +1596,7 @@ def _scale_sankey_weights_for_min_band(
     """
     if min_band_height <= 0:
         return weights
-    left_totals = work.groupby("entity", sort=False)["count"].sum()
+    left_totals = work.groupby(left_column, sort=False)["count"].sum()
     right_totals = work.groupby("cluster", sort=False)["count"].sum()
     if left_totals.empty or right_totals.empty:
         return weights
@@ -1629,43 +1610,61 @@ def _scale_sankey_weights_for_min_band(
 
 
 def plot_cluster_entity_sankey(
-    composition_df: pd.DataFrame,
+    flow_df: pd.DataFrame,
     *,
     save_dir: pathlib.Path,
     basename: str = "fit_cluster_entity_sankey",
     max_clusters: int | None = None,
     max_entities: int | None = None,
+    min_within_cluster_fraction: float = 0.0,
+    cluster_labels: dict[int, str] | None = None,
+    cluster_label_include_id: bool = False,
     inches_per_label: float = _SANKEY_DEFAULT_INCHES_PER_LABEL,
     min_fig_height: float = _SANKEY_DEFAULT_MIN_FIG_HEIGHT,
     min_band_height: float = _SANKEY_DEFAULT_MIN_BAND_HEIGHT,
 ) -> list[pathlib.Path]:
     """
-    Bipartite entity→cluster Sankey from a long composition table (cluster, entity, count).
+    Bipartite KB-in entity→cluster Sankey from a long flow table (cluster, entity, count).
 
-    pySankey sizes bands by weight only (no per-label height knob). ``inches_per_label``
-    sets figure height from the larger of the two label columns; ``min_band_height``
-    uniformly scales weights so the thinnest band is readable without changing ratios.
+    Expects unbundled entity mass (no pie/bar ``Other (...)`` rows). Caps by dropping
+    the long tail. pySankey sizes bands by weight only; ``inches_per_label`` sets
+    figure height; ``min_band_height`` uniformly scales weights for readability.
     """
-    if composition_df.empty:
+    if flow_df.empty:
         return []
-    from pelinker.cluster_composition_viz import limit_composition_for_flow_plots
+    from pelinker.cluster_composition_viz import limit_entity_flow_for_plots
 
-    work = limit_composition_for_flow_plots(
-        composition_df,
+    work = limit_entity_flow_for_plots(
+        flow_df,
         max_clusters=max_clusters,
         max_entities=max_entities,
+        min_within_cluster_fraction=min_within_cluster_fraction,
     )
     if work.empty:
         return []
     work = work.copy()
     work["entity"] = work["entity"].astype(str)
-    work["cluster"] = work["cluster"].astype(str)
+    if cluster_labels:
+        work["cluster"] = (
+            work["cluster"]
+            .astype(int)
+            .map(
+                lambda cid: _format_cluster_sankey_label(
+                    int(cid),
+                    cluster_labels,
+                    include_id=cluster_label_include_id,
+                )
+            )
+        )
+    else:
+        work["cluster"] = work["cluster"].astype(str)
     left = work["entity"].to_numpy()
     right = work["cluster"].to_numpy()
     weights = work["count"].astype(float).to_numpy()
     weights = _scale_sankey_weights_for_min_band(
         work,
         weights,
+        left_column="entity",
         min_band_height=min_band_height,
     )
 
@@ -1688,6 +1687,18 @@ def plot_cluster_entity_sankey(
         written.append(path)
     plt.close(fig)
     return written
+
+
+def _format_cluster_sankey_label(
+    cluster_id: int,
+    cluster_labels: dict[int, str],
+    *,
+    include_id: bool,
+) -> str:
+    label = cluster_labels.get(cluster_id, str(cluster_id))
+    if include_id:
+        return f"{label} [{cluster_id}]"
+    return label
 
 
 _WORD_SPAN_RE = re.compile(r"\S+")
@@ -1838,6 +1849,7 @@ def build_fit_cluster_viz_plot_df(
     *,
     exclude_noise: bool = True,
     hdbscan_fit_scope: bool = True,
+    cluster_labels: dict[int, str] | None = None,
 ) -> tuple[pd.DataFrame | None, str]:
     """Build a :func:`plot_cluster_viz` frame from a :class:`~pelinker.reporting.ModelSelectionReport`."""
     cluster_viz = report.cluster_viz
@@ -1856,14 +1868,21 @@ def build_fit_cluster_viz_plot_df(
         cluster_viz, columns=viz_cols, index=report.assignments.index
     ).loc[assign.index]
     assign = assign.copy()
+    if "cluster" in assign.columns:
+        assign["cluster_id"] = assign["cluster"].astype(int)
     rename: dict[str, str] = {}
     if "cluster" in assign.columns:
         rename["cluster"] = "class"
     plot_assign = assign.rename(columns=rename)
+    if cluster_labels and "cluster_id" in plot_assign.columns:
+        plot_assign["class"] = plot_assign["cluster_id"].map(
+            lambda cid: cluster_labels.get(int(cid), str(cid))
+        )
     cols = [c for c in ("entity", "class") if c in plot_assign.columns]
     extra = [
         c
         for c in (
+            "cluster_id",
             "pmid",
             "mention",
             "a_abs",
@@ -1876,3 +1895,86 @@ def build_fit_cluster_viz_plot_df(
     return pd.concat(
         [plot_assign[cols + extra], viz_df], axis=1
     ), report.cluster_viz_method
+
+
+def plot_scale_curve(
+    curve: ScaleCurve,
+    output_path: pathlib.Path,
+    *,
+    formats: tuple[str, ...] = ("png", "pdf"),
+) -> tuple[pathlib.Path, ...]:
+    """Log-log plot of chosen ``min_cluster_size`` vs realized N, with the fitted law.
+
+    Rungs whose chosen value sat on a grid bound are drawn hollow and red: on those
+    points the grid, not the sample size, decided the answer, and the slope through
+    them is not evidence.
+    """
+    ns = np.array([r.n_rows_realized for r in curve.rungs], dtype=np.float64)
+    mcs = np.array([r.chosen_min_cluster_size for r in curve.rungs], dtype=np.float64)
+    pinned = np.array([r.is_pinned for r in curve.rungs], dtype=bool)
+
+    fig, ax = plt.subplots(figsize=(7.0, 5.0))
+
+    # Fitted law across the measured span, extended by 2x to show the extrapolation.
+    x_line = np.logspace(
+        np.log10(ns.min()), np.log10(ns.max() * 2.0), num=100, dtype=np.float64
+    )
+    y_line = np.exp(curve.log_intercept + curve.log_slope * np.log(x_line))
+    ax.plot(
+        x_line,
+        y_line,
+        color="#3b6ea5",
+        linewidth=1.8,
+        label=(
+            f"fit: log(MCS) = {curve.log_intercept:.3f} + "
+            f"{curve.log_slope:.3f}·log(N)   (R²={curve.r_squared:.3f})"
+        ),
+    )
+    ax.axvspan(
+        ns.max(),
+        x_line.max(),
+        color="#999999",
+        alpha=0.12,
+        label="extrapolation (beyond measured N)",
+    )
+
+    if np.any(~pinned):
+        ax.scatter(
+            ns[~pinned],
+            mcs[~pinned],
+            s=70,
+            color="#3b6ea5",
+            edgecolor="black",
+            zorder=3,
+            label="measured rung",
+        )
+    if np.any(pinned):
+        ax.scatter(
+            ns[pinned],
+            mcs[pinned],
+            s=90,
+            facecolor="none",
+            edgecolor="#c0392b",
+            linewidth=2.0,
+            zorder=4,
+            label="pinned on grid bound (not evidence)",
+        )
+
+    lo = curve.rungs[0].grid_min_scale
+    hi = curve.rungs[0].grid_max_scale
+    if lo is not None:
+        ax.axhline(lo, color="#c0392b", linestyle=":", linewidth=1.0, alpha=0.7)
+    if hi is not None:
+        ax.axhline(hi, color="#c0392b", linestyle=":", linewidth=1.0, alpha=0.7)
+
+    ax.set_xscale("log")
+    ax.set_yscale("log")
+    ax.set_xlabel("mention rows clustered (realized N)")
+    ax.set_ylabel("chosen min_cluster_size")
+    ax.set_title("min_cluster_size scaling with sample size")
+    ax.grid(True, which="both", alpha=0.25, linewidth=0.5)
+    ax.legend(loc="best", fontsize=8, framealpha=0.9)
+
+    written = _save_figure_multi_format(fig, output_path, formats=formats)
+    plt.close(fig)
+    return written

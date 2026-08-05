@@ -1,14 +1,14 @@
 """Visualise cluster composition from a linker fit clustering report.
 
-Produces figures per report directory (emergent clusters only; HDBSCAN noise ``-1`` excluded):
+Produces figures per report directory (includes HDBSCAN noise ``-1`` as diagnostic):
   - ``fit_cluster_composition_bars.{png,pdf}``  – horizontal bar chart (top clusters by mass)
   - ``fit_cluster_composition_pies.{png,pdf}``  – pie-chart grid (all plotted clusters)
   - ``fit_cluster_composition_pies_sample.{png,pdf}``  – compact top-cluster sample
   - ``fit_cluster_viz.html``  – cluster-space viz (Plotly; HDBSCAN-fit + screener/OOV-pass rows)
-  - ``fit_cluster_entity_sankey.{png,pdf}``  – capped entity→cluster Sankey
+  - ``fit_cluster_entity_sankey.{png,pdf}``  – capped KB-in entity→cluster Sankey
 
 Reads ``linker_fit.clustering_report.json.gz``, ``linker_fit.cluster_composition.json.gz``,
-and ``linker_fit.emergent_clusters.json`` when present.
+and ``linker_fit.kb_out.json`` when present.
 
 With ``--pmid-text-table``, cluster viz hover text includes a five-word context window around
 each mention (resolved via ``pmid``, ``a_abs``, and ``b_abs`` provenance).
@@ -29,11 +29,15 @@ import seaborn as sns
 from pelinker.cluster_composition_viz import (
     DEFAULT_MAX_CLUSTERS_FOR_PLOTS,
     DEFAULT_MAX_ENTITIES_FOR_FLOW_PLOTS,
+    HDBSCAN_NOISE_CLUSTER_ID,
+    aggregate_cluster_entity_mass,
     build_cluster_composition_df,
     cluster_entity_mass_summary,
     top_cluster_ids_by_mass,
+    with_noise_cluster_label,
 )
 
+from pelinker.kb_out import cluster_labels_from_catalog
 from pelinker.plotting import (
     build_fit_cluster_viz_plot_df,
     enrich_fit_cluster_viz_plot_df_with_context,
@@ -43,14 +47,51 @@ from pelinker.plotting import (
 from pelinker.reporting import (
     linker_fit_cluster_composition_path,
     linker_fit_clustering_report_path,
-    linker_fit_emergent_clusters_path,
+    linker_fit_kb_out_path,
     read_cluster_composition_json,
     read_clustering_report_json,
-    read_emergent_clusters_json,
+    read_kb_out_json,
 )
 
 _PIE_SAMPLE_MAX_CLUSTERS = 6
 _FIGURE_EXTS = ("png", "pdf")
+
+
+def _always_include_noise(df: pd.DataFrame) -> list[int] | None:
+    if "cluster" not in df.columns:
+        return None
+    if HDBSCAN_NOISE_CLUSTER_ID in set(df["cluster"].astype(int)):
+        return [HDBSCAN_NOISE_CLUSTER_ID]
+    return None
+
+
+def _load_cluster_catalog(report_dir: pathlib.Path) -> dict | None:
+    kb_out_path = linker_fit_kb_out_path(report_dir)
+    if kb_out_path.exists():
+        return read_kb_out_json(kb_out_path)
+    return None
+
+
+def _apply_cluster_labels_to_composition(
+    df: pd.DataFrame,
+    cluster_labels: dict[int, str],
+) -> pd.DataFrame:
+    if df.empty:
+        return df
+    labels = with_noise_cluster_label(cluster_labels)
+    out = df.copy()
+    out["cluster"] = out["cluster"].astype(int)
+    out["cluster_label"] = out["cluster"].map(
+        lambda cid: labels.get(int(cid), str(cid))
+    )
+    return out
+
+
+def _cluster_title(cluster_id: int, cluster_data: pd.DataFrame) -> str:
+    if "cluster_label" in cluster_data.columns and len(cluster_data):
+        label = str(cluster_data["cluster_label"].iloc[0])
+        return f"{label} (mass={cluster_data['count'].sum():.2f})"
+    return f"Cluster {cluster_id} (mass={cluster_data['count'].sum():.2f})"
 
 
 def plot_seaborn_bars(
@@ -59,13 +100,17 @@ def plot_seaborn_bars(
     save_dir: pathlib.Path | None = None,
     show: bool = False,
 ) -> list[pathlib.Path]:
+    if processed_df.empty:
+        return []
+    plot_df = processed_df.copy()
+    facet_col = "cluster_label" if "cluster_label" in plot_df.columns else "cluster"
     sns.set_theme(style="whitegrid")
     g = sns.catplot(
-        data=processed_df,
+        data=plot_df,
         y="entity",
         x="count",
         hue="entity",
-        col="cluster",
+        col=facet_col,
         col_wrap=3,
         kind="bar",
         sharey=False,
@@ -75,7 +120,7 @@ def plot_seaborn_bars(
         height=3.2,
         aspect=1.4,
     )
-    g.set_titles("Cluster {col_name}", weight="bold", size=11)
+    g.set_titles("{col_name}", weight="bold", size=11)
     g.set_axis_labels("Weighted mass", "")
     plt.tight_layout()
 
@@ -92,7 +137,6 @@ def plot_seaborn_bars(
 
 
 def _pie_grid_layout(n_clusters: int) -> tuple[int, float, float]:
-    """(columns, width per column, row height) for a readable figure size."""
     if n_clusters <= 1:
         return 1, 4.5, 3.6
     if n_clusters <= 9:
@@ -126,11 +170,16 @@ def plot_pie_grid(
         return []
 
     plot_df = processed_df
+    always = _always_include_noise(plot_df)
     if max_clusters is not None:
-        keep = top_cluster_ids_by_mass(plot_df, max_clusters=max_clusters)
+        keep = top_cluster_ids_by_mass(
+            plot_df, max_clusters=max_clusters, always_include=always
+        )
         plot_df = plot_df.loc[plot_df["cluster"].isin(keep)]
 
-    clusters = top_cluster_ids_by_mass(plot_df, max_clusters=None)
+    clusters = top_cluster_ids_by_mass(
+        plot_df, max_clusters=None, always_include=always
+    )
     if not clusters:
         return []
 
@@ -164,7 +213,7 @@ def plot_pie_grid(
             textprops={"fontsize": label_fontsize},
         )
         axes_flat[i].set_title(
-            f"Cluster {cluster} (mass={cluster_data['count'].sum():.2f})",
+            _cluster_title(int(cluster), cluster_data),
             fontweight="bold",
             fontsize=title_fontsize,
         )
@@ -198,18 +247,24 @@ def _load_composition_df(
     if composition_path.exists():
         df, meta = read_cluster_composition_json(composition_path)
         stored_max = meta.get("max_clusters_in_rows")
+        stored_exclude = meta.get("exclude_noise")
+        needs_rebuild = False
         if max_clusters is not None and stored_max is not None:
             if int(stored_max) < int(max_clusters):
-                from pelinker.reporting import ModelSelectionReport
+                needs_rebuild = True
+        if stored_exclude is True:
+            needs_rebuild = True
+        if needs_rebuild:
+            from pelinker.reporting import ModelSelectionReport
 
-                if isinstance(report, ModelSelectionReport):
-                    return build_cluster_composition_df(
-                        report.assignments,
-                        top_n=top_n,
-                        weight_by_entity=True,
-                        exclude_noise=True,
-                        max_clusters=max_clusters,
-                    )
+            if isinstance(report, ModelSelectionReport):
+                return build_cluster_composition_df(
+                    report.assignments,
+                    top_n=top_n,
+                    weight_by_entity=True,
+                    exclude_noise=False,
+                    max_clusters=max_clusters,
+                )
         return df
     from pelinker.reporting import ModelSelectionReport
 
@@ -219,7 +274,7 @@ def _load_composition_df(
         report.assignments,
         top_n=top_n,
         weight_by_entity=True,
-        exclude_noise=True,
+        exclude_noise=False,
         max_clusters=max_clusters,
     )
 
@@ -228,7 +283,7 @@ def _load_composition_df(
     context_settings={"help_option_names": ["-h", "--help"]},
     help=(
         "Regenerate cluster-composition figures from a linker fit report directory. "
-        "Uses emergent HDBSCAN clusters only (excludes noise label -1)."
+        "Includes HDBSCAN noise label -1 as a diagnostic cluster."
     ),
 )
 @click.argument(
@@ -256,7 +311,7 @@ def _load_composition_df(
     type=int,
     default=DEFAULT_MAX_ENTITIES_FOR_FLOW_PLOTS,
     show_default=True,
-    help="Top entities by mass for Sankey and bump charts.",
+    help="Top KB-in entities by mass for the Sankey chart.",
 )
 @click.option(
     "--show",
@@ -282,6 +337,22 @@ def _load_composition_df(
         "HDBSCAN was fit and that pass ambient screener and manifold OOV gates."
     ),
 )
+@click.option(
+    "--sankey-min-frac",
+    type=float,
+    default=0.0,
+    show_default=True,
+    help=(
+        "Drop entity→cluster edges below this within-cluster mass fraction in the Sankey."
+    ),
+)
+@click.option(
+    "--cluster-label",
+    type=click.Choice(["display", "short"], case_sensitive=False),
+    default="display",
+    show_default=True,
+    help="Use KB-out display or short label for cluster facets and Sankey.",
+)
 def main(
     report_dir: pathlib.Path,
     top_n: int,
@@ -290,6 +361,8 @@ def main(
     show: bool,
     pmid_text_table: pathlib.Path | None,
     viz_all_kb: bool,
+    sankey_min_frac: float,
+    cluster_label: str,
 ) -> None:
     report_dir = report_dir.expanduser().resolve()
 
@@ -298,20 +371,25 @@ def main(
     summary = cluster_entity_mass_summary(report.assignments)
     n_emergent = int(summary["n_emergent_clusters"])
 
-    emergent_path = linker_fit_emergent_clusters_path(report_dir)
-    if emergent_path.exists():
-        catalog = read_emergent_clusters_json(emergent_path)
+    catalog = _load_cluster_catalog(report_dir)
+    if catalog is not None:
         n_emergent = int(catalog.get("n_emergent_clusters", n_emergent))
+
+    cluster_labels: dict[int, str] = {}
+    if catalog is not None:
+        label_kind = "short" if cluster_label == "short" else "display"
+        cluster_labels = cluster_labels_from_catalog(catalog, label_kind=label_kind)
+    cluster_labels = with_noise_cluster_label(cluster_labels)
 
     click.echo(
         f"Emergent clusters: {n_emergent} "
-        f"(plotting top {max_clusters}; noise fraction "
+        f"(plotting top {max_clusters} + noise; noise fraction "
         f"{float(summary['noise_fraction']):.3f})"
     )
     if n_emergent > max_clusters:
         click.echo(
             f"Note: {n_emergent - max_clusters} smaller emergent clusters omitted from "
-            "figures; see linker_fit.emergent_clusters.json for the full catalog.",
+            "figures; see linker_fit.kb_out.json for the full catalog.",
             err=True,
         )
 
@@ -321,6 +399,7 @@ def main(
         top_n=top_n,
         max_clusters=max_clusters,
     )
+    processed_df = _apply_cluster_labels_to_composition(processed_df, cluster_labels)
     written: list[pathlib.Path] = []
     written += plot_seaborn_bars(processed_df, save_dir=report_dir, show=show)
     written += plot_pie_grid(processed_df, save_dir=report_dir, show=show)
@@ -338,8 +417,9 @@ def main(
 
     plot_df, viz_method = build_fit_cluster_viz_plot_df(
         report,
-        exclude_noise=True,
+        exclude_noise=False,
         hdbscan_fit_scope=not viz_all_kb,
+        cluster_labels=cluster_labels or None,
     )
     if (
         not viz_all_kb
@@ -361,11 +441,18 @@ def main(
         plot_cluster_viz(plot_df, output_path=str(viz_path), viz_method=viz_method)
         written.append(viz_path)
 
+    entity_flow = aggregate_cluster_entity_mass(
+        report.assignments,
+        weight_by_entity=True,
+        exclude_noise=False,
+    )
     written += plot_cluster_entity_sankey(
-        processed_df,
+        entity_flow,
         save_dir=report_dir,
         max_clusters=max_clusters,
         max_entities=max_entities,
+        min_within_cluster_fraction=sankey_min_frac,
+        cluster_labels=cluster_labels or None,
     )
 
     if written:

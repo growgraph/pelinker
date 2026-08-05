@@ -18,6 +18,8 @@ def test_build_model_selection_summary_payload_rankings() -> None:
                 "layer": "l1",
                 "best_score": 0.5,
                 "best_score_std": 0.01,
+                "ari": 0.5,
+                "ari_std": 0.0,
                 "best_size": 10.0,
                 "best_size_std": 0.0,
                 "screener_auc_mean": 0.7,
@@ -36,6 +38,8 @@ def test_build_model_selection_summary_payload_rankings() -> None:
                 "layer": "l2",
                 "best_score": 0.9,
                 "best_score_std": 0.01,
+                "ari": 0.9,
+                "ari_std": 0.0,
                 "best_size": 12.0,
                 "best_size_std": 0.0,
                 "screener_auc_mean": 0.85,
@@ -54,6 +58,8 @@ def test_build_model_selection_summary_payload_rankings() -> None:
                 "layer": "l3",
                 "best_score": 0.6,
                 "best_score_std": 0.01,
+                "ari": 0.6,
+                "ari_std": 0.0,
                 "best_size": 11.0,
                 "best_size_std": 0.0,
                 "screener_auc_mean": 0.82,
@@ -84,6 +90,8 @@ def test_build_model_selection_summary_payload_rankings() -> None:
     top_comb = payload["rankings"]["top_by_combined_auc"]
     assert top_comb[0]["model"] == "c"
     assert payload["rankings"]["best_by_dbcv"]["model"] == "b"
+    assert payload["rankings"]["best_by_outer_dbcv_ari"]["model"] == "b"
+    assert "mcs" in payload["metrics"]
     assert payload["best_combined_auc"]["model"] == "c"
     assert (
         payload["grid"]["chosen_min_cluster_size_by_combo"][0]["min_cluster_size"] == 10

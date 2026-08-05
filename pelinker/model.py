@@ -28,6 +28,14 @@ from pelinker.config import (
     NegativeScreenerConfig,
     TransformConfig,
 )
+from pelinker.distillation import (
+    DistillationFidelityMetrics,
+    apply_gates,
+    cluster_to_entity_map,
+    evaluate_distillation_fidelity,
+    grouped_holdout_split,
+)
+from pelinker.entity_head import EntityHead, fit_mlp_entity_head
 from pelinker.screener.projection_screener import (
     ManifoldOovScoreModel,
     build_projection_training_arrays,
@@ -48,11 +56,16 @@ from pelinker.embedding_fusion import (
     property_fused_dataframe_for_linker_order,
 )
 from pelinker.sampling import draw_selection_sample, stratified_mention_sample
+from pelinker.scaling import MinClusterSizeProvenance, resolve_min_cluster_size
 from pelinker.selection import load_selection_frame
 from pelinker.transform import (
     EmbeddingTransformer,
     TransformArtifacts,
+    load_clustering_manifold,
+    parametric_umap_sidecar_dir,
+    save_clustering_manifold,
     score_transform_artifacts,
+    is_parametric_umap,
 )
 from pelinker.reporting import (
     ClusteringFitMetrics,
@@ -63,9 +76,13 @@ from pelinker.reporting import (
     entity_negative_label_mask_01,
     subsample_diagnostics_stratified,
 )
+from pelinker.kb_out import (
+    KbOutFitProvenance,
+    KbOutNamingConfig,
+    build_kb_out_catalog,
+)
 from pelinker.linker_cluster_training import (
     cluster_composition_from_training_frame,
-    cluster_derived_labels_map,
     consensus_cluster_names,
     provisional_cluster_assignments_from_training_frame as _provisional_cluster_assignments_from_training_frame,
 )
@@ -89,6 +106,9 @@ from pelinker.util import (
 
 logger = logging.getLogger(__name__)
 
+# Minimum HDBSCAN soft membership probability to emit a linked entity (nil below).
+DEFAULT_CLUSTER_MEMBERSHIP_THRESHOLD = 0.3
+
 _ROW_ID_COL = "_pelinker_row_id"
 
 _LINKER_LOAD_DEFAULTS: dict[str, object] = {
@@ -106,11 +126,19 @@ _LINKER_LOAD_DEFAULTS: dict[str, object] = {
     "cluster_composition": None,
     "cluster_consensus_names": {},
     "cluster_derived_labels_map": {},
+    "kb_in_labels_map": {},
+    "kb_in_entity_clusters": {},
+    "cluster_id_to_entity_id": {},
+    "kb_out_catalog": None,
     "nlp_model_name": "en_core_web_trf",
     "_nlp": None,
     "screener_in_sample_metrics": None,
     "clustering_fit_metrics": None,
     "_fit_clustering_report": None,
+    "entity_head": None,
+    "predict_mode": "legacy",
+    "min_cluster_size_provenance": None,
+    "distillation_fidelity": None,
 }
 
 
@@ -257,6 +285,253 @@ def _linker_fit_diagnostics_full(
     )
 
 
+def _log_min_cluster_size_provenance(prov: MinClusterSizeProvenance) -> None:
+    """Make the origin of ``min_cluster_size`` visible in the fit log, never silent."""
+    if prov.source == "scale_curve":
+        ex = prov.extrapolation
+        assert ex is not None
+        logger.info(
+            "min_cluster_size=%d from scale curve at N=%d "
+            "(raw=%.2f, slope=%.3f, R2=%.3f, extrapolation_ratio=%.2fx%s)",
+            prov.min_cluster_size,
+            prov.n_rows_realized,
+            ex.raw,
+            ex.log_slope,
+            ex.r_squared,
+            ex.extrapolation_ratio,
+            ", CLAMPED" if ex.clamped else "",
+        )
+        if ex.extrapolation_ratio > 10.0:
+            logger.warning(
+                "Scale curve extrapolated %.1fx beyond the largest measured rung; "
+                "add a larger rung before relying on min_cluster_size=%d",
+                ex.extrapolation_ratio,
+                prov.min_cluster_size,
+            )
+        if ex.r_squared < 0.8:
+            logger.warning(
+                "Scale curve R2=%.3f is low; min_cluster_size=%d rests on a weak fit",
+                ex.r_squared,
+                prov.min_cluster_size,
+            )
+        return
+
+    if prov.source == "explicit" and prov.extrapolation is not None:
+        ex = prov.extrapolation
+        logger.info(
+            "min_cluster_size=%d set explicitly, overriding the scale curve "
+            "(which predicts %d at N=%d)",
+            prov.min_cluster_size,
+            ex.min_cluster_size,
+            prov.n_rows_realized,
+        )
+        return
+
+    logger.info(
+        "min_cluster_size=%d (%s) at N=%d",
+        prov.min_cluster_size,
+        prov.source,
+        prov.n_rows_realized,
+    )
+
+
+def _fit_entity_head_with_fidelity(
+    *,
+    manifold_full: pd.DataFrame,
+    umap_full: np.ndarray,
+    teacher_labels: np.ndarray,
+    teacher_scores: np.ndarray,
+    exact_label_mask: np.ndarray,
+    fit_cfg: LinkerFitConfig,
+) -> tuple[EntityHead, DistillationFidelityMetrics | None]:
+    """Train the compact head on a held-out split and score it against its teacher.
+
+    With ``entity_head_holdout_fraction == 0`` this trains on every teacher-labelled row
+    (the pre-fidelity behaviour) and returns no metrics. Otherwise the head never sees
+    the holdout rows, so the reported agreement is genuinely out of sample.
+
+    The head is also refit on **all** rows afterwards: the shipped model should use every
+    label available, and the holdout exists to measure the recipe, not to be permanently
+    withheld from the artifact.
+    """
+    hidden = tuple(int(h) for h in fit_cfg.entity_head_hidden_layers)
+    holdout_fraction = float(fit_cfg.entity_head_holdout_fraction)
+
+    if holdout_fraction <= 0.0:
+        logger.info(
+            "Fitting MLP entity head hidden_layers=%s on all full-manifold labels "
+            "(entity_head_holdout_fraction=0: distillation fidelity NOT measured)",
+            hidden,
+        )
+        return (
+            fit_mlp_entity_head(
+                umap_full,
+                teacher_labels,
+                hidden_layer_sizes=hidden,
+                random_state=fit_cfg.base_seed,
+            ),
+            None,
+        )
+
+    metrics = _measure_distillation_fidelity(
+        manifold_full=manifold_full,
+        umap_full=umap_full,
+        teacher_labels=teacher_labels,
+        teacher_scores=teacher_scores,
+        exact_label_mask=exact_label_mask,
+        fit_cfg=fit_cfg,
+        hidden=hidden,
+        holdout_fraction=holdout_fraction,
+    )
+    # Gates run outside the measurement's error handling: an unmeasurable holdout is a
+    # reason to skip, but a gate breach is a deliberate signal that must propagate.
+    if metrics is not None and fit_cfg.distillation_gates.enabled:
+        apply_gates(metrics, fit_cfg.distillation_gates)
+
+    head = fit_mlp_entity_head(
+        umap_full,
+        teacher_labels,
+        hidden_layer_sizes=hidden,
+        random_state=fit_cfg.base_seed,
+    )
+    return head, metrics
+
+
+_REQUIRED_MANIFOLD_KIND: dict[str, str] = {
+    "compact": "parametric",
+    "legacy": "umap",
+}
+
+
+def _align_manifold_kind_with_predict_mode(
+    transform_config: TransformConfig, *, predict_mode: str
+) -> TransformConfig:
+    """Make ``manifold_kind`` match ``predict_mode``, raising on an explicit conflict.
+
+    ``predict_mode`` dictates the manifold: compact ships a ParametricUMAP encoder,
+    legacy ships standard UMAP plus HDBSCAN prediction data. This used to be a silent
+    overwrite, which mattered because ``min_cluster_size`` is selected upstream on
+    standard-UMAP coordinates and then applied here — under the ``compact`` default the
+    hyperparameter silently crossed a coordinate-system change.
+
+    A caller who left the field at its default gets it filled in (with a note when that
+    changes the coordinates the upstream search used). A caller who set it explicitly to
+    something inconsistent gets an error instead of a surprise.
+    """
+    required = _REQUIRED_MANIFOLD_KIND.get(predict_mode)
+    if required is None:
+        raise ValueError(
+            f"predict_mode must be one of {sorted(_REQUIRED_MANIFOLD_KIND)}, "
+            f"got {predict_mode!r}"
+        )
+    current = transform_config.manifold_kind
+    if current == required:
+        return transform_config
+
+    default_kind = TransformConfig.__dataclass_fields__["manifold_kind"].default
+    if current != default_kind:
+        raise ValueError(
+            f"predict_mode={predict_mode!r} requires manifold_kind={required!r}, but "
+            f"manifold_kind={current!r} was set explicitly. Either drop the explicit "
+            f"manifold_kind or switch predict_mode."
+        )
+    logger.info(
+        "predict_mode=%s: using manifold_kind=%r (default %r). Note that "
+        "min_cluster_size chosen upstream on %r coordinates is being applied to %r "
+        "coordinates; run pelinker-scale-curve / model-selection with the same "
+        "manifold to keep the two aligned.",
+        predict_mode,
+        required,
+        default_kind,
+        default_kind,
+        required,
+    )
+    return replace(transform_config, manifold_kind=required)
+
+
+def _measure_distillation_fidelity(
+    *,
+    manifold_full: pd.DataFrame,
+    umap_full: np.ndarray,
+    teacher_labels: np.ndarray,
+    teacher_scores: np.ndarray,
+    exact_label_mask: np.ndarray,
+    fit_cfg: LinkerFitConfig,
+    hidden: tuple[int, ...],
+    holdout_fraction: float,
+) -> DistillationFidelityMetrics | None:
+    """Train a probe head on a holdout split and score it, or return ``None``.
+
+    Returns ``None`` when the frame is too small or degenerate to split, or when the
+    probe cannot be trained (e.g. the training side lost a cluster). Those are reasons
+    to skip the measurement, not to abandon an otherwise valid fit — so they are logged
+    and swallowed here, deliberately *before* gate evaluation.
+    """
+    try:
+        split = grouped_holdout_split(
+            manifold_full,
+            holdout_fraction=holdout_fraction,
+            random_state=fit_cfg.entity_head_holdout_seed,
+            group_col=fit_cfg.entity_head_holdout_group_col,
+        )
+        logger.info(
+            "Fitting probe entity head hidden_layers=%s on %d/%d rows "
+            "(%d held out, grouped by %s)",
+            hidden,
+            len(split.train_idx),
+            len(manifold_full),
+            len(split.holdout_idx),
+            split.grouping,
+        )
+        probe = fit_mlp_entity_head(
+            umap_full[split.train_idx],
+            teacher_labels[split.train_idx],
+            hidden_layer_sizes=hidden,
+            random_state=fit_cfg.base_seed,
+        )
+        # Cluster→entity resolution must come from training rows only, or the map itself
+        # would leak holdout information into the comparison.
+        entity_map = cluster_to_entity_map(
+            manifold_full["entity"].to_numpy()[split.train_idx],
+            teacher_labels[split.train_idx],
+        )
+        metrics = evaluate_distillation_fidelity(
+            head=probe,
+            umap_holdout=umap_full[split.holdout_idx],
+            teacher_labels=teacher_labels[split.holdout_idx],
+            teacher_scores=teacher_scores[split.holdout_idx],
+            exact_label_mask=exact_label_mask[split.holdout_idx],
+            cluster_entity_map=entity_map,
+            grouping=split.grouping,
+            n_groups=split.n_groups,
+            emit_rate_threshold=fit_cfg.distillation_gates.emit_rate_threshold,
+            noise_label=fit_cfg.ambient_screener.negative_label,
+        )
+    except ValueError as exc:
+        logger.warning(
+            "Skipping distillation fidelity measurement: %s. Training the entity head "
+            "on all rows instead.",
+            exc,
+        )
+        return None
+
+    logger.info(
+        "Distillation fidelity: entity_agreement=%.4f (exact=%s approx=%s) "
+        "ari_vs_teacher=%s noise_forced=%.3f on %d holdout rows",
+        metrics.entity_agreement,
+        _fmt_opt(metrics.entity_agreement_exact),
+        _fmt_opt(metrics.entity_agreement_approx),
+        _fmt_opt(metrics.ari_vs_teacher),
+        metrics.noise_forced_fraction,
+        metrics.n_holdout,
+    )
+    return metrics
+
+
+def _fmt_opt(x: float | None) -> str:
+    return "n/a" if x is None else f"{x:.4f}"
+
+
 def _predict_cluster_labels_on_full_manifold(
     manifold_full: pd.DataFrame,
     manifold_fit: pd.DataFrame,
@@ -381,26 +656,49 @@ def _finalize_linker_cluster_state(
     *,
     kb_config: KBConfig | None,
     sampled_diag: LinkerFitDiagnostics,
+    fit_provenance: KbOutFitProvenance,
+    kb_out_naming: KbOutNamingConfig | None = None,
+    kb_in_labels_map_path: str | None = None,
 ) -> None:
     linker.cluster_composition = cluster_composition_from_training_frame(
         linker.training_cluster_frame
     )
     linker.cluster_consensus_names = consensus_cluster_names(linker.cluster_composition)
 
-    linker.cluster_assignments = _provisional_cluster_assignments_from_training_frame(
-        linker.labels_map,
+    linker.kb_in_labels_map = dict(linker.labels_map)
+    linker.kb_in_entity_clusters = _provisional_cluster_assignments_from_training_frame(
+        linker.kb_in_labels_map,
         linker.training_cluster_frame,
     )
-    linker.cluster_derived_labels_map = cluster_derived_labels_map(
-        linker.labels_map,
-        linker.cluster_assignments,
+    linker.cluster_assignments = dict(linker.kb_in_entity_clusters)
+
+    tcf = linker.training_cluster_frame
+    assert tcf is not None
+    assign_cols = ["entity", "cluster", "pmid", "mention"]
+    assign_cols.extend(c for c in MENTION_PROVENANCE_COLUMNS if c in tcf.columns)
+    assignments = tcf[assign_cols].copy()
+
+    linker.kb_out_catalog = build_kb_out_catalog(
         linker.cluster_composition,
+        assignments,
+        linker.kb_in_labels_map,
+        kb_config=kb_config,
+        fit_provenance=fit_provenance,
+        naming=kb_out_naming,
+        kb_in_labels_map_path=kb_in_labels_map_path,
     )
-    linker.vocabulary = sorted(linker.cluster_assignments.keys())
+    labels_map = linker.kb_out_catalog["labels_map"]
+    linker.labels_map = {str(k): str(v) for k, v in labels_map.items()}
+    linker.cluster_derived_labels_map = dict(linker.labels_map)
+    linker.cluster_id_to_entity_id = {
+        int(k): str(v)
+        for k, v in linker.kb_out_catalog.get("cluster_id_to_entity_id", {}).items()
+    }
+    linker.vocabulary = sorted(linker.labels_map.keys())
     if not linker.vocabulary:
         raise ValueError(
-            "No entity_ids received provisional cluster assignments after fit "
-            "(check labels_map and training entity labels)"
+            "No KB-out entity_ids after fit (no emergent clusters above noise; "
+            "check min_cluster_size and training data)"
         )
 
     if kb_config is not None:
@@ -547,11 +845,23 @@ class Linker:
         self.cluster_composition: ClusterCompositionSnapshot | None = None
         self.cluster_consensus_names: dict[int, str] = {}
         self.cluster_derived_labels_map: dict[str, str] = {}
+        self.kb_in_labels_map: dict[str, str] = {}
+        self.kb_in_entity_clusters: dict[str, int] = {}
+        self.cluster_id_to_entity_id: dict[int, str] = {}
+        self.kb_out_catalog: dict[str, object] | None = None
         self.screener: NegativeClassScreener | None = None
         self.screener_in_sample_metrics: NegativeScreenerInSampleMetrics | None = None
         self.clustering_fit_metrics: ClusteringFitMetrics | None = None
         self.projection: ManifoldOovScoreModel | None = kwargs.pop("projection", None)
         self._projection_cv_payload: dict[str, object] | None = None
+        self.entity_head: EntityHead | None = kwargs.pop("entity_head", None)
+        self.predict_mode: str = kwargs.pop("predict_mode", "legacy")
+        self.min_cluster_size_provenance: MinClusterSizeProvenance | None = kwargs.pop(
+            "min_cluster_size_provenance", None
+        )
+        self.distillation_fidelity: DistillationFidelityMetrics | None = kwargs.pop(
+            "distillation_fidelity", None
+        )
         self._hf_tokenizer = None
         self._hf_model = None
         self._hf_models_by_type: dict[str, tuple[object, object]] = {}
@@ -613,7 +923,21 @@ class Linker:
         self._fit_clustering_report = None
         path = _linker_artifact_gz_path(file_spec)
         path.parent.mkdir(parents=True, exist_ok=True)
-        joblib.dump(self, path, compress=3)
+
+        manifold = None
+        if self.transformer is not None and is_parametric_umap(self.transformer.umap):
+            manifold = self.transformer.umap
+            # Avoid pickling Keras nets inside joblib; restore after dump.
+            self.transformer.umap = None
+            sidecar = parametric_umap_sidecar_dir(path)
+            save_clustering_manifold(manifold, sidecar)
+            logger.info("Wrote ParametricUMAP sidecar to %s", sidecar)
+
+        try:
+            joblib.dump(self, path, compress=3)
+        finally:
+            if manifold is not None and self.transformer is not None:
+                self.transformer.umap = manifold
 
     @classmethod
     def load(cls, file_spec: str | pathlib.Path) -> Linker:
@@ -622,6 +946,11 @@ class Linker:
         for field, default in _LINKER_LOAD_DEFAULTS.items():
             if field not in pe_model.__dict__:
                 setattr(pe_model, field, default)
+        sidecar = parametric_umap_sidecar_dir(path)
+        if pe_model.transformer is not None and pe_model.transformer.umap is None:
+            if sidecar.is_dir():
+                pe_model.transformer.umap = load_clustering_manifold(sidecar)
+                logger.info("Loaded ParametricUMAP sidecar from %s", sidecar)
         return pe_model
 
     def take_fit_clustering_report(self) -> ModelSelectionReport | None:
@@ -756,6 +1085,13 @@ class Linker:
             screener_oos_datapoints=None,
             ari=m.ari,
             training_diagnostics=training_diagnostics,
+            distillation_fidelity=self.distillation_fidelity,
+            min_cluster_size_provenance=self.min_cluster_size_provenance,
+            n_rows_realized=(
+                None
+                if self.min_cluster_size_provenance is None
+                else self.min_cluster_size_provenance.n_rows_realized
+            ),
         )
 
     @staticmethod
@@ -770,12 +1106,14 @@ class Linker:
         self,
         embeddings: pathlib.Path | Sequence[pathlib.Path] | None,
         transform_config: TransformConfig,
-        min_cluster_size: int,
+        min_cluster_size: int | None = None,
         *,
         fit_config: LinkerFitConfig | None = None,
         embedding_training: EmbeddingTrainingConfig | None = None,
         embedding_metadata: EmbeddingModelMetadata | None = None,
         kb_config: KBConfig | None = None,
+        kb_out_naming: KbOutNamingConfig | None = None,
+        kb_in_labels_map_path: str | None = None,
     ) -> Linker:
         """
         Fit the Linker model with embeddings.
@@ -793,7 +1131,11 @@ class Linker:
                         (one output file per source).
             transform_config: TransformConfig instance
             min_cluster_size: HDBSCAN ``min_cluster_size`` (choose upstream, e.g. via
-                ``pelinker.model_selection``).
+                ``pelinker.model_selection``). When ``None``, it is resolved from
+                ``fit_config.scale_curve`` against the realized manifold row count, or
+                falls back to :data:`~pelinker.scaling.DEFAULT_MIN_CLUSTER_SIZE`. An
+                explicit value always wins; either way the choice and its origin land on
+                ``min_cluster_size_provenance`` and in the fit report.
             fit_config: Parquet read batching, mention load filters, subsample settings, and screener config.
                 Defaults to :class:`LinkerFitConfig()`.
             embedding_training: Corpus paths and embedding runtime. Required when embeddings=None.
@@ -815,7 +1157,7 @@ class Linker:
         Returns:
             self
         """
-        if min_cluster_size < 2:
+        if min_cluster_size is not None and min_cluster_size < 2:
             raise ValueError("min_cluster_size must be >= 2")
 
         is_temporary = False
@@ -890,6 +1232,8 @@ class Linker:
                 fit_cfg=fc,
                 min_cluster_size=min_cluster_size,
                 kb_config=kb_config,
+                kb_out_naming=kb_out_naming,
+                kb_in_labels_map_path=kb_in_labels_map_path,
             )
 
             return self
@@ -910,8 +1254,10 @@ class Linker:
         prepared: pd.DataFrame,
         transform_config: TransformConfig,
         fit_cfg: LinkerFitConfig,
-        min_cluster_size: int,
+        min_cluster_size: int | None,
         kb_config: KBConfig | None,
+        kb_out_naming: KbOutNamingConfig | None = None,
+        kb_in_labels_map_path: str | None = None,
     ) -> None:
         """Fit screeners, then PCA/UMAP + HDBSCAN on the clustering subsample; label full KB via predict."""
         prepared = prepared.copy()
@@ -946,13 +1292,27 @@ class Linker:
                 "No rows left after excluding negative-label mentions for manifold fit"
             )
 
+        # Resolve min_cluster_size against the rows HDBSCAN will actually see, now that
+        # every load filter and the clustering subsample have been applied.
+        min_cluster_size, self.min_cluster_size_provenance = resolve_min_cluster_size(
+            explicit=min_cluster_size,
+            n_rows_realized=len(manifold_fit),
+            scale_curve=fit_cfg.scale_curve,
+        )
+        _log_min_cluster_size_provenance(self.min_cluster_size_provenance)
+
         _, manifold_full = split_by_negative_label(prepared, neg_label)
         if len(manifold_full) == 0:
             raise ValueError(
                 "No rows left after excluding negative-label mentions for manifold fit"
             )
 
+        transform_config = _align_manifold_kind_with_predict_mode(
+            transform_config, predict_mode=fit_cfg.predict_mode
+        )
         self.transform_config = transform_config
+        self.predict_mode = fit_cfg.predict_mode
+
         cl_result = fit_manifold_clustering(
             manifold_fit,
             transform_config=transform_config,
@@ -1036,10 +1396,34 @@ class Linker:
             manifold_oov_pass=manifold_oov_pass,
         )
 
+        if fit_cfg.predict_mode == "compact":
+            self.entity_head, self.distillation_fidelity = (
+                _fit_entity_head_with_fidelity(
+                    manifold_full=manifold_full,
+                    umap_full=full_artifacts.umap_clustering,
+                    teacher_labels=cluster_labels,
+                    teacher_scores=cluster_scores,
+                    exact_label_mask=clustering_in_sample,
+                    fit_cfg=fit_cfg,
+                )
+            )
+            # Compact artifacts do not ship HDBSCAN prediction_data.
+            self.clusterer = None
+        else:
+            self.entity_head = None
+            self.distillation_fidelity = None
+
         _finalize_linker_cluster_state(
             self,
             kb_config=kb_config,
             sampled_diag=sampled_diag,
+            fit_provenance=KbOutFitProvenance(
+                min_cluster_size=min_cluster_size,
+                clustering_sample_index=fit_cfg.clustering_sample_index,
+                seed=fit_cfg.base_seed,
+            ),
+            kb_out_naming=kb_out_naming,
+            kb_in_labels_map_path=kb_in_labels_map_path,
         )
 
     def _load_embeddings_from_file(
@@ -1416,7 +1800,7 @@ class Linker:
         self,
         texts: Sequence[str],
         max_length: int | None = None,
-        threshold: float = 0.0,
+        threshold: float = DEFAULT_CLUSTER_MEMBERSHIP_THRESHOLD,
         *,
         use_gpu: bool = False,
         include_mention_anomaly: bool = False,
@@ -1437,7 +1821,9 @@ class Linker:
 
         Each ``entities`` row includes ``score``: HDBSCAN approximate cluster
         membership probability from ``approximate_predict`` on UMAP coordinates.
-        The ``threshold`` argument drops rows whose ``score`` is below that minimum.
+        The ``threshold`` argument drops rows whose ``score`` is below that minimum
+        (default :data:`DEFAULT_CLUSTER_MEMBERSHIP_THRESHOLD`). Cluster ``-1``
+        (HDBSCAN noise) is always treated as nil and omitted.
 
         When ``include_mention_anomaly`` or ``include_debug_mentions`` is true,
         :attr:`LinkerPredictResult.debug_mentions` lists one diagnostic row per extracted
@@ -1564,7 +1950,7 @@ class Linker:
         self,
         embeddings: torch.Tensor,
         mentions: list[MentionCandidate],
-        threshold: float = 0.0,
+        threshold: float = DEFAULT_CLUSTER_MEMBERSHIP_THRESHOLD,
         *,
         mention_anomaly_rows: bool = False,
         kb_lemma_by_wg: dict[WordGrouping, dict[str, str]] | None = None,
@@ -1573,10 +1959,11 @@ class Linker:
         Predict entities using clustering approach.
 
         Mentions classified as negative by the screener are dropped immediately: no
-        PCA/UMAP, no HDBSCAN ``approximate_predict``, and no anomaly metrics for them.
+        PCA/UMAP, no cluster assignment, and no anomaly metrics for them.
 
-        Each entity row includes ``score``: HDBSCAN soft cluster membership from
-        ``approximate_predict`` on UMAP coordinates (same scale as ``threshold``).
+        Each entity row includes ``score``: MLP ``max(predict_proba)`` in compact mode,
+        or HDBSCAN soft cluster membership from ``approximate_predict`` in legacy mode
+        (same scale as ``threshold``).
 
         Args:
             embeddings: Tensor of shape (n_mentions, embedding_dim)
@@ -1589,9 +1976,15 @@ class Linker:
             returned only when ``mention_anomaly_rows`` is true (requires
             ``kb_lemma_by_wg``).
         """
-        if self.transformer is None or self.clusterer is None or self.screener is None:
+        if self.transformer is None or self.screener is None:
             raise ValueError(
-                "Screener, Transformer and Clusterer must be fitted before prediction"
+                "Screener and Transformer must be fitted before prediction"
+            )
+        use_head = self.entity_head is not None
+        if not use_head and self.clusterer is None:
+            raise ValueError(
+                "Either entity_head (compact) or clusterer (legacy) must be fitted "
+                "before prediction"
             )
         if mention_anomaly_rows and kb_lemma_by_wg is None:
             raise ValueError(
@@ -1632,7 +2025,12 @@ class Linker:
 
         emb_k = embeddings_np[idx_keep]
         _umap_k, _, res_k, mah_k, ent_k = self.transformer.transform(emb_k)
-        cl_k, cp_k = approximate_predict(self.clusterer, _umap_k)
+        if use_head:
+            assert self.entity_head is not None
+            cl_k, cp_k = self.entity_head.predict(_umap_k)
+        else:
+            assert self.clusterer is not None
+            cl_k, cp_k = approximate_predict(self.clusterer, _umap_k)
         cl_arr = cl_k.astype(np.int64, copy=False)
         cp_arr = np.asarray(cp_k, dtype=np.float64).ravel()
         combined_k = np.maximum.reduce(
@@ -1667,19 +2065,11 @@ class Linker:
             if cluster_id == -1 or cluster_prob < threshold:
                 continue
 
-            # Find all entities in the same cluster
-            cluster_entities = [
-                entity_id
-                for entity_id, cid in self.cluster_assignments.items()
-                if cid == cluster_id
-            ]
-
-            # Skip clusters that have no mapped entities from the training vocabulary.
-            if not cluster_entities:
+            # Resolve KB-out entity for this HDBSCAN cluster.
+            predicted_entity = self.cluster_id_to_entity_id.get(cluster_id)
+            if predicted_entity is None:
                 continue
 
-            # For now, return the first entity in the cluster
-            predicted_entity = cluster_entities[0]
             row = self._entity_prediction_row(
                 item,
                 entity_id_predicted=predicted_entity,

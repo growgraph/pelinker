@@ -14,6 +14,7 @@ from pelinker.config import ClusteringOptimizationConfig
 from pelinker.reporting import ModelSelectionReport, _json_normalize
 
 GRID_COL_CHOSEN_MIN_CLUSTER_SIZE = "chosen_min_cluster_size"
+GRID_COL_N_ROWS_REALIZED = "n_rows_realized"
 
 # Primary key for one row per grid evaluation point in ``results_grid_per_sample.csv``.
 GRID_EXPORT_ID_COLUMNS: tuple[str, ...] = (
@@ -43,6 +44,7 @@ def grid_export_column_order() -> list[str]:
         "layer",
         "sample_idx",
         GRID_COL_CHOSEN_MIN_CLUSTER_SIZE,
+        GRID_COL_N_ROWS_REALIZED,
         "min_cluster_size",
         "icm",
         "n_clusters",
@@ -64,12 +66,21 @@ def grid_export_rows_from_report(
 
     ``chosen_min_cluster_size`` is the pooled consensus hyperparameter for the
     (model, layer) combination; it is duplicated on every grid row for that sample.
+    ``n_rows_realized`` is this draw's actual mention-row count — the scale the chosen
+    hyperparameter is only meaningful against (see :mod:`pelinker.scaling`).
     """
     return report.metrics_df.assign(
         model=model,
         layer=layer,
         sample_idx=sample_idx,
-        **{GRID_COL_CHOSEN_MIN_CLUSTER_SIZE: int(chosen_min_cluster_size)},
+        **{
+            GRID_COL_CHOSEN_MIN_CLUSTER_SIZE: int(chosen_min_cluster_size),
+            GRID_COL_N_ROWS_REALIZED: (
+                int(report.n_rows_realized)
+                if report.n_rows_realized is not None
+                else pd.NA
+            ),
+        },
     )
 
 

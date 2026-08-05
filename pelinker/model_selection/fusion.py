@@ -9,6 +9,7 @@ from typing import Literal
 import pandas as pd
 from numpy.random import RandomState
 
+from pelinker.clustering_search_ranking import outer_score_from_summary_row
 from pelinker.config import ClusteringOptimizationConfig, NegativeScreenerConfig
 from pelinker.model_selection_checkpoint import combination_key_from_members
 from pelinker.reporting import (
@@ -95,15 +96,16 @@ def update_leaderboard_fixed(
     best_overall_layer: str | None,
     best_per_model: dict[str, float],
 ) -> tuple[float | None, str | None, str | None, dict[str, float]]:
-    mean_dbcv = summary_row.dbcv.mean
+    """Update mid-run leaderboard using raw outer DBCV+ARI score (resume-safe)."""
+    mean_outer = outer_score_from_summary_row(summary_row)
     model, layer = summary_row.model, summary_row.layer
     if not model.startswith("fusion"):
-        if best_overall_score is None or mean_dbcv > best_overall_score:
-            best_overall_score = mean_dbcv
+        if best_overall_score is None or mean_outer > best_overall_score:
+            best_overall_score = mean_outer
             best_overall_model = model
             best_overall_layer = layer
-        if model not in best_per_model or mean_dbcv > best_per_model[model]:
-            best_per_model[model] = mean_dbcv
+        if model not in best_per_model or mean_outer > best_per_model[model]:
+            best_per_model[model] = mean_outer
     return best_overall_score, best_overall_model, best_overall_layer, best_per_model
 
 

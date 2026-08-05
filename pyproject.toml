@@ -20,9 +20,10 @@ dependencies = [
   "scikit-optimize>=0.10.2",
   "sentence-transformers>=3.0.1,<4",
   "spacy>=3.7.5,<4",
+  "tf-keras>=2.16.0",
   "torch>=2.9.1",
   "transformers>=4.41.2,<5",
-  "umap-learn>=0.5.11",
+  "umap-learn[parametric-umap]>=0.5.11",
   "uvicorn>=0.42.0",
   "wordfreq>=3.1.1"
 ]
@@ -35,6 +36,7 @@ version = "0.2.0"
 [project.optional-dependencies]
 dev = [
   "bumplot>=0.2.1",
+  "mypy>=1.11",
   "plotly>=6.2.0,<7",
   "pre-commit>=4.0.1,<5",
   "pysankey>=0.0.1",
@@ -57,8 +59,12 @@ gpu = [
 ]
 
 [project.scripts]
+pelinker-dim-selection = "pelinker.cli.dim_selection:main"
 pelinker-fit = "pelinker.cli.fit:run"
 pelinker-link-files = "pelinker.cli.link_files:main"
+pelinker-model-selection = "pelinker.cli.model_selection:main"
+pelinker-replot = "pelinker.cli.replot:main"
+pelinker-scale-curve = "pelinker.cli.scale_curve:main"
 pelinker-serves = "pelinker.cli.server:run"
 
 [tool.hatch.build.targets.sdist]
@@ -66,5 +72,12 @@ include = ["pelinker"]
 
 [tool.hatch.build.targets.wheel]
 include = ["pelinker"]
+
+[tool.pytest.ini_options]
+addopts = "-q"
+markers = [
+  "heavy: needs large out-of-band assets (spaCy en_core_web_trf, HF weights); skipped automatically when absent"
+]
+testpaths = ["test"]
 
 [tool.uv]

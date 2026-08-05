@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Iterable, Mapping, Sequence
+from dataclasses import replace
 
 import numpy as np
 import pandas as pd
@@ -11,6 +12,7 @@ from pelinker.clustering_grid import (
     aggregate_grid_metrics,
     solve_optimal_min_cluster_size_from_aggregated,
 )
+from pelinker.grid_export import per_combo_metrics_from_grid
 from pelinker.reporting import (
     AllScreenerCvResult,
     BinaryClassifierMetrics,
@@ -31,6 +33,7 @@ from sklearn.model_selection import StratifiedKFold
 
 from pelinker.config import (
     ClusteringOptimizationConfig,
+    GridObjectiveSpec,
     ManifoldOovScreenerConfig,
     NegativeScreenerConfig,
 )
@@ -221,6 +224,134 @@ def pooled_min_cluster_size_from_metrics_dfs(
     """
     solved = pooled_grid_solve_from_metrics_dfs(metrics_dfs, optimization_config)
     return solved.chosen_min_cluster_size, solved.score_mean_at_chosen
+
+
+def grid_solver_config(
+    optimization_config: ClusteringOptimizationConfig | None,
+    *,
+    grid_cluster_count_reward: float | None = None,
+    grid_n_entities: int | None = None,
+    grid_objective: GridObjectiveSpec | None = None,
+    optimization_method: str | None = None,
+) -> ClusteringOptimizationConfig:
+    """Merge optional solver overrides into ``optimization_config`` (or defaults)."""
+    base = optimization_config or ClusteringOptimizationConfig()
+    overrides: dict[str, object] = {}
+    if grid_cluster_count_reward is not None:
+        overrides["grid_cluster_count_reward"] = grid_cluster_count_reward
+    if grid_n_entities is not None:
+        overrides["grid_n_entities"] = grid_n_entities
+    if grid_objective is not None:
+        overrides["grid_objective"] = grid_objective
+    if optimization_method is not None:
+        overrides["optimization_method"] = optimization_method
+    return replace(base, **overrides) if overrides else base
+
+
+def grid_solver_overrides_active(
+    *,
+    optimization_config: ClusteringOptimizationConfig | None,
+    grid_cluster_count_reward: float | None,
+    grid_n_entities: int | None,
+    grid_objective: GridObjectiveSpec | None,
+    optimization_method: str | None,
+) -> bool:
+    """True when any solver knob was supplied, i.e. a re-solve was explicitly requested."""
+    return any(
+        v is not None
+        for v in (
+            optimization_config,
+            grid_cluster_count_reward,
+            grid_n_entities,
+            grid_objective,
+            optimization_method,
+        )
+    )
+
+
+def should_resolve_chosen_min_cluster_size(
+    *,
+    chosen_min_cluster_size: float | None,
+    optimization_config: ClusteringOptimizationConfig | None,
+    grid_cluster_count_reward: float | None,
+    grid_n_entities: int | None,
+    grid_objective: GridObjectiveSpec | None,
+    optimization_method: str | None,
+) -> bool:
+    """Re-solve only when no chosen value is on hand *and* solver knobs were supplied."""
+    if chosen_min_cluster_size is not None:
+        return False
+    return grid_solver_overrides_active(
+        optimization_config=optimization_config,
+        grid_cluster_count_reward=grid_cluster_count_reward,
+        grid_n_entities=grid_n_entities,
+        grid_objective=grid_objective,
+        optimization_method=optimization_method,
+    )
+
+
+def solve_pooled_grid_from_metrics_list(
+    metrics_list: list[pd.DataFrame],
+    optimization_config: ClusteringOptimizationConfig | None = None,
+    *,
+    grid_cluster_count_reward: float | None = None,
+    grid_n_entities: int | None = None,
+    grid_objective: GridObjectiveSpec | None = None,
+    optimization_method: str | None = None,
+) -> SmoothedGridOptimumResult:
+    """Pooled grid solve on per-sample metric tables; returns full diagnostics."""
+    cfg = grid_solver_config(
+        optimization_config,
+        grid_cluster_count_reward=grid_cluster_count_reward,
+        grid_n_entities=grid_n_entities,
+        grid_objective=grid_objective,
+        optimization_method=optimization_method,
+    )
+    return pooled_grid_solve_from_metrics_dfs(metrics_list, cfg)
+
+
+def solve_pooled_grid_by_combo_from_grid(
+    df_grid: pd.DataFrame,
+    optimization_config: ClusteringOptimizationConfig | None = None,
+    *,
+    grid_cluster_count_reward: float | None = None,
+    grid_n_entities: int | None = None,
+    grid_objective: GridObjectiveSpec | None = None,
+    optimization_method: str | None = None,
+) -> dict[tuple[str, str], SmoothedGridOptimumResult]:
+    """Pooled grid solve per (model, layer) from a grid export CSV frame."""
+    cfg = grid_solver_config(
+        optimization_config,
+        grid_cluster_count_reward=grid_cluster_count_reward,
+        grid_n_entities=grid_n_entities,
+        grid_objective=grid_objective,
+        optimization_method=optimization_method,
+    )
+    return {
+        combo: pooled_grid_solve_from_metrics_dfs(metrics_list, cfg)
+        for combo, metrics_list in per_combo_metrics_from_grid(df_grid).items()
+    }
+
+
+def resolve_chosen_min_cluster_size_by_combo_from_grid(
+    df_grid: pd.DataFrame,
+    optimization_config: ClusteringOptimizationConfig | None = None,
+    *,
+    grid_cluster_count_reward: float | None = None,
+    grid_n_entities: int | None = None,
+    grid_objective: GridObjectiveSpec | None = None,
+    optimization_method: str | None = None,
+) -> dict[tuple[str, str], int]:
+    """Re-solve ``chosen_min_cluster_size`` per (model, layer) from a grid export CSV frame."""
+    solved = solve_pooled_grid_by_combo_from_grid(
+        df_grid,
+        optimization_config,
+        grid_cluster_count_reward=grid_cluster_count_reward,
+        grid_n_entities=grid_n_entities,
+        grid_objective=grid_objective,
+        optimization_method=optimization_method,
+    )
+    return {combo: result.chosen_min_cluster_size for combo, result in solved.items()}
 
 
 def split_by_negative_label(

@@ -90,7 +90,7 @@ def test_fused_fit_two_parquets_stacks_embedding_dim(tmp_path):
     pd.DataFrame(rows1).to_parquet(p1)
     pd.DataFrame(rows2).to_parquet(p2)
 
-    fit_cfg = LinkerFitConfig(batch_size=500)
+    fit_cfg = LinkerFitConfig(batch_size=500, predict_mode="legacy")
     linker = Linker(labels_map=labels_map, embedding_metadata=metadata)
     linker.fit(
         [p1, p2],
@@ -101,7 +101,10 @@ def test_fused_fit_two_parquets_stacks_embedding_dim(tmp_path):
         fit_config=fit_cfg,
     )
     assert linker.transformer is not None
-    assert len(linker.vocabulary) == n_ent
+    assert len(linker.vocabulary) == len(linker.cluster_id_to_entity_id)
+    assert len(linker.vocabulary) > 0
+    assert linker.kb_in_labels_map == labels_map
+    assert all(eid in linker.labels_map for eid in linker.vocabulary)
     assert linker.transformer.pca is not None
     assert linker.transformer.pca.n_features_in_ == 4
     assert linker.clusterer is not None
@@ -151,6 +154,7 @@ def test_fit_with_synthetic_negatives_screener_metrics_and_dump_load(tmp_path):
 
     fit_cfg = LinkerFitConfig(
         batch_size=500,
+        predict_mode="legacy",
         ambient_screener=NegativeScreenerConfig(
             kind="lda",
             negative_label=NEGATIVE_LABEL,
@@ -261,7 +265,7 @@ def test_fit_stores_and_serializes_training_pca_metrics(tmp_path):
             pca_components=4, umap_components=2, cluster_viz_components=2
         ),
         min_cluster_size=2,
-        fit_config=LinkerFitConfig(batch_size=500),
+        fit_config=LinkerFitConfig(batch_size=500, predict_mode="legacy"),
     )
 
     report = linker.take_fit_clustering_report()
@@ -298,7 +302,7 @@ def test_fit_clustering_report_json_roundtrip(tmp_path: Path) -> None:
             pca_components=4, umap_components=2, cluster_viz_components=2
         ),
         min_cluster_size=2,
-        fit_config=LinkerFitConfig(batch_size=500),
+        fit_config=LinkerFitConfig(batch_size=500, predict_mode="legacy"),
     )
     report = linker.take_fit_clustering_report()
     assert report is not None

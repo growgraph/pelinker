@@ -150,7 +150,7 @@ def _minmax_norm_per_curve(values: np.ndarray, *, eps: float = 1e-12) -> np.ndar
     return out
 
 
-def _combine_mean_std_count(
+def combine_two_metric_series(
     m1: np.ndarray,
     s1: np.ndarray,
     c1: np.ndarray,
@@ -160,7 +160,12 @@ def _combine_mean_std_count(
     *,
     use_minmax: bool,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Pairwise combine two metrics (same length). Missing values use the other series only."""
+    """
+    Pairwise combine two metrics (same length). Missing values use the other series only.
+
+    When ``use_minmax`` is true, each series is min–max normalized across the curve
+    (or leaderboard) before averaging — same pooling as ``dbcv_ari_mean_minmax``.
+    """
     n = len(m1)
     means = np.empty(n, dtype=np.float64)
     stds = np.empty(n, dtype=np.float64)
@@ -200,9 +205,9 @@ def _objective_mean_std_count(
     md, sd, cd = _metric_vectors(report, "dbcv")
     ma, sa, ca = _metric_vectors(report, "ari")
     if objective == "dbcv_ari_mean_minmax":
-        return _combine_mean_std_count(md, sd, cd, ma, sa, ca, use_minmax=True)
+        return combine_two_metric_series(md, sd, cd, ma, sa, ca, use_minmax=True)
     if objective == "dbcv_ari_mean_raw":
-        return _combine_mean_std_count(md, sd, cd, ma, sa, ca, use_minmax=False)
+        return combine_two_metric_series(md, sd, cd, ma, sa, ca, use_minmax=False)
     raise ValueError(f"Unknown grid objective: {objective!r}")
 
 
