@@ -1,22 +1,27 @@
 import colorsys
 import pathlib
 import re
-from dataclasses import replace
 
 import matplotlib
 import numpy as np
 import pandas as pd
 
 from pySankey.sankey import sankey
+from pelinker.analysis import (
+    grid_solver_overrides_active,
+    resolve_chosen_min_cluster_size_by_combo_from_grid,
+    should_resolve_chosen_min_cluster_size,
+    solve_pooled_grid_from_metrics_list,
+)
 from pelinker.clustering_grid import SmoothedGridOptimumResult
 from pelinker.config import ClusteringOptimizationConfig, GridObjectiveSpec
 from pelinker.grid_export import (
     apply_chosen_min_cluster_size_to_grid,
     has_grid_points_for_dbcv_ari_scatter,
-    per_combo_metrics_from_grid,
     select_grid_points_at_chosen_min_cluster_size,
 )
 from pelinker.reporting import LinkerFitDiagnostics, ModelSelectionReport
+from pelinker.scaling import ScaleCurve
 import seaborn as sns
 
 # Force a non-interactive backend because this project only saves plots to files.
@@ -341,136 +346,6 @@ def _draw_arity_marker(
     ax.add_patch(fb)
 
 
-def _grid_solver_config(
-    optimization_config: ClusteringOptimizationConfig | None,
-    *,
-    grid_cluster_count_reward: float | None = None,
-    grid_n_entities: int | None = None,
-    grid_objective: GridObjectiveSpec | None = None,
-    optimization_method: str | None = None,
-) -> ClusteringOptimizationConfig:
-    """Merge optional solver overrides into ``optimization_config`` (or defaults)."""
-    base = optimization_config or ClusteringOptimizationConfig()
-    overrides: dict[str, object] = {}
-    if grid_cluster_count_reward is not None:
-        overrides["grid_cluster_count_reward"] = grid_cluster_count_reward
-    if grid_n_entities is not None:
-        overrides["grid_n_entities"] = grid_n_entities
-    if grid_objective is not None:
-        overrides["grid_objective"] = grid_objective
-    if optimization_method is not None:
-        overrides["optimization_method"] = optimization_method
-    return replace(base, **overrides) if overrides else base
-
-
-def _grid_solver_kwargs_active(
-    *,
-    optimization_config: ClusteringOptimizationConfig | None,
-    grid_cluster_count_reward: float | None,
-    grid_n_entities: int | None,
-    grid_objective: GridObjectiveSpec | None,
-    optimization_method: str | None,
-) -> bool:
-    return any(
-        v is not None
-        for v in (
-            optimization_config,
-            grid_cluster_count_reward,
-            grid_n_entities,
-            grid_objective,
-            optimization_method,
-        )
-    )
-
-
-def _should_resolve_chosen_min_cluster_size(
-    *,
-    chosen_min_cluster_size: float | None,
-    optimization_config: ClusteringOptimizationConfig | None,
-    grid_cluster_count_reward: float | None,
-    grid_n_entities: int | None,
-    grid_objective: GridObjectiveSpec | None,
-    optimization_method: str | None,
-) -> bool:
-    if chosen_min_cluster_size is not None:
-        return False
-    return _grid_solver_kwargs_active(
-        optimization_config=optimization_config,
-        grid_cluster_count_reward=grid_cluster_count_reward,
-        grid_n_entities=grid_n_entities,
-        grid_objective=grid_objective,
-        optimization_method=optimization_method,
-    )
-
-
-def solve_pooled_grid_from_metrics_list(
-    metrics_list: list[pd.DataFrame],
-    optimization_config: ClusteringOptimizationConfig | None = None,
-    *,
-    grid_cluster_count_reward: float | None = None,
-    grid_n_entities: int | None = None,
-    grid_objective: GridObjectiveSpec | None = None,
-    optimization_method: str | None = None,
-) -> SmoothedGridOptimumResult:
-    """Pooled grid solve on per-sample metric tables; returns full diagnostics."""
-    from pelinker.analysis import pooled_grid_solve_from_metrics_dfs
-
-    cfg = _grid_solver_config(
-        optimization_config,
-        grid_cluster_count_reward=grid_cluster_count_reward,
-        grid_n_entities=grid_n_entities,
-        grid_objective=grid_objective,
-        optimization_method=optimization_method,
-    )
-    return pooled_grid_solve_from_metrics_dfs(metrics_list, cfg)
-
-
-def solve_pooled_grid_by_combo_from_grid(
-    df_grid: pd.DataFrame,
-    optimization_config: ClusteringOptimizationConfig | None = None,
-    *,
-    grid_cluster_count_reward: float | None = None,
-    grid_n_entities: int | None = None,
-    grid_objective: GridObjectiveSpec | None = None,
-    optimization_method: str | None = None,
-) -> dict[tuple[str, str], SmoothedGridOptimumResult]:
-    """Pooled grid solve per (model, layer) from a grid export CSV frame."""
-    cfg = _grid_solver_config(
-        optimization_config,
-        grid_cluster_count_reward=grid_cluster_count_reward,
-        grid_n_entities=grid_n_entities,
-        grid_objective=grid_objective,
-        optimization_method=optimization_method,
-    )
-    solved: dict[tuple[str, str], SmoothedGridOptimumResult] = {}
-    from pelinker.analysis import pooled_grid_solve_from_metrics_dfs
-
-    for combo, metrics_list in per_combo_metrics_from_grid(df_grid).items():
-        solved[combo] = pooled_grid_solve_from_metrics_dfs(metrics_list, cfg)
-    return solved
-
-
-def resolve_chosen_min_cluster_size_by_combo_from_grid(
-    df_grid: pd.DataFrame,
-    optimization_config: ClusteringOptimizationConfig | None = None,
-    *,
-    grid_cluster_count_reward: float | None = None,
-    grid_n_entities: int | None = None,
-    grid_objective: GridObjectiveSpec | None = None,
-    optimization_method: str | None = None,
-) -> dict[tuple[str, str], int]:
-    """Re-solve ``chosen_min_cluster_size`` per (model, layer) from a grid export CSV frame."""
-    solved = solve_pooled_grid_by_combo_from_grid(
-        df_grid,
-        optimization_config,
-        grid_cluster_count_reward=grid_cluster_count_reward,
-        grid_n_entities=grid_n_entities,
-        grid_objective=grid_objective,
-        optimization_method=optimization_method,
-    )
-    return {combo: result.chosen_min_cluster_size for combo, result in solved.items()}
-
-
 def plot_dbcv_vs_ari_from_grid(
     df_grid: pd.DataFrame,
     output_path: pathlib.Path,
@@ -501,7 +376,7 @@ def plot_dbcv_vs_ari_from_grid(
         return False
 
     df_plot = df_grid
-    if _grid_solver_kwargs_active(
+    if grid_solver_overrides_active(
         optimization_config=optimization_config,
         grid_cluster_count_reward=grid_cluster_count_reward,
         grid_n_entities=grid_n_entities,
@@ -683,7 +558,7 @@ def plot_metrics_with_error_bars(
         grid_objective: Override :attr:`~pelinker.config.ClusteringOptimizationConfig.grid_objective`.
         optimization_method: Override :attr:`~pelinker.config.ClusteringOptimizationConfig.optimization_method`.
     """
-    if grid_solve is None and _should_resolve_chosen_min_cluster_size(
+    if grid_solve is None and should_resolve_chosen_min_cluster_size(
         chosen_min_cluster_size=chosen_min_cluster_size,
         optimization_config=optimization_config,
         grid_cluster_count_reward=grid_cluster_count_reward,
@@ -2020,3 +1895,86 @@ def build_fit_cluster_viz_plot_df(
     return pd.concat(
         [plot_assign[cols + extra], viz_df], axis=1
     ), report.cluster_viz_method
+
+
+def plot_scale_curve(
+    curve: ScaleCurve,
+    output_path: pathlib.Path,
+    *,
+    formats: tuple[str, ...] = ("png", "pdf"),
+) -> tuple[pathlib.Path, ...]:
+    """Log-log plot of chosen ``min_cluster_size`` vs realized N, with the fitted law.
+
+    Rungs whose chosen value sat on a grid bound are drawn hollow and red: on those
+    points the grid, not the sample size, decided the answer, and the slope through
+    them is not evidence.
+    """
+    ns = np.array([r.n_rows_realized for r in curve.rungs], dtype=np.float64)
+    mcs = np.array([r.chosen_min_cluster_size for r in curve.rungs], dtype=np.float64)
+    pinned = np.array([r.is_pinned for r in curve.rungs], dtype=bool)
+
+    fig, ax = plt.subplots(figsize=(7.0, 5.0))
+
+    # Fitted law across the measured span, extended by 2x to show the extrapolation.
+    x_line = np.logspace(
+        np.log10(ns.min()), np.log10(ns.max() * 2.0), num=100, dtype=np.float64
+    )
+    y_line = np.exp(curve.log_intercept + curve.log_slope * np.log(x_line))
+    ax.plot(
+        x_line,
+        y_line,
+        color="#3b6ea5",
+        linewidth=1.8,
+        label=(
+            f"fit: log(MCS) = {curve.log_intercept:.3f} + "
+            f"{curve.log_slope:.3f}·log(N)   (R²={curve.r_squared:.3f})"
+        ),
+    )
+    ax.axvspan(
+        ns.max(),
+        x_line.max(),
+        color="#999999",
+        alpha=0.12,
+        label="extrapolation (beyond measured N)",
+    )
+
+    if np.any(~pinned):
+        ax.scatter(
+            ns[~pinned],
+            mcs[~pinned],
+            s=70,
+            color="#3b6ea5",
+            edgecolor="black",
+            zorder=3,
+            label="measured rung",
+        )
+    if np.any(pinned):
+        ax.scatter(
+            ns[pinned],
+            mcs[pinned],
+            s=90,
+            facecolor="none",
+            edgecolor="#c0392b",
+            linewidth=2.0,
+            zorder=4,
+            label="pinned on grid bound (not evidence)",
+        )
+
+    lo = curve.rungs[0].grid_min_scale
+    hi = curve.rungs[0].grid_max_scale
+    if lo is not None:
+        ax.axhline(lo, color="#c0392b", linestyle=":", linewidth=1.0, alpha=0.7)
+    if hi is not None:
+        ax.axhline(hi, color="#c0392b", linestyle=":", linewidth=1.0, alpha=0.7)
+
+    ax.set_xscale("log")
+    ax.set_yscale("log")
+    ax.set_xlabel("mention rows clustered (realized N)")
+    ax.set_ylabel("chosen min_cluster_size")
+    ax.set_title("min_cluster_size scaling with sample size")
+    ax.grid(True, which="both", alpha=0.25, linewidth=0.5)
+    ax.legend(loc="best", fontsize=8, framealpha=0.9)
+
+    written = _save_figure_multi_format(fig, output_path, formats=formats)
+    plt.close(fig)
+    return written

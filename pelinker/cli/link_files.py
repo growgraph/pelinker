@@ -11,6 +11,15 @@ from typing import Any
 import click
 import pandas as pd
 
+from pelinker.ground_truth import (
+    GroundTruthScore,
+    GtSpan,
+    score_predictions_against_ground_truth,
+)
+from pelinker.linker_kb_lemma import (
+    KbLemmaValidationMetrics,
+    aggregate_kb_lemma_validation,
+)
 from pelinker.model import DEFAULT_CLUSTER_MEMBERSHIP_THRESHOLD, Linker
 from pelinker.onto import MAX_LENGTH
 
@@ -58,6 +67,51 @@ def _write_mention_anomaly(path: Path, rows: list[dict[str, Any]]) -> None:
         df.to_parquet(path, index=False)
     else:
         df.to_csv(path, index=False)
+
+
+def _fmt_rate(x: float | None) -> str:
+    return "n/a" if x is None else f"{x:.4f}"
+
+
+def _score_against_ground_truth(
+    out: dict[str, Any],
+    ground_truth_by_doc: list[list[dict[str, Any]] | None],
+) -> "GroundTruthScore | None":
+    """Score emitted entities against the char-offset gold spans, if any are present."""
+    gold: list[GtSpan] = []
+    for doc_index, hits in enumerate(ground_truth_by_doc):
+        for hit in hits or []:
+            try:
+                gold.append(
+                    GtSpan(
+                        itext=int(hit.get("itext", doc_index)),
+                        a=int(hit["a"]),
+                        b=int(hit["b"]),
+                        entity_id=(
+                            None
+                            if hit.get("entity_id") is None
+                            else str(hit["entity_id"])
+                        ),
+                    )
+                )
+            except (KeyError, TypeError, ValueError):
+                # A malformed hit should not sink the whole run; it is simply unscorable.
+                logger.warning("Skipping unparsable ground-truth hit: %r", hit)
+    if not gold:
+        return None
+    entities = out.get("entities") or []
+    return score_predictions_against_ground_truth(entities, gold)
+
+
+def _aggregate_lemma_validation(pres: object) -> "KbLemmaValidationMetrics | None":
+    """Roll the per-row KB-lemma flag into a rate, when the fields were computed."""
+    entities = getattr(pres, "entities", None)
+    if not entities:
+        return None
+    rows = [dict(r) for r in entities]
+    if not any("kb_training_entity_from_lemma" in r for r in rows):
+        return None  # --kb-validation was not requested
+    return aggregate_kb_lemma_validation(rows)
 
 
 def _normalize_ground_truth_hits(
@@ -350,6 +404,38 @@ def main(
 
     if any(g is not None for g in ground_truth_by_doc):
         out["ground_truth"] = ground_truth_by_doc
+        # Previously the ground truth was parsed and echoed but never scored; the README
+        # pointed at a scoring script that does not exist. Score it here instead.
+        score = _score_against_ground_truth(out, ground_truth_by_doc)
+        if score is not None:
+            out["ground_truth_score"] = score.to_jsonable()
+            logger.info(
+                "Ground truth: matched %d/%d gold spans (P=%s R=%s F1=%s); "
+                "entity accuracy %s over %d comparable pairs",
+                score.n_matched,
+                score.n_gold,
+                _fmt_rate(score.precision),
+                _fmt_rate(score.recall),
+                _fmt_rate(score.f1),
+                _fmt_rate(score.entity_accuracy),
+                score.n_id_comparable,
+            )
+            if score.n_id_comparable == 0 and score.n_matched > 0:
+                logger.info(
+                    "Entity accuracy is undefined: predicted ids are minted KB-out "
+                    "cluster ids and the gold file carries input-KB ids. Detection "
+                    "precision/recall above are still meaningful."
+                )
+
+    lemma_metrics = _aggregate_lemma_validation(pres)
+    if lemma_metrics is not None:
+        out["kb_lemma_validation"] = lemma_metrics.to_jsonable()
+        logger.info(
+            "KB-lemma consistency: %s over %d resolvable of %d rows",
+            _fmt_rate(lemma_metrics.match_rate),
+            lemma_metrics.n_resolvable,
+            lemma_metrics.n_rows,
+        )
 
     if output_path is not None:
         output_path.parent.mkdir(parents=True, exist_ok=True)

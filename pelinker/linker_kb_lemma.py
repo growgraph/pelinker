@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+from typing import Any, Sequence
+
 from pelinker.onto import WordGrouping, _wg_for_property
 from pelinker.util import text_to_tokens
 
@@ -59,3 +62,80 @@ def enrich_entity_predictions_kb_validation(
             and for_prediction is not None
             and from_lemma == for_prediction
         )
+
+
+@dataclass(frozen=True)
+class KbLemmaValidationMetrics:
+    """Aggregate of the per-row ``lemma_kb_matches_predicted_entity`` flag.
+
+    This is the closest thing the pipeline has to a **task-level** accuracy: it asks
+    whether the entity a mention was linked to is the same one its own lemma resolves to
+    in the KB. The flag was already computed per row and attached to debug output, but
+    nothing ever aggregated it, so no run produced a single number for linking quality —
+    only intrinsic clustering scores (DBCV/ARI).
+
+    It is a weak, distant-supervision signal, not ground truth: it can only score rows
+    whose lemma resolves to a KB entity at all (:attr:`n_resolvable`), and it rewards
+    agreement with the same lemma matching that produced the training mentions. Read
+    :attr:`match_rate` as "does linking stay consistent with the KB dictionary", not as
+    end-task accuracy.
+    """
+
+    n_rows: int
+    n_resolvable: int
+    """Rows whose lemma resolved to some KB entity — the denominator of :attr:`match_rate`."""
+    n_matches: int
+    n_predicted: int
+    """Rows that received an entity prediction at all."""
+
+    @property
+    def match_rate(self) -> float | None:
+        """Matches over resolvable rows; ``None`` when nothing was resolvable."""
+        if self.n_resolvable == 0:
+            return None
+        return self.n_matches / self.n_resolvable
+
+    @property
+    def resolvable_rate(self) -> float | None:
+        """Share of rows the metric can say anything about at all."""
+        if self.n_rows == 0:
+            return None
+        return self.n_resolvable / self.n_rows
+
+    def to_jsonable(self) -> dict[str, Any]:
+        return {
+            "n_rows": int(self.n_rows),
+            "n_resolvable": int(self.n_resolvable),
+            "n_matches": int(self.n_matches),
+            "n_predicted": int(self.n_predicted),
+            "match_rate": self.match_rate,
+            "resolvable_rate": self.resolvable_rate,
+        }
+
+
+def aggregate_kb_lemma_validation(
+    rows: Sequence[dict[str, object]],
+) -> KbLemmaValidationMetrics:
+    """Summarize rows already enriched by :func:`enrich_entity_predictions_kb_validation`.
+
+    Rows lacking the enrichment fields count toward ``n_rows`` but not ``n_resolvable``,
+    so mixing enriched and unenriched rows lowers the resolvable rate rather than
+    silently inflating the match rate.
+    """
+    n_resolvable = 0
+    n_matches = 0
+    n_predicted = 0
+    for row in rows:
+        if row.get("entity_id_predicted") is not None:
+            n_predicted += 1
+        if row.get("kb_training_entity_from_lemma") is None:
+            continue
+        n_resolvable += 1
+        if bool(row.get("lemma_kb_matches_predicted_entity")):
+            n_matches += 1
+    return KbLemmaValidationMetrics(
+        n_rows=len(rows),
+        n_resolvable=n_resolvable,
+        n_matches=n_matches,
+        n_predicted=n_predicted,
+    )

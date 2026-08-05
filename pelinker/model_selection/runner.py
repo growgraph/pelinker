@@ -84,6 +84,10 @@ from pelinker.reporting import (
     write_model_selection_run_report_json,
 )
 from pelinker.sampling import draw_selection_sample
+from pelinker.selected_hyperparameters import (
+    SelectedHyperparameters,
+    write_selected_hyperparameters,
+)
 from pelinker.selection import (
     evaluate_selection_sample,
     load_selection_frame,
@@ -131,6 +135,8 @@ def run_model_selection(
     max_mentions_per_entity: int | None,
     max_mentions_negative: int | None,
     mention_cap_seed: int,
+    manifold_kind: str = "umap",
+    umap_n_neighbors: int | None = None,
 ) -> None:
     """
     Process multiple parquet files and compute optimal cluster sizes.
@@ -275,7 +281,9 @@ def run_model_selection(
     transform_config = TransformConfig(
         pca_components=pca_components,
         umap_components=umap_dim,
+        umap_n_neighbors=umap_n_neighbors,
         cluster_viz_method=cluster_viz_method.lower(),
+        manifold_kind=manifold_kind,  # type: ignore[arg-type]
         pca_seed=pca_seed,
         umap_seed=umap_seed,
     )
@@ -1118,3 +1126,47 @@ def run_model_selection(
     console.print(
         f"\n[green]✓[/green] Standardized run report saved to: [cyan]{run_report_json_path}[/cyan]"
     )
+
+    # Machine-readable handoff so pelinker-fit can consume the winner instead of the
+    # operator retyping it (which is how pca=22/umap=3 once coexisted with a 100/8 fit).
+    if best_overall_model is not None and best_overall_layer is not None:
+        winner_rows = df_results.loc[
+            (df_results["model"].astype(str) == str(best_overall_model))
+            & (df_results["layer"].astype(str) == str(best_overall_layer))
+        ]
+        if not winner_rows.empty:
+            wr = winner_rows.iloc[0]
+            mcs = int(round(float(wr.get("best_size") or 0.0)))
+            if mcs >= 2:
+                n_rows_raw = wr.get("n_rows_realized")
+                selected = SelectedHyperparameters(
+                    source="model_selection",
+                    model=str(best_overall_model),
+                    layer=str(best_overall_layer),
+                    pca_components=int(pca_components),
+                    umap_dim=int(umap_dim),
+                    min_cluster_size=mcs,
+                    manifold_kind=manifold_kind,
+                    n_rows_realized=(
+                        None
+                        if n_rows_raw is None
+                        or (isinstance(n_rows_raw, float) and math.isnan(n_rows_raw))
+                        else int(n_rows_raw)
+                    ),
+                    umap_n_neighbors=umap_n_neighbors,
+                    run_fingerprint=run_fingerprint,
+                    outer_score=(
+                        None
+                        if best_overall_score is None
+                        else float(best_overall_score)
+                    ),
+                )
+                out = write_selected_hyperparameters(selected, report_path)
+                console.print(
+                    f"[green]✓[/green] Selected hyperparameters written to: [cyan]{out}[/cyan]"
+                )
+            else:
+                console.print(
+                    "[yellow]Winning min_cluster_size < 2; skipping "
+                    "selected_hyperparameters.json[/yellow]"
+                )

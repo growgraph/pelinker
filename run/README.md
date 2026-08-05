@@ -118,7 +118,7 @@ Embeds a knowledge base corpus using the same pipeline as **stage (A)** of `peli
 Module: **`pelinker.cli.fit`**. It runs the linker training pipeline in **two conceptual stages**:
 
 1. **Stage (A)** — `embed_kb_corpus(...)` (same function as `run/embed_kb_corpus.py`) when **`input_text_table_path`** is set: **`kb_path`** + text table → **`embeddings_parquet`**.
-2. **Stage (B)** — `Linker.fit(...)` on that Parquet: fusion / negative screener / PCA / UMAP / HDBSCAN at a fixed `min_cluster_size` → fitted linker; serialized via `Linker.dump` (joblib at **`{output_path}.gz`**; the `.gz` suffix is appended automatically). Choose `min_cluster_size` upstream (e.g. `pelinker.model_selection`); this CLI does not run a grid search during fit.
+2. **Stage (B)** — `Linker.fit(...)` on that Parquet: fusion / negative screener / PCA / UMAP / HDBSCAN at a fixed `min_cluster_size` → fitted linker; serialized via `Linker.dump` (joblib at **`{output_path}.gz`**; the `.gz` suffix is appended automatically). Choose `min_cluster_size` upstream (e.g. `pelinker.model_selection`); this CLI does not run a grid search during fit. It can, however, **read** the upstream choice: pass `selection_report=` for the search winner, or `scale_curve_path=` to extrapolate `min_cluster_size` to this fit's realized row count. In `compact` mode the fit also holds out a `pmid`-grouped slice, scores the MLP entity head against its HDBSCAN teacher, and writes the result to the fit report as `distillation_fidelity`.
 
 If you omit **`input_text_table_path`**, only **stage (B)** runs (you must already have **`embeddings_parquet`** on disk, e.g. from a prior `embed_kb_corpus.py` run).
 
@@ -163,7 +163,14 @@ Hydra’s **`hydra.output_subdir`** defaults to **`null`** here (no `.hydra` fol
 | `max_mentions_per_entity` | *(unset)* | Optional seeded cap on mention rows per KB entity before subsampling. |
 | `max_mentions_negative` | *(unset)* | Optional cap on synthetic negative rows; omit to leave negatives uncapped. |
 | `mention_cap_seed` | `seed` | RNG seed for per-entity mention cap (defaults to `seed`). |
-| `min_cluster_size` | `20` | HDBSCAN `min_cluster_size` for stage (B); set from analysis / grid search outside this CLI. |
+| `min_cluster_size` | *(unset)* | HDBSCAN `min_cluster_size`. Omit to take it from `selection_report`, else `scale_curve_path`, else `20`. An explicit value always wins; the origin is recorded in the fit report under `min_cluster_size_provenance`. |
+| **`selection_report`** | *(unset)* | `selected_hyperparameters.json` (or the report dir holding it) from `pelinker-model-selection` / `pelinker-dim-selection`. Fills in `pca_components`, `umap_dim`, `umap_n_neighbors`, `min_cluster_size` when those are not set here — so the search's winner reaches the fit instead of being retyped. |
+| **`scale_curve_path`** | *(unset)* | `scale_curve.json` from `pelinker-scale-curve`. When set (and `min_cluster_size` is not), the hyperparameter is extrapolated to this fit's realized manifold row count rather than transferred verbatim from the selection sample size. |
+| `umap_n_neighbors` | *(unset)* | UMAP `n_neighbors`; omit for the library default (15). Scale-dependent — 15 neighbours describe very different neighbourhoods at 10k and 2M rows. |
+| `entity_head_holdout_fraction` | `0.15` | Rows withheld from entity-head training to measure distillation fidelity. `0.0` trains on every row and skips the measurement (reproduces pre-fidelity artifacts). |
+| `entity_head_holdout_group_col` | `pmid` | Column kept whole across the holdout split; mentions from one document are correlated, so a row-level split inflates measured agreement. |
+| `distillation_gates_enabled` | `true` | Check the fitted head against `distillation_min_entity_agreement` (0.95) and `distillation_max_emit_rate_rel_delta` (0.10). |
+| `distillation_on_failure` | `warn` | `warn` keeps the model and records the breach in the report; `raise` aborts the fit. |
 | `output_path` | *(see below)* | Where `linker.dump` writes the artifact. |
 | `use_gpu` | `false` | GPU for transformer encoding when embedding the corpus. |
 | `input_buffer_rows` | `1000` | Stage (A): rows per pandas read pass over the text table (I/O buffer; does **not** control GPU memory). |
@@ -291,8 +298,32 @@ Compares **legacy** (UMAP + HDBSCAN `approximate_predict`) vs **compact** (Param
 
 - **Arms**: A legacy, B compact (shipped), C iso-manifold, D iso-head, E LinearSVC underfit control
 - **Gates**: entity-id agreement vs A ≥ 0.95, emit-rate within ±10%, size ≤ 15 MB or ≥5× smaller, latency ≤ 1.5× A
+- **Split**: 65/15/20 train/tune/holdout, **grouped by `pmid`** via `pelinker.distillation.grouped_holdout_split`. It was a plain row shuffle before, which put mentions of the same document on both sides and made every agreement number optimistic.
 - **Outputs**: `arms.csv`, `summary.json` with explicit pass/fail under `--report-dir`
 - **Example**: `uv run python run/analysis/compact_predict_study.py --embeddings-parquet … --report-dir …`
+- **First real-data run is committed** at [`reports/compact_predict_study/`](../../reports/compact_predict_study/). The shipped compact default **fails** the agreement gate (0.829 vs 0.95), and the ablation places the cost in the ParametricUMAP manifold rather than the MLP head (arm D, standard UMAP + MLP, scores 0.998). Read the README there before changing `predict_mode`.
+
+For a per-fit number rather than this five-arm audit, `pelinker-fit` now measures held-out student-vs-teacher fidelity on **every** compact fit and writes a `distillation_fidelity` block into `linker_fit.clustering_report.json.gz` — see [Fitting the linker model](#fitting-the-linker-model).
+
+### `pelinker-scale-curve`
+
+Implementation: [`pelinker.scale_curve`](../../pelinker/scale_curve/); CLI `pelinker/cli/scale_curve.py`.
+
+Measures how the chosen `min_cluster_size` moves with the mention-frame size, instead of transferring an integer picked on a subsample straight into a full-corpus fit.
+
+- **Why**: `min_cluster_size` is an absolute row count — and so, by HDBSCAN's default, is `min_samples`. Selection runs at `--clustering-sample-rows`; the fit runs on everything. The plateau solver min–max normalizes *within* each curve, so the choice is driven by the shape of f(MCS) over a fixed absolute grid: change N and the plateau moves while the grid does not.
+- **How**: one full inner search per "rung" (a `clustering_sample_rows` value), reusing the production path (`draw_selection_sample` → `evaluate_selection_sample` → pooled MCS), then least squares on `log(MCS*) ~ a + b·log(N)`.
+- **Outputs** (under `--report-path`): `scale_curve.json` (consumed by `pelinker-fit scale_curve_path=…`), `scale_curve.{png,pdf}` (log-log; pinned rungs drawn hollow in red), and per-sample grid rows.
+- **Reading the exponent `b`**: `~0` means the absolute value transfers fine and today's behaviour was right; `0 < b < 1` sublinear growth (the expected regime); `~1` a constant fraction of N.
+- **When not to trust it**: rungs flagged **pinned** (the chosen value sat on a `[--min-scale, --max-scale)` bound) or a low R² mean the grid, not the sample size, decided the answer. Widen the grid and re-run; the CLI prints this warning itself.
+
+```bash
+uv run pelinker-scale-curve \
+  --input-parquet /home/alexander/data/pelinker/experiment.d/res_pubmedbert_2.parquet \
+  --report-path reports/scale_curve_2 \
+  --rungs 10000,25000,50000,100000 \
+  --pca-components 22 --umap-dim 3 --n-sample 3
+```
 
 ### `dim_selection.py`
 

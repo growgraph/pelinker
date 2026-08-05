@@ -62,8 +62,56 @@ from pelinker.reporting import (
     summarize_clustering_reports_for_search,
 )
 from pelinker.sampling import draw_selection_sample
+from pelinker.selected_hyperparameters import (
+    SelectedHyperparameters,
+    write_selected_hyperparameters,
+)
 from pelinker.selection import evaluate_selection_sample, load_selection_frame
 from pelinker.transform import TransformConfig
+
+
+def _write_handoff(
+    payload: dict,
+    report_path: pathlib.Path,
+    console: Console,
+    *,
+    model: str,
+    layer: str,
+    manifold_kind: str,
+    umap_n_neighbors: int | None,
+    run_fingerprint: str,
+) -> None:
+    """Emit ``selected_hyperparameters.json`` so ``pelinker-fit`` can read the winner."""
+    chosen = payload.get("chosen")
+    if not chosen:
+        console.print(
+            "[yellow]No winning cell; skipping selected_hyperparameters.json[/yellow]"
+        )
+        return
+    best_size = int(round(float(chosen.get("best_size") or 0.0)))
+    if best_size < 2:
+        console.print(
+            f"[yellow]Chosen min_cluster_size {best_size} < 2; "
+            f"skipping selected_hyperparameters.json[/yellow]"
+        )
+        return
+    selected = SelectedHyperparameters(
+        source="dim_selection",
+        model=model,
+        layer=layer,
+        pca_components=int(chosen["pca_components"]),
+        umap_dim=int(chosen["umap_dim"]),
+        min_cluster_size=best_size,
+        manifold_kind=manifold_kind,
+        n_rows_realized=chosen.get("n_rows_realized"),
+        umap_n_neighbors=umap_n_neighbors,
+        run_fingerprint=run_fingerprint,
+        outer_score=chosen.get("outer_score"),
+    )
+    out = write_selected_hyperparameters(selected, report_path)
+    console.print(
+        f"[green]✓[/green] Selected hyperparameters written to [cyan]{out}[/cyan]"
+    )
 
 
 def _export_layer(layer: str, pca_components: int, umap_dim: int) -> str:
@@ -134,6 +182,8 @@ def run_dim_selection(
     umap_grid: tuple[int, ...] | str = DEFAULT_UMAP_GRID,
     refine: bool = True,
     cluster_viz_method: str = "pca",
+    manifold_kind: str = "umap",
+    umap_n_neighbors: int | None = None,
     min_class_size: int = 20,
     seed: int = 13,
     pca_seed: int = 13,
@@ -311,8 +361,10 @@ def run_dim_selection(
         transform_config = TransformConfig(
             pca_components=pca_k,
             umap_components=umap_d,
+            umap_n_neighbors=umap_n_neighbors,
             cluster_viz_components=cluster_viz_components_for_umap(umap_d),
             cluster_viz_method=cluster_viz_method.lower(),
+            manifold_kind=manifold_kind,  # type: ignore[arg-type]
             pca_seed=pca_seed,
             umap_seed=umap_seed,
         )
@@ -523,6 +575,16 @@ def run_dim_selection(
         n_sample=n_sample,
         refine=refine,
         grid_csv_path=detail_path,
+    )
+    _write_handoff(
+        payload,
+        report_path,
+        console,
+        model=resolved_model,
+        layer=resolved_layer,
+        manifold_kind=manifold_kind,
+        umap_n_neighbors=umap_n_neighbors,
+        run_fingerprint=run_fingerprint,
     )
 
     table = Table(title="Dim selection results (outer DBCV+ARI at pooled MCS)")

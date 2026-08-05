@@ -37,6 +37,7 @@ from pelinker.model_selection_checkpoint import (
     load_checkpoint,
     utc_now_iso,
 )
+from pelinker.analysis import solve_pooled_grid_by_combo_from_grid
 from pelinker.plotting import (
     plot_dbcv_vs_ari_from_grid,
     plot_heatmap,
@@ -44,7 +45,6 @@ from pelinker.plotting import (
     plot_metrics_with_error_bars,
     plot_roc_comparison,
     plot_screener_oov_bar,
-    solve_pooled_grid_by_combo_from_grid,
 )
 from pelinker.reporting import (
     CLUSTERING_SEARCH_FINE_METADATA_BASENAME,

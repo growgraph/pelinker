@@ -14,6 +14,8 @@ import numpy as np
 import pandas as pd
 
 from pelinker.config import ScreenerKind
+from pelinker.distillation import DistillationFidelityMetrics
+from pelinker.scaling import MinClusterSizeProvenance
 
 logger = logging.getLogger(__name__)
 
@@ -391,6 +393,25 @@ class ModelSelectionReport:
     """Stratified-subsampled PCA quality + screener / manifold OOV scores (linker fit only)."""
     mention_quality: pd.DataFrame | None = None
     """All mentions (pos+neg) with PCA quality scores and oov_label; cluster=-1 for negatives."""
+    distillation_fidelity: DistillationFidelityMetrics | None = None
+    """Held-out agreement between the compact entity head and its HDBSCAN teacher.
+
+    ``None`` for legacy fits (no student) and when the holdout was disabled or skipped.
+    """
+    min_cluster_size_provenance: MinClusterSizeProvenance | None = None
+    """Where :attr:`hyperparameters` ``min_cluster_size`` came from (linker fit only).
+
+    Explicit, extrapolated from a scale curve, or the bare default — recorded so a fitted
+    model never carries an unexplained hyperparameter.
+    """
+    n_rows_realized: int | None = None
+    """Mention rows this draw actually clustered on.
+
+    The realized N, **not** the ``clustering_sample_rows`` cap: when the frame is smaller
+    than the cap, or the cap is unset, the two differ. Sample-size-dependent
+    hyperparameters (``min_cluster_size``, and through it HDBSCAN ``min_samples``) are
+    only interpretable against this number — see :mod:`pelinker.scaling`.
+    """
 
 
 def n_clusters_at_min_cluster_size(
@@ -649,6 +670,19 @@ def clustering_report_to_jsonable_dict(report: ModelSelectionReport) -> dict[str
         "hyperparameters": {
             "min_cluster_size": int(report.hyperparameters.min_cluster_size),
         },
+        "min_cluster_size_provenance": (
+            None
+            if report.min_cluster_size_provenance is None
+            else report.min_cluster_size_provenance.to_jsonable()
+        ),
+        "distillation_fidelity": (
+            None
+            if report.distillation_fidelity is None
+            else report.distillation_fidelity.to_jsonable()
+        ),
+        "n_rows_realized": (
+            None if report.n_rows_realized is None else int(report.n_rows_realized)
+        ),
         "best_score": _json_normalize(float(report.best_score)),
         "number_properties": int(report.number_properties),
         "n_clusters_emergent": int(report.n_clusters_emergent),
@@ -836,6 +870,12 @@ class ClusteringSearchSummaryRow:
     dbcv: MeanWithUncertainty
     ari: MeanWithUncertainty | None
     all_screener_cv: AllScreenerCvResult | None = None
+    n_rows_realized: MeanWithUncertainty | None = None
+    """Mean (and std) realized mention-row count across this combination's draws.
+
+    ``best_size`` is only interpretable against this scale; carrying it here is what lets
+    :mod:`pelinker.scaling` fit ``min_cluster_size*(N)`` across runs.
+    """
 
     def to_flat_dict(self) -> dict[str, str | float | None]:
         """Keys aligned with grid CSV / checkpoint / ``plot_heatmap`` expectations."""
@@ -855,6 +895,9 @@ class ClusteringSearchSummaryRow:
             "best_score": d.mean,
             "best_score_std": d.std,
         }
+        nrr = self.n_rows_realized
+        row["n_rows_realized"] = None if nrr is None else nrr.mean
+        row["n_rows_realized_std"] = 0.0 if nrr is None else nrr.std
         if self.ari is None:
             row["ari"] = None
             row["ari_std"] = 0.0
@@ -887,6 +930,16 @@ def clustering_search_summary_row_from_flat_dict(
             mean=float(ari_raw),
             std=float(row.get("ari_std") or 0.0),
         )
+    # Absent in checkpoints written before n_rows_realized existed; stays None there.
+    nrr_raw = row.get("n_rows_realized")
+    nrr_block: MeanWithUncertainty | None
+    if nrr_raw is None or (isinstance(nrr_raw, float) and math.isnan(nrr_raw)):
+        nrr_block = None
+    else:
+        nrr_block = MeanWithUncertainty(
+            mean=float(nrr_raw),
+            std=float(row.get("n_rows_realized_std") or 0.0),
+        )
     return ClusteringSearchSummaryRow(
         model=str(row["model"]),
         layer=str(row["layer"]),
@@ -910,6 +963,7 @@ def clustering_search_summary_row_from_flat_dict(
         ),
         ari=ari_block,
         all_screener_cv=_all_screener_cv_from_flat_row(row),
+        n_rows_realized=nrr_block,
     )
 
 
@@ -985,6 +1039,17 @@ def summarize_clustering_reports_for_search(
     acv_reports = [r.all_screener_cv for r in reports if r.all_screener_cv is not None]
     pooled_acv = _pool_all_screener_cv_results(acv_reports) if acv_reports else None
 
+    rows_realized = [
+        float(r.n_rows_realized) for r in reports if r.n_rows_realized is not None
+    ]
+    n_rows_block: MeanWithUncertainty | None = None
+    if rows_realized:
+        arr_rows = np.array(rows_realized, dtype=np.float64)
+        n_rows_block = MeanWithUncertainty(
+            mean=float(np.mean(arr_rows)),
+            std=float(np.std(arr_rows)) if len(arr_rows) > 1 else 0.0,
+        )
+
     return ClusteringSearchSummaryRow(
         model=model,
         layer=layer,
@@ -1008,6 +1073,7 @@ def summarize_clustering_reports_for_search(
         ),
         ari=ari_block,
         all_screener_cv=pooled_acv,
+        n_rows_realized=n_rows_block,
     )
 
 

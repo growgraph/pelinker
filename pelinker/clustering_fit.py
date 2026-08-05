@@ -61,6 +61,7 @@ def fit_transformer_on_manifold(
     transformer = EmbeddingTransformer(transform_config)
     umap_c, cluster_v, pca_r, pca_m, pca_e = transformer.fit_transform(embeddings)
     embeddings_normed = transformer._l2_normalize_rows(embeddings)
+    assert transformer.pca is not None  # set by fit_transform above
     pca_reduced = transformer.pca.transform(embeddings_normed)
     return ManifoldTransformerFitResult(
         transformer=transformer,

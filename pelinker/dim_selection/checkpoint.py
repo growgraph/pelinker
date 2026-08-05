@@ -1,19 +1,42 @@
-"""Structured checkpoint I/O for ``pelinker.dim_selection`` runs."""
+"""Structured checkpoint I/O for ``pelinker.dim_selection`` runs.
+
+Shared machinery (version, fingerprint, atomic gzip-aware I/O, the fingerprint fields
+common to every search) lives in :mod:`pelinker.checkpoint`; only the cell-keyed
+schema is here.
+"""
 
 from __future__ import annotations
 
-import gzip
-import json
 import pathlib
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from hashlib import sha256
 from typing import Any
 
-from pelinker.io.json_files import is_gzip_file_path, load_json_path
+from pelinker.checkpoint import (
+    CHECKPOINT_VERSION,
+    compute_run_fingerprint,
+    read_checkpoint_json,
+    require_checkpoint_version,
+    shared_fingerprint_fields,
+    utc_now_iso,
+    write_checkpoint_json_atomic,
+)
 from pelinker.onto import NEGATIVE_LABEL
 
-CHECKPOINT_VERSION = 1
+__all__ = [
+    "CHECKPOINT_VERSION",
+    "DEFAULT_CHECKPOINT_NAME",
+    "DimSelectionCheckpoint",
+    "FailureRecord",
+    "compute_run_fingerprint",
+    "fingerprint_config_from_cli",
+    "load_checkpoint",
+    "mark_cell_done",
+    "new_checkpoint",
+    "record_failure",
+    "save_checkpoint_atomic",
+    "utc_now_iso",
+]
+
 DEFAULT_CHECKPOINT_NAME = "dim_selection.state.json.gz"
 
 
@@ -60,11 +83,7 @@ class DimSelectionCheckpoint:
 
     @staticmethod
     def from_json_dict(data: dict[str, Any]) -> DimSelectionCheckpoint:
-        if int(data.get("version", -1)) != CHECKPOINT_VERSION:
-            raise ValueError(
-                f"Unsupported checkpoint version: {data.get('version')!r}; "
-                f"expected {CHECKPOINT_VERSION}"
-            )
+        require_checkpoint_version(data)
         failures_raw = data.get("failures") or []
         failures = [
             FailureRecord(
@@ -84,15 +103,6 @@ class DimSelectionCheckpoint:
             stages=dict(data.get("stages") or {}),
             failures=failures,
         )
-
-
-def utc_now_iso() -> str:
-    return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
-
-
-def compute_run_fingerprint(config: dict[str, Any]) -> str:
-    blob = json.dumps(config, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    return sha256(blob).hexdigest()
 
 
 def fingerprint_config_from_cli(
@@ -123,64 +133,46 @@ def fingerprint_config_from_cli(
     max_mentions_negative: int | None = None,
     mention_cap_seed: int = 13,
 ) -> dict[str, Any]:
-    kb = None
-    if selected_labels_kb_path is not None:
-        kb = str(selected_labels_kb_path.expanduser().resolve())
-    resolved_min_scale = (
-        min_scale if min_scale is not None else max(1, min_class_size // 2)
-    )
     return {
-        "batch_size": batch_size,
-        "clustering_grid_step": clustering_grid_step,
-        "clustering_sample_rows": clustering_sample_rows,
-        "cluster_viz_method": cluster_viz_method,
-        "drop_rare_entities": drop_rare_entities,
+        **shared_fingerprint_fields(
+            cluster_viz_method=cluster_viz_method,
+            min_class_size=min_class_size,
+            seed=seed,
+            pca_seed=pca_seed,
+            umap_seed=umap_seed,
+            clustering_sample_rows=clustering_sample_rows,
+            batch_size=batch_size,
+            n_sample=n_sample,
+            selected_labels_kb_path=selected_labels_kb_path,
+            max_scale=max_scale,
+            min_scale=min_scale,
+            clustering_grid_step=clustering_grid_step,
+            negative_label=negative_label,
+            screener_kind=screener_kind,
+            drop_rare_entities=drop_rare_entities,
+            min_mentions_per_entity=min_mentions_per_entity,
+            max_mentions_per_entity=max_mentions_per_entity,
+            max_mentions_negative=max_mentions_negative,
+            mention_cap_seed=mention_cap_seed,
+        ),
         "input_parquet": str(input_parquet.expanduser().resolve()),
         "layer": layer,
-        "max_mentions_negative": max_mentions_negative,
-        "max_mentions_per_entity": max_mentions_per_entity,
-        "max_scale": max_scale,
-        "mention_cap_seed": mention_cap_seed,
-        "min_class_size": min_class_size,
-        "min_mentions_per_entity": min_mentions_per_entity,
-        "min_scale": resolved_min_scale,
         "model": model,
-        "n_sample": n_sample,
-        "negative_label": negative_label,
         "pca_grid": list(pca_grid),
-        "pca_seed": pca_seed,
         "refine": refine,
-        "screener_kind": screener_kind,
-        "seed": seed,
-        "selected_labels_kb_path": kb,
         "umap_grid": list(umap_grid),
-        "umap_seed": umap_seed,
     }
 
 
 def load_checkpoint(path: pathlib.Path) -> DimSelectionCheckpoint:
-    data = load_json_path(path)
-    if not isinstance(data, dict):
-        raise ValueError("checkpoint must be a JSON object")
-    return DimSelectionCheckpoint.from_json_dict(data)
+    return DimSelectionCheckpoint.from_json_dict(read_checkpoint_json(path))
 
 
 def save_checkpoint_atomic(
     path: pathlib.Path, checkpoint: DimSelectionCheckpoint
 ) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
     checkpoint.updated_at = utc_now_iso()
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    payload = json.dumps(
-        checkpoint.to_json_dict(), indent=2, sort_keys=True, ensure_ascii=False
-    )
-    text = payload + "\n"
-    if is_gzip_file_path(path):
-        with gzip.open(tmp, "wt", encoding="utf-8", newline="\n") as gz:
-            gz.write(text)
-    else:
-        tmp.write_text(text, encoding="utf-8")
-    tmp.replace(path)
+    write_checkpoint_json_atomic(path, checkpoint.to_json_dict())
 
 
 def new_checkpoint(fingerprint: str) -> DimSelectionCheckpoint:

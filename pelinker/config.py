@@ -4,11 +4,12 @@ import os
 from dataclasses import asdict, dataclass, field
 from datetime import date
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, ClassVar, Literal
 
 from numpy.random import RandomState
 
 from pelinker.onto import NEGATIVE_LABEL
+from pelinker.scaling import ScaleCurve
 
 GridObjectiveSpec = Literal[
     "dbcv",
@@ -249,6 +250,42 @@ class ManifoldOovScreenerConfig:
             )
 
 
+@dataclass(frozen=True)
+class DistillationGateConfig:
+    """Quality bounds on the compact entity head, checked against a held-out slice.
+
+    Defaults match the bounds `run/analysis/compact_predict_study.py` applied by hand
+    before compact became the shipped default; they live here so a fit can state whether
+    it met them instead of nobody knowing.
+    """
+
+    enabled: bool = True
+    min_entity_agreement: float = 0.95
+    """Floor on held-out student/teacher entity-id agreement."""
+    max_emit_rate_rel_delta: float = 0.10
+    """Cap on |student - teacher| / teacher emit rate at :attr:`emit_rate_threshold`."""
+    emit_rate_threshold: float = 0.3
+    """Reference ``thr_score`` for the emit-rate comparison."""
+    on_failure: Literal["warn", "raise"] = "warn"
+    """``warn`` keeps the fitted model (and records the failure); ``raise`` aborts.
+
+    Warning is the default because a fit consumes an expensive corpus embedding, and
+    discarding it mid-run is worse than shipping a model whose report says it failed.
+    """
+
+    def __post_init__(self) -> None:
+        if not 0.0 <= self.min_entity_agreement <= 1.0:
+            raise ValueError("min_entity_agreement must be in [0, 1]")
+        if self.max_emit_rate_rel_delta < 0.0:
+            raise ValueError("max_emit_rate_rel_delta must be >= 0")
+        if not 0.0 <= self.emit_rate_threshold <= 1.0:
+            raise ValueError("emit_rate_threshold must be in [0, 1]")
+        if self.on_failure not in ("warn", "raise"):
+            raise ValueError(
+                f"on_failure must be 'warn' or 'raise', got {self.on_failure!r}"
+            )
+
+
 @dataclass
 class MentionFrameLoadConfig:
     """Shared mention-level parquet load and pre-subsample filters."""
@@ -302,10 +339,30 @@ class LinkerFitConfig:
     """Max rows of :class:`~pelinker.reporting.LinkerFitDiagnostics` stored on the fit report."""
     diagnostics_random_state: int = 0
     """Stratified subsample seed for training diagnostics."""
+    scale_curve: ScaleCurve | None = None
+    """Fitted ``min_cluster_size``-vs-N law from ``pelinker-scale-curve``.
+
+    When set (and no explicit ``min_cluster_size`` was given), the hyperparameter is
+    extrapolated to the realized manifold row count instead of being transferred verbatim
+    from whatever sample size selection happened to run at. See :mod:`pelinker.scaling`.
+    """
     predict_mode: PredictMode = "compact"
     """``compact``: ParametricUMAP + MLP entity head (no shipped HDBSCAN). ``legacy``: UMAP + HDBSCAN ``approximate_predict``."""
     entity_head_hidden_layers: tuple[int, ...] = (256, 128, 128)
     """Hidden layer sizes for the compact MLP entity head (ignored in ``legacy`` mode)."""
+    entity_head_holdout_fraction: float = 0.15
+    """Rows withheld from entity-head training to measure distillation fidelity.
+
+    ``0.0`` trains on every teacher-labelled row (the pre-fidelity behaviour) and skips
+    the measurement — use it only to reproduce an existing artifact.
+    """
+    entity_head_holdout_group_col: str = "pmid"
+    """Column kept whole across the holdout split; mentions from one document are
+    correlated, so a row-level split inflates the measured agreement."""
+    entity_head_holdout_seed: int = 13
+    distillation_gates: DistillationGateConfig = field(
+        default_factory=DistillationGateConfig
+    )
 
     def to_clustering_sample_config(self) -> ClusteringOptimizationConfig:
         """Build a :class:`ClusteringOptimizationConfig` for load + subsample helpers."""
@@ -344,6 +401,10 @@ class LinkerFitConfig:
             raise ValueError("entity_head_hidden_layers must be a non-empty tuple")
         if any(int(h) < 1 for h in self.entity_head_hidden_layers):
             raise ValueError("entity_head_hidden_layers values must be >= 1")
+        if not 0.0 <= self.entity_head_holdout_fraction < 1.0:
+            raise ValueError("entity_head_holdout_fraction must be in [0, 1)")
+        if not self.entity_head_holdout_group_col:
+            raise ValueError("entity_head_holdout_group_col must be a non-empty string")
 
 
 @dataclass
@@ -454,6 +515,14 @@ class TransformConfig:
     """Number of UMAP dimensions for clustering (typically 3-5)."""
     umap_metric: str = "cosine"
     """Distance metric for UMAP (default: 'cosine')."""
+    umap_n_neighbors: int | None = None
+    """UMAP ``n_neighbors``. ``None`` keeps the library default (15) for any workable frame.
+
+    This is a **scale-dependent** knob: 15 neighbours describe a very different
+    neighbourhood at 10k rows than at 2M. Set it explicitly (or sweep it with
+    ``pelinker-scale-curve``) when the fit N differs markedly from the selection N.
+    See :meth:`resolve_n_neighbors`.
+    """
     manifold_kind: ManifoldKind = "umap"
     """Clustering manifold: ``parametric`` (ParametricUMAP) or ``umap`` (standard UMAP). Compact fit forces ``parametric``."""
     parametric_umap_n_training_epochs: int = 10
@@ -474,11 +543,29 @@ class TransformConfig:
     umap_seed: int | None = None
     """UMAP random seed; ``None`` enables parallel UMAP (non-reproducible). Cluster-viz UMAP uses ``umap_seed + 1`` when set."""
 
+    DEFAULT_UMAP_N_NEIGHBORS: ClassVar[int] = 15
+    """umap-learn's own default; used when :attr:`umap_n_neighbors` is ``None``."""
+
+    def resolve_n_neighbors(self, n_samples: int) -> int:
+        """``n_neighbors`` for a frame of ``n_samples`` rows, clamped to what UMAP accepts.
+
+        UMAP requires ``n_neighbors < n_samples``, so tiny frames are capped; this is the
+        single place that rule lives.
+        """
+        requested = (
+            self.DEFAULT_UMAP_N_NEIGHBORS
+            if self.umap_n_neighbors is None
+            else int(self.umap_n_neighbors)
+        )
+        return max(1, min(requested, n_samples - 1))
+
     def __post_init__(self):
         if self.pca_components < 1:
             raise ValueError("pca_components must be >= 1")
         if self.umap_components < 2:
             raise ValueError("umap_components must be >= 2")
+        if self.umap_n_neighbors is not None and self.umap_n_neighbors < 2:
+            raise ValueError("umap_n_neighbors must be >= 2 when provided")
         if self.cluster_viz_components < 2:
             raise ValueError("cluster_viz_components must be >= 2")
         if self.cluster_viz_components > self.umap_components:

@@ -251,10 +251,7 @@ class EmbeddingTransformer:
         embeddings_normed = self._l2_normalize_rows(embeddings)
         pca_reduced = self.pca.fit_transform(embeddings_normed)
 
-        # UMAP requires n_neighbors < n_samples; cap the default (15) for tiny frames.
-        n_neighbors = min(15, max(2, n_samples - 1))
-        if n_neighbors >= n_samples:
-            n_neighbors = max(1, n_samples - 1)
+        n_neighbors = self.config.resolve_n_neighbors(n_samples)
 
         self.umap = _build_clustering_manifold(self.config, n_neighbors=n_neighbors)
         logger.info(

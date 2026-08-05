@@ -17,6 +17,7 @@ import pandas as pd
 from pelinker.analysis import (
     drop_entities_with_few_mentions,
     evaluate_all_screeners_cv,
+    pooled_min_cluster_size_from_metrics_dfs,
     split_by_negative_label,
 )
 from pelinker.clustering_fit import (
@@ -24,11 +25,7 @@ from pelinker.clustering_fit import (
     fit_hdbscan_on_umap,
     fit_transformer_on_manifold,
 )
-from pelinker.clustering_grid import (
-    aggregate_grid_metrics,
-    evaluate_cluster_size_grid,
-    solve_optimal_min_cluster_size_from_aggregated,
-)
+from pelinker.clustering_grid import evaluate_cluster_size_grid
 from pelinker.config import (
     ClusteringOptimizationConfig,
     ManifoldOovScreenerConfig,
@@ -156,24 +153,6 @@ def _prepare_screener_cv_arrays(
     )
 
 
-def _solve_cluster_size_from_grid(
-    metrics_df: pd.DataFrame,
-    config: ClusteringOptimizationConfig,
-) -> tuple[int, float]:
-    single_sample_aggregated = aggregate_grid_metrics([metrics_df])
-    solved = solve_optimal_min_cluster_size_from_aggregated(
-        single_sample_aggregated,
-        objective=config.grid_objective,
-        method=config.optimization_method,
-        smooth_window=config.grid_smooth_window,
-        plateau_fraction=config.grid_plateau_fraction,
-        derivative_rel_tol=config.grid_derivative_rel_tol,
-        cluster_count_reward=config.grid_cluster_count_reward,
-        n_entities=config.grid_n_entities,
-    )
-    return solved.chosen_min_cluster_size, solved.score_mean_at_chosen
-
-
 def _build_selection_assignments(
     dfr_manifold: pd.DataFrame,
     labels: np.ndarray,
@@ -295,7 +274,9 @@ def evaluate_selection_sample(
     if all_metrics_dfs is not None:
         all_metrics_dfs.append(metrics_df)
 
-    best_size, best_score = _solve_cluster_size_from_grid(metrics_df, config)
+    best_size, best_score = pooled_min_cluster_size_from_metrics_dfs(
+        [metrics_df], config
+    )
 
     cl_result = fit_hdbscan_on_umap(
         artifacts.umap_clustering,
@@ -337,6 +318,8 @@ def evaluate_selection_sample(
         screener_oos_datapoints=screener_oos_dp,
         ari=fit_metrics.ari,
         mention_quality=mention_quality,
+        # Rows HDBSCAN actually saw (negatives excluded), not the sample-rows cap.
+        n_rows_realized=int(len(dfr_manifold)),
     )
 
 

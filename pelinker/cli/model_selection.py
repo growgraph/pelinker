@@ -66,6 +66,23 @@ Metrics (same two-level stack as dim selection):
     help="Reducer for cluster-space visualization (PCA or UMAP on clustering coords).",
 )
 @click.option(
+    "--manifold-kind",
+    type=click.Choice(["umap", "parametric"], case_sensitive=False),
+    default="umap",
+    show_default=True,
+    help=(
+        "Clustering manifold to search on. Must match the manifold the fit will use "
+        "(pelinker-fit predict_mode=compact implies 'parametric'), or the chosen "
+        "min_cluster_size is transferred across a coordinate-system change."
+    ),
+)
+@click.option(
+    "--umap-n-neighbors",
+    type=click.INT,
+    default=None,
+    help="UMAP n_neighbors; omit for the library default (15). Scale-dependent.",
+)
+@click.option(
     "--min-class-size",
     type=click.INT,
     default=20,
@@ -237,6 +254,8 @@ def main(
     umap_dim: int,
     pca_components: int,
     cluster_viz_method: str,
+    manifold_kind: str,
+    umap_n_neighbors: int | None,
     min_class_size: int,
     seed: int,
     pca_seed: int,
@@ -268,6 +287,8 @@ def main(
         umap_dim=umap_dim,
         pca_components=pca_components,
         cluster_viz_method=cluster_viz_method,
+        manifold_kind=manifold_kind.lower(),
+        umap_n_neighbors=umap_n_neighbors,
         min_class_size=min_class_size,
         seed=seed,
         pca_seed=pca_seed,

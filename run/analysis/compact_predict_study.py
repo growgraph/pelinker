@@ -27,7 +27,6 @@ import argparse
 import json
 import tempfile
 import time
-from collections import Counter
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
@@ -41,6 +40,11 @@ from sklearn.metrics import adjusted_rand_score
 
 from pelinker.config import TransformConfig
 from pelinker.clustering_fit import fit_manifold_clustering
+from pelinker.distillation import (
+    cluster_to_entity_map,
+    grouped_holdout_split,
+    labels_to_entities,
+)
 from pelinker.entity_head import (
     EntityHead,
     fit_linear_svc_entity_head,
@@ -102,42 +106,29 @@ def _manifold_artifact_bytes(transformer: EmbeddingTransformer) -> int:
     return pca_bytes + _sizeof_joblib(umap)
 
 
-def _split_idx(n: int, seed: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    rng = np.random.default_rng(seed)
-    idx = np.arange(n)
-    rng.shuffle(idx)
-    n_tune = max(1, int(0.15 * n))
-    n_hold = max(1, int(0.20 * n))
-    tune = idx[:n_tune]
-    hold = idx[n_tune : n_tune + n_hold]
-    train = idx[n_tune + n_hold :]
-    return train, tune, hold
+def _split_idx(
+    frame: pd.DataFrame, seed: int
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, str]:
+    """Grouped 65/15/20 train/tune/holdout split, composed from the shared primitive.
 
-
-def _majority_cluster_to_entity(
-    cluster_labels: np.ndarray, entities: np.ndarray
-) -> dict[int, str]:
-    mapping: dict[int, str] = {}
-    labels = np.asarray(cluster_labels, dtype=np.int64).ravel()
-    ents = np.asarray(entities).astype(str)
-    for cid in sorted({int(c) for c in labels if int(c) != -1}):
-        mask = labels == cid
-        counts = Counter(ents[mask].tolist())
-        mapping[cid] = counts.most_common(1)[0][0]
-    return mapping
-
-
-def _labels_to_entities(
-    cluster_labels: np.ndarray, mapping: dict[int, str]
-) -> np.ndarray:
-    out: list[str] = []
-    for c in np.asarray(cluster_labels, dtype=np.int64).ravel():
-        cid = int(c)
-        if cid == -1 or cid not in mapping:
-            out.append(NEGATIVE_LABEL)
-        else:
-            out.append(mapping[cid])
-    return np.asarray(out, dtype=object)
+    Previously a plain row shuffle, which put mentions of the same document on both
+    sides and made every agreement number optimistic. Grouping is delegated to
+    :func:`~pelinker.distillation.grouped_holdout_split` so the study and the in-fit
+    measurement leak the same way (i.e. not at all) and stay comparable.
+    """
+    hold_split = grouped_holdout_split(frame, holdout_fraction=0.20, random_state=seed)
+    rest = hold_split.train_idx
+    # 0.15 of the original frame is 0.1875 of what remains after the 20% holdout.
+    sub = frame.iloc[rest].reset_index(drop=True)
+    tune_split = grouped_holdout_split(
+        sub, holdout_fraction=0.1875, random_state=seed + 1
+    )
+    return (
+        rest[tune_split.train_idx],
+        rest[tune_split.holdout_idx],
+        hold_split.holdout_idx,
+        hold_split.grouping,
+    )
 
 
 def _entity_agreement(
@@ -147,8 +138,8 @@ def _entity_agreement(
     ref_map: dict[int, str],
 ) -> float:
     """Agreement of mapped entity ids on rows where the reference is non-noise."""
-    ref_ent = _labels_to_entities(ref_clusters, ref_map)
-    pred_ent = _labels_to_entities(pred_clusters, pred_map)
+    ref_ent = labels_to_entities(ref_clusters, ref_map, noise_label=NEGATIVE_LABEL)
+    pred_ent = labels_to_entities(pred_clusters, pred_map, noise_label=NEGATIVE_LABEL)
     mask = ref_ent != NEGATIVE_LABEL
     if not np.any(mask):
         return float("nan")
@@ -299,7 +290,11 @@ def main() -> None:
 
     df = _load_embeds(args.embeddings_parquet, args.max_rows, args.seed)
     entities = df["entity"].astype(str).to_numpy()
-    train_idx, tune_idx, hold_idx = _split_idx(len(df), args.seed)
+    train_idx, tune_idx, hold_idx, split_grouping = _split_idx(df, args.seed)
+    print(
+        f"split: {len(train_idx)} train / {len(tune_idx)} tune / {len(hold_idx)} "
+        f"holdout (grouped by {split_grouping})"
+    )
 
     # Arm A: standard UMAP + HDBSCAN
     tx_a, cl_a, X_a, labels_a, dbcv_a, noise_a = _fit_manifold(
@@ -311,7 +306,7 @@ def main() -> None:
         seed=args.seed,
         parametric_epochs=args.parametric_epochs,
     )
-    a_map = _majority_cluster_to_entity(labels_a[train_idx], entities[train_idx])
+    a_map = cluster_to_entity_map(entities[train_idx], labels_a[train_idx])
     _, a_all_sc = _predict_hdbscan(cl_a, X_a)
     a_all_lab = labels_a
     a_hold_lab, a_hold_sc = a_all_lab[hold_idx], a_all_sc[hold_idx]
@@ -344,7 +339,7 @@ def main() -> None:
         parametric_epochs=args.parametric_epochs,
     )
     n_clusters_p = int(len(set(int(x) for x in labels_p if x != -1)))
-    p_map = _majority_cluster_to_entity(labels_p[train_idx], entities[train_idx])
+    p_map = cluster_to_entity_map(entities[train_idx], labels_p[train_idx])
     manifold_p_bytes = _manifold_artifact_bytes(tx_p)
 
     # C: ParametricUMAP + HDBSCAN predict
@@ -465,6 +460,12 @@ def main() -> None:
     summary: dict[str, Any] = {
         "n_rows": len(df),
         "min_cluster_size": args.min_cluster_size,
+        "split": {
+            "grouping": split_grouping,
+            "n_train": int(len(train_idx)),
+            "n_tune": int(len(tune_idx)),
+            "n_holdout": int(len(hold_idx)),
+        },
         "gates": {
             "agreement_vs_a_ge_0.95": agree_ok,
             "emit_rate_within_10pct": emit_ok,

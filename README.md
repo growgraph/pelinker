@@ -32,11 +32,30 @@ NB.
 
 ## Testing against ground truth
 
-Ground truth dataset is stored in `data/ground_truth`, so run the following to obtain the accuracy of the model in `./reports` 
+Ground truth lives in `data/ground_truth` as `{"text": ..., "ground_truth": [{"itext",
+"a", "b", "entity_id"}, ...]}`. `pelinker-link-files` scores against it automatically
+whenever the input carries a `ground_truth` block:
 
 ```commandline
-python run/testing/run_pel_test.py --text-path ./data/ground_truth/sample.0.gt.json --model-type biobert-stsb --layers-spec sent --extra-context
+uv run pelinker-link-files -m models/pelinker.pubmedbert.run1 \
+  -o reports/gt_score.json data/ground_truth/sample.0.gt.json
 ```
+
+The output JSON gains a `ground_truth_score` block:
+
+- **Detection** — `precision` / `recall` / `f1` over character spans, matched by overlap
+  within a document. Unambiguous and comparable across model versions.
+- **Entity accuracy** — over matched spans only, and only where the ids are comparable.
+  Since the KB-out work the linker predicts *minted cluster ids* (`kb::C0007`) while the
+  gold file carries *input KB* ids (`PEL.000032`), so `n_id_comparable` may be 0 and
+  `entity_accuracy` `null`. That means undefined, not zero — read the detection numbers.
+
+Add `--kb-validation` for a `kb_lemma_validation` block: the rate at which a mention's
+predicted entity agrees with the entity its own lemma resolves to in the KB. That is a
+distant-supervision consistency check, not end-task accuracy.
+
+Programmatic entry points: `pelinker.ground_truth.score_predictions_against_ground_truth`
+and `pelinker.linker_kb_lemma.aggregate_kb_lemma_validation`.
 
 ## Serialize Model
 

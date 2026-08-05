@@ -387,6 +387,7 @@ def build_dim_selection_summary_payload(
             ari_out = None
         else:
             ari_out = float(ari_raw)
+        n_rows_raw = winner.get("n_rows_realized")
         chosen = {
             "pca_components": int(winner["pca_components"]),
             "umap_dim": int(winner["umap_dim"]),
@@ -395,6 +396,13 @@ def build_dim_selection_summary_payload(
             "best_score_std": float(winner.get("best_score_std") or 0.0),
             "ari": ari_out,
             "best_size": float(winner.get("best_size") or 0.0),
+            # The scale the chosen min_cluster_size is only meaningful against.
+            "n_rows_realized": (
+                None
+                if n_rows_raw is None
+                or (isinstance(n_rows_raw, float) and np.isnan(n_rows_raw))
+                else int(n_rows_raw)
+            ),
         }
     return {
         "schema": DIM_SELECTION_SUMMARY_JSON_SCHEMA,

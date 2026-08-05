@@ -1,0 +1,73 @@
+name: tests
+
+on:
+    pull_request:
+    push:
+        branches: [main]
+
+jobs:
+    pytest:
+        runs-on: ubuntu-latest
+        steps:
+        -   name: Checkout code
+            uses: actions/checkout@v5
+
+        -   name: Set up Python
+            uses: actions/setup-python@v5
+            with:
+                python-version: '3.10'
+
+        -   name: Install uv
+            uses: astral-sh/setup-uv@v7
+            with:
+                enable-cache: true
+                version: "0.10.12"
+
+        -   name: Install dependencies
+            run: uv sync --all-extras
+
+            # Tests needing en_core_web_trf or HF weights skip themselves when those are
+            # absent (see test/conftest.py), so this job stays fast and offline-safe.
+            # Add `uv run spacy download en_core_web_trf` here to exercise them for real.
+        -   name: Run tests
+            run: uv run pytest test
+
+    mypy:
+        runs-on: ubuntu-latest
+        steps:
+        -   name: Checkout code
+            uses: actions/checkout@v5
+
+        -   name: Set up Python
+            uses: actions/setup-python@v5
+            with:
+                python-version: '3.10'
+
+        -   name: Install uv
+            uses: astral-sh/setup-uv@v7
+            with:
+                enable-cache: true
+                version: "0.10.12"
+
+        -   name: Install dependencies
+            run: uv sync --all-extras
+
+            # Scoped to the modules that type-check cleanly today. The rest of the
+            # package still has ~100 pre-existing errors; gating the whole tree would
+            # block every PR rather than catch regressions. Extend this list as modules
+            # are cleaned up — `uv run mypy pelinker` shows what is left.
+        -   name: Type-check (clean modules)
+            run: |
+                uv run mypy \
+                  pelinker/checkpoint.py \
+                  pelinker/clustering_fit.py \
+                  pelinker/config.py \
+                  pelinker/distillation.py \
+                  pelinker/entity_head.py \
+                  pelinker/grid_export.py \
+                  pelinker/ground_truth.py \
+                  pelinker/linker_kb_lemma.py \
+                  pelinker/sampling.py \
+                  pelinker/scale_curve/ \
+                  pelinker/scaling.py \
+                  pelinker/selected_hyperparameters.py
