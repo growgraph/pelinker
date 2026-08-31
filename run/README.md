@@ -289,8 +289,8 @@ Measures the quality of embeddings obtained from `embed_kb_corpus.py` by evaluat
   - **Optional**: `--selected-labels-kb-path` parameter to evaluate quality over a specific subset of labels from a selected knowledge base CSV file
 - **Metrics** (two-level, same as `dim_selection.py`):
   - **MCS** (`min_cluster_size`): HDBSCAN hyperparameter — smallest cluster HDBSCAN will form; searched on an inner grid
-  - **Inner** (choose MCS): `grid_objective=dbcv_ari_mean_minmax` — min–max normalize mean DBCV and mean ARI on the MCS curve, average, smooth, pick the left plateau
-  - **Outer** (rank model×layer): at each combo’s pooled MCS, combine mean DBCV + mean ARI with the same DBCV+ARI pooling (minmax across candidates). Column `best_score` remains mean DBCV (heatmaps); `outer_score` chooses the winner
+  - **Inner** (choose MCS): `grid_objective=dbcv_ari_geomean` — clip mean DBCV and mean ARI at 0, take `sqrt(dbcv*ari)` per bootstrap sample, smooth, then pick the largest MCS within one *paired* standard error of the best (`grid_one_se_k`, default 1.0). The geometric mean ranks grid points identically under any rescaling of either metric, so nothing needs normalizing
+  - **Outer** (rank model×layer): at each combo’s pooled MCS, combine mean DBCV + mean ARI with the *same* clipped geometric mean. Each candidate is scored from its own numbers, so adding one cannot reorder the others. Column `best_score` remains mean DBCV (heatmaps); `outer_score` chooses the winner
 
 ### `compact_predict_study.py`
 

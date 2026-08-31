@@ -9,7 +9,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from pelinker.config import (
+from pelinker.core.config import (
     DistillationGateConfig,
     EmbeddingModelMetadata,
     EmbeddingSourceSpec,
@@ -18,7 +18,7 @@ from pelinker.config import (
     TransformConfig,
 )
 from pelinker.model import Linker
-from pelinker.reporting import clustering_report_to_jsonable_dict
+from pelinker.reports.io import clustering_report_to_jsonable_dict
 
 
 def _mentions_parquet(tmp_path: Path, n_ent: int = 24) -> tuple[Path, dict[str, str]]:

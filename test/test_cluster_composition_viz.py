@@ -3,7 +3,7 @@ import math
 import pandas as pd
 import pytest
 
-from pelinker.cluster_composition_viz import (
+from pelinker.clustering.composition import (
     HDBSCAN_NOISE_CLUSTER_ID,
     aggregate_cluster_entity_mass,
     build_cluster_composition_df,

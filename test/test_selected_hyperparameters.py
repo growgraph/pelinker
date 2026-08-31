@@ -13,7 +13,7 @@ from pelinker.cli.fit import (
     FitCliConfig,
     _resolve_selection_hyperparameters,
 )
-from pelinker.selected_hyperparameters import (
+from pelinker.search.selected_hyperparameters import (
     SELECTED_HYPERPARAMETERS_BASENAME,
     SELECTED_HYPERPARAMETERS_SCHEMA,
     SelectedHyperparameters,
@@ -57,7 +57,7 @@ def test_handoff_round_trips_through_disk(tmp_path: Path) -> None:
 
 def test_handoff_rejects_an_unknown_schema(tmp_path: Path) -> None:
     p = tmp_path / SELECTED_HYPERPARAMETERS_BASENAME
-    p.write_text(json.dumps({"schema": "pelinker.selected_hyperparameters.v99"}))
+    p.write_text(json.dumps({"schema": "pelinker.search.selected_hyperparameters.v99"}))
 
     with pytest.raises(ValueError, match="expected schema"):
         load_selected_hyperparameters(p)

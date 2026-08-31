@@ -17,7 +17,7 @@ from hdbscan import approximate_predict
 import pathlib
 import logging
 
-from pelinker.config import (
+from pelinker.core.config import (
     ClusterCompositionSnapshot,
     ClusteringOptimizationConfig,
     EmbeddingModelMetadata,
@@ -28,37 +28,37 @@ from pelinker.config import (
     NegativeScreenerConfig,
     TransformConfig,
 )
-from pelinker.distillation import (
+from pelinker.linker.distillation import (
     DistillationFidelityMetrics,
     apply_gates,
     cluster_to_entity_map,
     evaluate_distillation_fidelity,
     grouped_holdout_split,
 )
-from pelinker.entity_head import EntityHead, fit_mlp_entity_head
-from pelinker.screener.projection_screener import (
+from pelinker.linker.entity_head import EntityHead, fit_mlp_entity_head
+from pelinker.screener.projection import (
     ManifoldOovScoreModel,
     build_projection_training_arrays,
     evaluate_projection_cv,
     fit_projection_lda_no_cv,
     fit_projection_score_model,
 )
-from pelinker.screener.ambient_screener import NegativeClassScreener
-from pelinker.analysis import (
+from pelinker.screener.ambient import NegativeClassScreener
+from pelinker.screener.evaluation import (
     fit_ambient_screener_with_metrics,
     split_by_negative_label,
 )
-from pelinker.clustering_fit import fit_manifold_clustering
-from pelinker.embedder import embed_kb_corpus
-from pelinker.embedding_fusion import (
+from pelinker.clustering.fit import fit_manifold_clustering
+from pelinker.embed.corpus import embed_kb_corpus
+from pelinker.data.fusion import (
     MENTION_PROVENANCE_COLUMNS,
     fused_property_vectors_from_paths,
     property_fused_dataframe_for_linker_order,
 )
-from pelinker.sampling import draw_selection_sample, stratified_mention_sample
-from pelinker.scaling import MinClusterSizeProvenance, resolve_min_cluster_size
-from pelinker.selection import load_selection_frame
-from pelinker.transform import (
+from pelinker.search.sampling import draw_selection_sample, stratified_mention_sample
+from pelinker.core.scaling import MinClusterSizeProvenance, resolve_min_cluster_size
+from pelinker.search.selection import load_selection_frame
+from pelinker.clustering.transform import (
     EmbeddingTransformer,
     TransformArtifacts,
     load_clustering_manifold,
@@ -67,42 +67,39 @@ from pelinker.transform import (
     score_transform_artifacts,
     is_parametric_umap,
 )
-from pelinker.reporting import (
+from pelinker.data.frames import entity_negative_label_mask_01
+from pelinker.reports.schema import (
     ClusteringFitMetrics,
     ClusteringHyperparameters,
     LinkerFitDiagnostics,
     ModelSelectionReport,
     NegativeScreenerInSampleMetrics,
-    entity_negative_label_mask_01,
     subsample_diagnostics_stratified,
 )
-from pelinker.kb_out import (
+from pelinker.kb.kb_out import (
     KbOutFitProvenance,
     KbOutNamingConfig,
     build_kb_out_catalog,
 )
-from pelinker.linker_cluster_training import (
+from pelinker.linker.cluster_training import (
     cluster_composition_from_training_frame,
     consensus_cluster_names,
     provisional_cluster_assignments_from_training_frame as _provisional_cluster_assignments_from_training_frame,
 )
-from pelinker.linker_kb_lemma import (
+from pelinker.linker.kb_lemma import (
     build_kb_lemma_index,
     enrich_entity_predictions_kb_validation,
     lookup_kb_training_entity_label,
 )
-from pelinker.onto import (
+from pelinker.core.onto import (
     MAX_LENGTH,
     MentionCandidate,
     NEGATIVE_LABEL,
     WordGrouping,
 )
-from pelinker.util import (
-    extract_ordered_mention_tensors,
-    keep_expression_for_prediction,
-    load_models,
-    texts_to_vrep,
-)
+from pelinker.text.embed import extract_ordered_mention_tensors, texts_to_vrep
+from pelinker.text.models import load_models
+from pelinker.text.tokenize import keep_expression_for_prediction
 
 logger = logging.getLogger(__name__)
 
@@ -955,7 +952,7 @@ class Linker:
 
     def take_fit_clustering_report(self) -> ModelSelectionReport | None:
         """
-        Consume the :class:`~pelinker.reporting.ClusteringReport` produced by the last :meth:`fit`.
+        Consume the :class:`~pelinker.reports.schema.ModelSelectionReport` produced by the last :meth:`fit`.
 
         Call **before** :meth:`dump` if you need JSON or other persistence: the report is
         not serialized on the linker artifact (only prediction state is pickled).
@@ -984,7 +981,7 @@ class Linker:
         training_diagnostics: LinkerFitDiagnostics | None = None,
     ) -> ModelSelectionReport | None:
         """
-        Build a :class:`~pelinker.reporting.ClusteringReport` when full training rows exist.
+        Build a :class:`~pelinker.reports.schema.ModelSelectionReport` when full training rows exist.
 
         After a normal :meth:`fit`, heavy training payloads are removed for prediction; use
         :meth:`take_fit_clustering_report` immediately after fitting instead.
@@ -1125,15 +1122,15 @@ class Linker:
         Args:
             embeddings: Path or sequence of paths to parquet file(s) (mention-level rows:
                         ``pmid``, ``entity``, ``mention``, ``embed``). Multiple files are
-                        fused like :func:`~pelinker.selection.load_selection_frame` (inner join
+                        fused like :func:`~pelinker.search.selection.load_selection_frame` (inner join
                         on keys, concat embeddings). Order must match
                         ``embedding_metadata.sources``. If None, ``embed_kb_corpus`` is run
                         (one output file per source).
             transform_config: TransformConfig instance
             min_cluster_size: HDBSCAN ``min_cluster_size`` (choose upstream, e.g. via
-                ``pelinker.model_selection``). When ``None``, it is resolved from
+                ``pelinker.search.model_selection``). When ``None``, it is resolved from
                 ``fit_config.scale_curve`` against the realized manifold row count, or
-                falls back to :data:`~pelinker.scaling.DEFAULT_MIN_CLUSTER_SIZE`. An
+                falls back to :data:`~pelinker.core.scaling.DEFAULT_MIN_CLUSTER_SIZE`. An
                 explicit value always wins; either way the choice and its origin land on
                 ``min_cluster_size_provenance`` and in the fit report.
             fit_config: Parquet read batching, mention load filters, subsample settings, and screener config.
@@ -1148,10 +1145,10 @@ class Linker:
             Sets ``cluster_composition`` (mention-weighted property mass and per-cluster
             mixtures), ``cluster_consensus_names`` (short labels from those mixtures),
             ``screener_in_sample_metrics``, and ``clustering_fit_metrics``. Mention-level
-            training tables and manifold arrays used for :class:`~pelinker.reporting.ClusteringReport`
+            training tables and manifold arrays used for :class:`~pelinker.reports.schema.ModelSelectionReport`
             are stripped after each fit; persist JSON with :meth:`take_fit_clustering_report` and
-            :func:`~pelinker.reporting.write_clustering_report_json` at
-            :func:`~pelinker.reporting.linker_fit_clustering_report_path` (same layout as
+            :func:`~pelinker.reports.io.write_clustering_report_json` at
+            :func:`~pelinker.reports.paths.linker_fit_clustering_report_path` (same layout as
             ``pelinker-fit`` ``report_path``) before :meth:`dump`.
 
         Returns:
@@ -1703,7 +1700,7 @@ class Linker:
         ``ichunk``, ``word_grouping`` and ``lemma`` (space-joined token lemmas, used for
         KB-match lookups).
 
-        Mentions are filtered with :func:`~pelinker.util.keep_expression_for_prediction`
+        Mentions are filtered with :func:`~pelinker.text.tokenize.keep_expression_for_prediction`
         (drop windows containing punctuation; drop windows whose tokens are all stop
         words).
         """
@@ -2111,7 +2108,7 @@ class Linker:
         return deduped, None
 
     def _kb_lemma_index_by_wg(self, nlp: object) -> dict[WordGrouping, dict[str, str]]:
-        """Build lemma→KB training-entity index; see :func:`pelinker.linker_kb_lemma.build_kb_lemma_index`."""
+        """Build lemma→KB training-entity index; see :func:`pelinker.linker.kb_lemma.build_kb_lemma_index`."""
         return build_kb_lemma_index(self.labels_map, nlp)
 
     def compute_mention_anomaly(

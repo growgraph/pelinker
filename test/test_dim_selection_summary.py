@@ -7,7 +7,7 @@ import pathlib
 
 import pandas as pd
 
-from pelinker.dim_selection.summary import (
+from pelinker.search.dim_selection.summary import (
     DIM_SELECTION_ARI_HEATMAP_STEM,
     DIM_SELECTION_DBCV_HEATMAP_STEM,
     DIM_SELECTION_DBCV_VS_ARI_STEM,

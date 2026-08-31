@@ -1,0 +1,15 @@
+---
+paths:
+  - "test/**/*.py"
+---
+
+# Testing Guidelines
+
+- Use `pytest` with descriptive test function names.
+- Prefer fixtures over global state.
+- For async code, use `pytest-asyncio`.
+- Ensure test coverage for:
+  - Pydantic model validation
+  - Env config via `BaseSettings`
+  - Error cases and edge cases
+- Run tests with `uv run pytest test`.

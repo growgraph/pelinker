@@ -9,7 +9,7 @@ import pandas as pd
 from hydra.core.config_store import ConfigStore
 from omegaconf import MISSING, OmegaConf
 
-from pelinker.config import (
+from pelinker.core.config import (
     EmbeddingModelMetadata,
     EmbeddingSourceSpec,
     EmbeddingTrainingConfig,
@@ -20,26 +20,28 @@ from pelinker.config import (
     NegativeScreenerConfig,
     TransformConfig,
 )
-from pelinker.embedder import embed_kb_corpus
+from pelinker.embed.corpus import embed_kb_corpus
 from pelinker.model import Linker
-from pelinker.cluster_composition_viz import (
+from pelinker.clustering.composition import (
     DEFAULT_MAX_CLUSTERS_FOR_PLOTS,
     build_cluster_composition_df,
     cluster_entity_mass_summary,
     cluster_score_percentile_summary,
     with_noise_cluster_label,
 )
-from pelinker.kb_out import KbOutNamingConfig, cluster_labels_from_catalog
-from pelinker.reporting import (
-    linker_fit_cluster_composition_path,
-    linker_fit_clustering_report_path,
-    linker_fit_kb_out_path,
+from pelinker.kb.kb_out import KbOutNamingConfig, cluster_labels_from_catalog
+from pelinker.reports.io import (
     write_cluster_composition_json,
     write_clustering_report_json,
     write_kb_out_json,
 )
-from pelinker.onto import NEGATIVE_LABEL
-from pelinker.util import expand_config_path
+from pelinker.reports.paths import (
+    linker_fit_cluster_composition_path,
+    linker_fit_clustering_report_path,
+    linker_fit_kb_out_path,
+)
+from pelinker.core.onto import NEGATIVE_LABEL
+from pelinker.core.paths import expand_config_path
 
 logger = logging.getLogger(__name__)
 
@@ -95,7 +97,7 @@ class FitCliConfig:
     """Max mention rows per clustering bootstrap draw (stratified). None = use all loaded rows."""
     clustering_sample_index: int = 0
     """Bootstrap index for clustering subsample (match model-selection ``sample_idx``)."""
-    # Stage-B HDBSCAN ``min_cluster_size`` (choose upstream, e.g. ``pelinker.model_selection``).
+    # Stage-B HDBSCAN ``min_cluster_size`` (choose upstream, e.g. ``pelinker.search.model_selection``).
     min_cluster_size: int | None = None
     """Explicit HDBSCAN ``min_cluster_size``. Omit to resolve from ``scale_curve_path``,
     or fall back to 20 when neither is given. An explicit value always wins."""
@@ -530,7 +532,9 @@ def _resolve_selection_hyperparameters(cfg: FitCliConfig) -> _ResolvedSelection:
     """
     selected = None
     if cfg.selection_report:
-        from pelinker.selected_hyperparameters import load_selected_hyperparameters
+        from pelinker.search.selected_hyperparameters import (
+            load_selected_hyperparameters,
+        )
 
         path = expand_config_path(cfg.selection_report)
         assert path is not None
@@ -608,7 +612,7 @@ def _build_linker_fit_config(cfg: FitCliConfig) -> LinkerFitConfig:
     scale_curve = None
     if cfg.scale_curve_path:
         # Imported lazily: only fits that opt into the curve pay for the import.
-        from pelinker.scale_curve import load_scale_curve
+        from pelinker.search.scale_curve import load_scale_curve
 
         curve_path = expand_config_path(cfg.scale_curve_path)
         assert curve_path is not None

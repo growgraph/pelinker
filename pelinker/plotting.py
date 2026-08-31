@@ -1,4 +1,5 @@
 import colorsys
+import logging
 import pathlib
 import re
 
@@ -7,21 +8,21 @@ import numpy as np
 import pandas as pd
 
 from pySankey.sankey import sankey
-from pelinker.analysis import (
+from pelinker.search.grid_solver import (
     grid_solver_overrides_active,
     resolve_chosen_min_cluster_size_by_combo_from_grid,
     should_resolve_chosen_min_cluster_size,
     solve_pooled_grid_from_metrics_list,
 )
-from pelinker.clustering_grid import SmoothedGridOptimumResult
-from pelinker.config import ClusteringOptimizationConfig, GridObjectiveSpec
-from pelinker.grid_export import (
+from pelinker.clustering.grid import SmoothedGridOptimumResult
+from pelinker.core.config import ClusteringOptimizationConfig, GridObjectiveSpec
+from pelinker.search.grid_export import (
     apply_chosen_min_cluster_size_to_grid,
     has_grid_points_for_dbcv_ari_scatter,
     select_grid_points_at_chosen_min_cluster_size,
 )
-from pelinker.reporting import LinkerFitDiagnostics, ModelSelectionReport
-from pelinker.scaling import ScaleCurve
+from pelinker.reports.schema import LinkerFitDiagnostics, ModelSelectionReport
+from pelinker.core.scaling import ScaleCurve
 import seaborn as sns
 
 # Force a non-interactive backend because this project only saves plots to files.
@@ -31,6 +32,8 @@ from matplotlib import pyplot as plt
 from matplotlib.lines import Line2D
 from matplotlib.patches import Ellipse, Patch, Polygon, Rectangle, RegularPolygon, Wedge
 from plotly import express as px, graph_objects as go
+
+logger = logging.getLogger(__name__)
 
 # χ²(2) critical value at p≈0.95 for Gaussian 95% contour (no scipy).
 _CHI2_PPF_95_DF2 = 5.991464550106692
@@ -354,7 +357,7 @@ def plot_dbcv_vs_ari_from_grid(
     grid_cluster_count_reward: float | None = None,
     grid_n_entities: int | None = None,
     grid_objective: GridObjectiveSpec | None = None,
-    optimization_method: str | None = None,
+    grid_one_se_k: float | None = None,
 ) -> bool:
     """
     Scatter of mean DBCV vs mean ARI per (model, layer); shape = arity (△/□/○),
@@ -381,7 +384,7 @@ def plot_dbcv_vs_ari_from_grid(
         grid_cluster_count_reward=grid_cluster_count_reward,
         grid_n_entities=grid_n_entities,
         grid_objective=grid_objective,
-        optimization_method=optimization_method,
+        grid_one_se_k=grid_one_se_k,
     ):
         chosen_by_combo = resolve_chosen_min_cluster_size_by_combo_from_grid(
             df_grid,
@@ -389,7 +392,7 @@ def plot_dbcv_vs_ari_from_grid(
             grid_cluster_count_reward=grid_cluster_count_reward,
             grid_n_entities=grid_n_entities,
             grid_objective=grid_objective,
-            optimization_method=optimization_method,
+            grid_one_se_k=grid_one_se_k,
         )
         if chosen_by_combo:
             df_plot = apply_chosen_min_cluster_size_to_grid(df_grid, chosen_by_combo)
@@ -524,11 +527,181 @@ def plot_dbcv_vs_ari_from_grid(
             frameon=True,
         )
 
+    _draw_pareto_front(ax, df)
+
     ax.grid(True, alpha=0.28, linestyle="--", zorder=0)
     plt.tight_layout()
     _save_figure_multi_format(fig, output_path)
     plt.close(fig)
     return True
+
+
+def pareto_front_mask(dbcv: np.ndarray, ari: np.ndarray) -> np.ndarray:
+    """Boolean mask of points not dominated on ``(dbcv, ari)``, both maximized.
+
+    A point is dominated when another is at least as good on both metrics and strictly
+    better on one. The front is the honest answer to "maximize both": every scalar score,
+    including the geometric mean, just picks one point off it.
+    """
+    d = np.asarray(dbcv, dtype=np.float64)
+    a = np.asarray(ari, dtype=np.float64)
+    n = d.size
+    mask = np.zeros(n, dtype=bool)
+    for i in range(n):
+        if not (np.isfinite(d[i]) and np.isfinite(a[i])):
+            continue
+        dominated = (
+            (d >= d[i])
+            & (a >= a[i])
+            & ((d > d[i]) | (a > a[i]))
+            & np.isfinite(d)
+            & np.isfinite(a)
+        )
+        mask[i] = not bool(np.any(dominated))
+    return mask
+
+
+def _draw_pareto_front(ax: plt.Axes, df: pd.DataFrame) -> None:
+    """Outline the non-dominated (model, layer) candidates on the DBCV-vs-ARI scatter."""
+    centroids = (
+        df.groupby(["model", "layer"], sort=False)[["dbcv", "ari"]].mean().reset_index()
+    )
+    if len(centroids) < 2:
+        return
+    d = centroids["dbcv"].to_numpy(dtype=np.float64)
+    a = centroids["ari"].to_numpy(dtype=np.float64)
+    front = pareto_front_mask(d, a)
+    if not np.any(front):
+        return
+    order = np.argsort(d[front])
+    ax.plot(
+        d[front][order],
+        a[front][order],
+        linestyle="--",
+        linewidth=1.4,
+        color="0.35",
+        alpha=0.8,
+        marker="none",
+        zorder=1,
+        label="Pareto front",
+    )
+
+
+def _draw_grid_objective_panel(
+    ax: plt.Axes,
+    grid_solve: SmoothedGridOptimumResult | None,
+    *,
+    color: str,
+) -> str:
+    """Draw the combined-objective curve with its one-SE decision band. Returns the title.
+
+    Shows *why* a ``min_cluster_size`` was chosen: the pooled objective with its paired
+    standard errors, the ``mu[argmax] - k*se`` threshold, which grid points are
+    statistically tied with the best, and where the rule landed.
+    """
+    if grid_solve is None or len(grid_solve.x) == 0:
+        return "Grid objective (unavailable)"
+
+    x = np.array(grid_solve.x, dtype=np.float64)
+    y_obj = np.array(grid_solve.y_objective, dtype=np.float64)
+    y_smooth = np.array(grid_solve.y_smooth, dtype=np.float64)
+    se = np.array(grid_solve.y_se, dtype=np.float64)
+
+    if se.size == y_smooth.size and np.any(se > 0):
+        ax.fill_between(
+            x,
+            y_smooth - se,
+            y_smooth + se,
+            color=color,
+            alpha=0.18,
+            linewidth=0,
+            label="±1 paired SE",
+            zorder=0,
+        )
+
+    ax.plot(
+        x,
+        y_obj,
+        marker="s",
+        color=color,
+        linewidth=1.2,
+        markersize=5,
+        alpha=0.55,
+        label="objective (raw)",
+        zorder=2,
+    )
+    if np.any(np.isfinite(y_smooth)):
+        ax.plot(
+            x,
+            y_smooth,
+            color=color,
+            linewidth=2.2,
+            label="objective (smoothed)",
+            zorder=3,
+        )
+
+    eligible = np.array(grid_solve.y_eligible, dtype=bool)
+    if eligible.size == x.size and np.any(eligible):
+        ax.plot(
+            x[eligible],
+            y_smooth[eligible],
+            linestyle="none",
+            marker="o",
+            markersize=11,
+            markerfacecolor="none",
+            markeredgecolor=color,
+            markeredgewidth=1.4,
+            label="within 1 SE of best",
+            zorder=4,
+        )
+
+    argmax_x = grid_solve.argmax_min_cluster_size
+    if argmax_x is not None:
+        i_star = int(np.argmin(np.abs(x - float(argmax_x))))
+        if np.isfinite(y_smooth[i_star]):
+            ax.axhline(
+                y_smooth[i_star],
+                color="0.45",
+                linestyle=":",
+                linewidth=1.2,
+                label="best mean",
+                zorder=1,
+            )
+            if grid_solve.one_se_k > 0 and se.size == x.size:
+                # Each point is tested against its own paired SE, so the decision boundary
+                # is a curve, not a level.
+                ax.plot(
+                    x,
+                    y_smooth[i_star] - grid_solve.one_se_k * se,
+                    color="0.45",
+                    linestyle="--",
+                    linewidth=1.0,
+                    label=f"best − {grid_solve.one_se_k:g}·SE",
+                    zorder=1,
+                )
+        ax.plot(
+            [float(argmax_x)],
+            [y_smooth[i_star]],
+            marker="*",
+            markersize=14,
+            color="#333333",
+            linestyle="none",
+            label="argmax",
+            zorder=5,
+        )
+
+    has_cluster_term = any(
+        abs(v) > 1e-12 for v in grid_solve.y_cluster_term if np.isfinite(v)
+    )
+    bits = ["pooled"]
+    if has_cluster_term:
+        bits.append("cluster reward")
+    if grid_solve.n_samples:
+        bits.append(f"n={grid_solve.n_samples}")
+    suffix = ", ".join(bits)
+    if grid_solve.selection == "degenerate_fallback":
+        return f"Grid objective — DEGENERATE, fell back to DBCV ({suffix})"
+    return f"Grid objective ({suffix}); pick: {grid_solve.selection}"
 
 
 def plot_metrics_with_error_bars(
@@ -541,7 +714,7 @@ def plot_metrics_with_error_bars(
     grid_cluster_count_reward: float | None = None,
     grid_n_entities: int | None = None,
     grid_objective: GridObjectiveSpec | None = None,
-    optimization_method: str | None = None,
+    grid_one_se_k: float | None = None,
 ):
     """
     Plot metrics across multiple runs with error bars using seaborn lineplot.
@@ -553,29 +726,39 @@ def plot_metrics_with_error_bars(
         grid_solve: Precomputed pooled grid diagnostics (avoids a second solve; drives objective panel).
         optimization_config: When set (or when any grid override kwarg is set and ``chosen_min_cluster_size``
             is omitted), re-run the pooled grid solver for the vertical marker.
-        grid_cluster_count_reward: Override :attr:`~pelinker.config.ClusteringOptimizationConfig.grid_cluster_count_reward`.
-        grid_n_entities: Override :attr:`~pelinker.config.ClusteringOptimizationConfig.grid_n_entities`.
-        grid_objective: Override :attr:`~pelinker.config.ClusteringOptimizationConfig.grid_objective`.
-        optimization_method: Override :attr:`~pelinker.config.ClusteringOptimizationConfig.optimization_method`.
+        grid_cluster_count_reward: Override :attr:`~pelinker.core.config.ClusteringOptimizationConfig.grid_cluster_count_reward`.
+        grid_n_entities: Override :attr:`~pelinker.core.config.ClusteringOptimizationConfig.grid_n_entities`.
+        grid_objective: Override :attr:`~pelinker.core.config.ClusteringOptimizationConfig.grid_objective`.
+        grid_one_se_k: Override :attr:`~pelinker.core.config.ClusteringOptimizationConfig.grid_one_se_k`.
     """
-    if grid_solve is None and should_resolve_chosen_min_cluster_size(
+    # A supplied chosen_min_cluster_size must not suppress the objective *curve* — only
+    # override the value. Solving for diagnostics whenever they are missing is what keeps
+    # the objective panel from silently rendering blank on the live-run path.
+    override_wins = should_resolve_chosen_min_cluster_size(
         chosen_min_cluster_size=chosen_min_cluster_size,
         optimization_config=optimization_config,
         grid_cluster_count_reward=grid_cluster_count_reward,
         grid_n_entities=grid_n_entities,
         grid_objective=grid_objective,
-        optimization_method=optimization_method,
-    ):
-        grid_solve = solve_pooled_grid_from_metrics_list(
-            metrics_list,
-            optimization_config,
-            grid_cluster_count_reward=grid_cluster_count_reward,
-            grid_n_entities=grid_n_entities,
-            grid_objective=grid_objective,
-            optimization_method=optimization_method,
-        )
+        grid_one_se_k=grid_one_se_k,
+    )
+    if grid_solve is None and metrics_list:
+        try:
+            grid_solve = solve_pooled_grid_from_metrics_list(
+                metrics_list,
+                optimization_config,
+                grid_cluster_count_reward=grid_cluster_count_reward,
+                grid_n_entities=grid_n_entities,
+                grid_objective=grid_objective,
+                grid_one_se_k=grid_one_se_k,
+            )
+        except ValueError as exc:
+            # Diagnostics are best-effort; never fail a plot over them.
+            logger.debug(
+                "Grid objective diagnostics unavailable for %s: %s", output_path, exc
+            )
 
-    if grid_solve is not None and chosen_min_cluster_size is None:
+    if grid_solve is not None and (chosen_min_cluster_size is None or override_wins):
         chosen_min_cluster_size = float(grid_solve.chosen_min_cluster_size)
 
     # Combine all metrics DataFrames, adding a run_id column
@@ -681,45 +864,13 @@ def plot_metrics_with_error_bars(
     )
 
     obj_color = colors[3]
-    if grid_solve is not None and len(grid_solve.x) > 0:
-        x_obj = np.array(grid_solve.x, dtype=np.float64)
-        y_obj = np.array(grid_solve.y_objective, dtype=np.float64)
-        y_smooth = np.array(grid_solve.y_smooth, dtype=np.float64)
-        ax_obj.plot(
-            x_obj,
-            y_obj,
-            marker="s",
-            color=obj_color,
-            linewidth=2,
-            markersize=7,
-            label="objective",
-            zorder=2,
-        )
-        if np.any(np.isfinite(y_smooth)):
-            ax_obj.plot(
-                x_obj,
-                y_smooth,
-                linestyle="--",
-                color=obj_color,
-                linewidth=1.5,
-                alpha=0.65,
-                label="smoothed",
-                zorder=1,
-            )
-        has_cluster_term = any(
-            abs(v) > 1e-12 for v in grid_solve.y_cluster_term if np.isfinite(v)
-        )
-        obj_title = (
-            "Grid objective (pooled + cluster penalty)"
-            if has_cluster_term
-            else "Grid objective (pooled)"
-        )
-    else:
-        obj_title = "Grid objective (unavailable)"
+    obj_title = _draw_grid_objective_panel(ax_obj, grid_solve, color=obj_color)
     _maybe_vline(ax_obj)
     _style_metrics_axis(
         ax_obj, ylabel="Grid objective", title=obj_title, color=obj_color
     )
+    if grid_solve is not None and len(grid_solve.x) > 0:
+        ax_obj.legend(fontsize=8, loc="best", framealpha=0.85)
 
     plt.tight_layout()
     _save_figure_multi_format(fig, output_path)
@@ -1315,7 +1466,20 @@ def plot_cluster_viz(
     fig.write_html(str(output_path), include_plotlyjs=True, full_html=True)
 
 
-def plot_metrics(df: pd.DataFrame, output_path: pathlib.Path) -> None:
+def plot_metrics(
+    df: pd.DataFrame,
+    output_path: pathlib.Path,
+    *,
+    chosen_min_cluster_size: float | None = None,
+    grid_solve: SmoothedGridOptimumResult | None = None,
+    optimization_config: ClusteringOptimizationConfig | None = None,
+) -> None:
+    """Single-sample version of :func:`plot_metrics_with_error_bars`.
+
+    With one sample the paired standard errors are all zero, so the objective panel shows
+    the argmax of the smoothed curve with no decision band — which is exactly what the
+    solver does in that case.
+    """
     if df.empty:
         return
 
@@ -1327,15 +1491,37 @@ def plot_metrics(df: pd.DataFrame, output_path: pathlib.Path) -> None:
         )
         return
 
+    if grid_solve is None:
+        try:
+            grid_solve = solve_pooled_grid_from_metrics_list([df], optimization_config)
+        except ValueError as exc:
+            logger.debug(
+                "Grid objective diagnostics unavailable for %s: %s", output_path, exc
+            )
+    if grid_solve is not None and chosen_min_cluster_size is None:
+        chosen_min_cluster_size = float(grid_solve.chosen_min_cluster_size)
+
     has_ari = "ari" in df_plot.columns and bool(df_plot["ari"].notna().any())
-    colors = ["#2E86AB", "#A23B72", "#C44E52"]  # Blue, Purple, Red
+    colors = ["#2E86AB", "#A23B72", "#C44E52", "#F18F01"]  # Blue, Purple, Red, Orange
 
     if has_ari:
-        fig, axes = plt.subplots(1, 3, figsize=(18, 5))
-        ax_dbcv, ax_ari, ax_k = axes[0], axes[1], axes[2]
+        fig, axes = plt.subplots(1, 4, figsize=(24, 5))
+        ax_dbcv, ax_ari, ax_k, ax_obj = axes[0], axes[1], axes[2], axes[3]
     else:
-        fig, axes = plt.subplots(1, 2, figsize=(12, 5))
-        ax_dbcv, ax_k = axes[0], axes[1]
+        fig, axes = plt.subplots(1, 3, figsize=(18, 5))
+        ax_dbcv, ax_k, ax_obj = axes[0], axes[1], axes[2]
+
+    def _maybe_vline(ax: plt.Axes) -> None:
+        if chosen_min_cluster_size is None:
+            return
+        ax.axvline(
+            chosen_min_cluster_size,
+            color="0.35",
+            linestyle="--",
+            linewidth=1.5,
+            alpha=0.9,
+            zorder=0,
+        )
 
     ax_dbcv.plot(
         df_plot["min_cluster_size"],
@@ -1344,6 +1530,7 @@ def plot_metrics(df: pd.DataFrame, output_path: pathlib.Path) -> None:
         color=colors[0],
         linewidth=2,
     )
+    _maybe_vline(ax_dbcv)
     _style_metrics_axis(
         ax_dbcv,
         ylabel="DBCV Score",
@@ -1359,6 +1546,7 @@ def plot_metrics(df: pd.DataFrame, output_path: pathlib.Path) -> None:
             color=colors[1],
             linewidth=2,
         )
+        _maybe_vline(ax_ari)
         _style_metrics_axis(
             ax_ari,
             ylabel="ARI",
@@ -1373,12 +1561,21 @@ def plot_metrics(df: pd.DataFrame, output_path: pathlib.Path) -> None:
         color=colors[2],
         linewidth=2,
     )
+    _maybe_vline(ax_k)
     _style_metrics_axis(
         ax_k,
         ylabel="n clusters",
         title="Number of Clusters vs. min_cluster_size",
         color=colors[2],
     )
+
+    obj_title = _draw_grid_objective_panel(ax_obj, grid_solve, color=colors[3])
+    _maybe_vline(ax_obj)
+    _style_metrics_axis(
+        ax_obj, ylabel="Grid objective", title=obj_title, color=colors[3]
+    )
+    if grid_solve is not None and len(grid_solve.x) > 0:
+        ax_obj.legend(fontsize=8, loc="best", framealpha=0.85)
 
     plt.tight_layout()
     try:
@@ -1632,7 +1829,7 @@ def plot_cluster_entity_sankey(
     """
     if flow_df.empty:
         return []
-    from pelinker.cluster_composition_viz import limit_entity_flow_for_plots
+    from pelinker.clustering.composition import limit_entity_flow_for_plots
 
     work = limit_entity_flow_for_plots(
         flow_df,
@@ -1767,7 +1964,7 @@ def load_pmid_texts(
     chunk_size: int = 10_000,
 ) -> dict[str, str]:
     """Stream a PMID/text table and return rows for the requested ``pmids`` only."""
-    from pelinker.ops import load_pmid_texts_from_table
+    from pelinker.data.tables import load_pmid_texts_from_table
 
     return load_pmid_texts_from_table(table_path, pmids, chunk_size=chunk_size)
 
@@ -1828,7 +2025,7 @@ def filter_assignments_for_cluster_viz(
     hdbscan_fit_scope: bool = True,
 ) -> pd.DataFrame:
     """Restrict cluster viz rows to HDBSCAN-fit + screener/OOV-pass mentions when flagged."""
-    from pelinker.cluster_composition_viz import filter_emergent_assignments
+    from pelinker.clustering.composition import filter_emergent_assignments
 
     out = assign.copy()
     if exclude_noise:
@@ -1851,7 +2048,7 @@ def build_fit_cluster_viz_plot_df(
     hdbscan_fit_scope: bool = True,
     cluster_labels: dict[int, str] | None = None,
 ) -> tuple[pd.DataFrame | None, str]:
-    """Build a :func:`plot_cluster_viz` frame from a :class:`~pelinker.reporting.ModelSelectionReport`."""
+    """Build a :func:`plot_cluster_viz` frame from a :class:`~pelinker.reports.schema.ModelSelectionReport`."""
     cluster_viz = report.cluster_viz
     if cluster_viz is None or cluster_viz.size == 0 or cluster_viz.shape[1] < 1:
         return None, report.cluster_viz_method

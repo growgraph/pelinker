@@ -11,7 +11,7 @@ from pelinker.plotting import (
     _balanced_subsample_by_class,
     plot_pca_quality_pairgrid,
 )
-from pelinker.model_selection.fine_metadata import (
+from pelinker.search.model_selection.fine_metadata import (
     fine_metadata_one_sample_per_combo,
     pca_pairgrid_output_path,
     safe_combo_plot_stem,

@@ -1,6 +1,6 @@
 import pytest
 
-from pelinker.onto import MAX_LENGTH
+from pelinker.core.onto import MAX_LENGTH
 from pelinker.model import Linker
 from importlib.resources import files
 

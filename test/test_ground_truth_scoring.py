@@ -7,12 +7,12 @@ from pathlib import Path
 
 import pytest
 
-from pelinker.ground_truth import (
+from pelinker.kb.ground_truth import (
     GtSpan,
     load_ground_truth_spans,
     score_predictions_against_ground_truth,
 )
-from pelinker.linker_kb_lemma import aggregate_kb_lemma_validation
+from pelinker.linker.kb_lemma import aggregate_kb_lemma_validation
 
 
 def _pred(a: int, b: int, eid: str | None = None, itext: int = 0) -> dict:

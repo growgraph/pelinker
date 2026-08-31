@@ -6,7 +6,7 @@ import pathlib
 
 import pandas as pd
 
-from pelinker.model_selection import build_model_selection_summary_payload
+from pelinker.search.model_selection import build_model_selection_summary_payload
 
 
 def test_build_model_selection_summary_payload_rankings() -> None:
@@ -80,7 +80,7 @@ def test_build_model_selection_summary_payload_rankings() -> None:
         chosen_by_combo=(("a", "l1", 10),),
         generated_at="2020-01-01T00:00:00Z",
     )
-    assert payload["schema"] == "pelinker.model_selection.summary.v1"
+    assert payload["schema"] == "pelinker.search.model_selection.summary.v1"
     assert payload["generated_at"] == "2020-01-01T00:00:00Z"
     top_scr = payload["rankings"]["top_by_screener_auc"]
     assert len(top_scr) == 3

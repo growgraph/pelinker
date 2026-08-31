@@ -9,14 +9,15 @@ import numpy as np
 from sklearn.decomposition import PCA
 
 from pelinker.model import Linker
-from pelinker.ops import load_dataframe
-from pelinker.util import load_models, embed_texts
+from pelinker.data.tables import load_dataframe
+from pelinker.text.embed import embed_texts
+from pelinker.text.models import load_models
 from sklearn.cluster import KMeans
 
-from pelinker.analysis import (
-    embeddings_dict_to_dataframe,
-    get_word_frequencies_from_library,
+from pelinker.data.frames import embeddings_dict_to_dataframe
+from pelinker.text.lexical import (
     compute_kb_generality_scores,
+    get_word_frequencies_from_library,
 )
 
 logger = logging.getLogger(__name__)
@@ -134,7 +135,7 @@ def select_diverse_entities(
     "--model-type",
     type=click.STRING,
     default="pubmedbert",
-    help="Backbone model identifier passed to pelinker.util.load_models.",
+    help="Backbone model identifier passed to pelinker.text.models.load_models.",
 )
 @click.option(
     "--layers-spec",

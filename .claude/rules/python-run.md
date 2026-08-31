@@ -1,0 +1,13 @@
+---
+paths:
+  - "**/*.py"
+  - "run/**"
+---
+
+# Running Python code
+
+- **Do not** run `python3 -c` directly.
+- Always invoke Python code using `uv run python <script>` or `uv run <module>` when
+  executing project scripts.
+- Use the `uv` environment so that dependencies from `uv.lock` are respected.
+- This applies to both interactive code execution and testing.

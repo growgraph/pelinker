@@ -1,23 +1,23 @@
 import torch
 
-from pelinker.onto import (
-    ChunkMapper,
+from pelinker.core.onto import (
     Expression,
     ExpressionHolder,
     ExpressionHolderBatch,
     NEGATIVE_LABEL,
     WordGrouping,
 )
-from pelinker.util import (
+from pelinker.text.chunking import ChunkMapper
+from pelinker.core.onto import SimplifiedToken
+from pelinker.text.chunking import split_text_into_batches
+from pelinker.text.embed import extract_and_embed_mentions
+from pelinker.text.tokenize import (
     get_word_boundaries,
     keep_expression_for_prediction,
     map_spans_to_spans_basic,
-    text_to_tokens,
     map_words_to_tokens,
-    split_text_into_batches,
+    text_to_tokens,
     token_list_with_window,
-    SimplifiedToken,
-    extract_and_embed_mentions,
 )
 
 
@@ -193,11 +193,11 @@ def _fake_report_for_negatives():
 
 def test_extract_mentions_negative_sampling_is_deterministic(monkeypatch):
     monkeypatch.setattr(
-        "pelinker.util.texts_to_vrep",
+        "pelinker.text.embed.texts_to_vrep",
         lambda *args, **kwargs: _fake_report_for_negatives(),
     )
     monkeypatch.setattr(
-        "pelinker.util.text_to_tokens",
+        "pelinker.text.embed.text_to_tokens",
         lambda nlp, text: [_st(0, text, lemma=text.lower())],
     )
     rows_a = extract_and_embed_mentions(
@@ -230,11 +230,11 @@ def test_extract_mentions_negative_sampling_is_deterministic(monkeypatch):
 
 def test_extract_mentions_negatives_are_global_not_per_entity(monkeypatch):
     monkeypatch.setattr(
-        "pelinker.util.texts_to_vrep",
+        "pelinker.text.embed.texts_to_vrep",
         lambda *args, **kwargs: _fake_report_for_negatives(),
     )
     monkeypatch.setattr(
-        "pelinker.util.text_to_tokens",
+        "pelinker.text.embed.text_to_tokens",
         lambda nlp, text: [_st(0, text, lemma=text.lower())],
     )
     rows = extract_and_embed_mentions(

@@ -2,9 +2,9 @@ import click
 import pathlib
 import logging
 
-from pelinker.config import EmbeddingModelMetadata, EmbeddingTrainingConfig
-from pelinker.embedder import embed_kb_corpus
-from pelinker.onto import NEGATIVE_LABEL
+from pelinker.core.config import EmbeddingModelMetadata, EmbeddingTrainingConfig
+from pelinker.embed.corpus import embed_kb_corpus
+from pelinker.core.onto import NEGATIVE_LABEL
 
 logger = logging.getLogger(__name__)
 

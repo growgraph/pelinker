@@ -6,22 +6,26 @@ import pathlib
 
 import click
 
-from pelinker.dim_selection import run_dim_selection
-from pelinker.dim_selection.checkpoint import DEFAULT_CHECKPOINT_NAME
-from pelinker.dim_selection.grids import DEFAULT_PCA_GRID, DEFAULT_UMAP_GRID
-from pelinker.onto import NEGATIVE_LABEL
+from pelinker.search.dim_selection import run_dim_selection
+from pelinker.search.dim_selection.checkpoint import DEFAULT_CHECKPOINT_NAME
+from pelinker.search.dim_selection.grids import DEFAULT_PCA_GRID, DEFAULT_UMAP_GRID
+from pelinker.core.onto import NEGATIVE_LABEL
 
 _EPILOG = """
 MCS = min_cluster_size (HDBSCAN hyperparameter on the inner grid).
 
 Metrics (same two-level stack as model selection):
 
-  Inner (choose MCS): grid_objective=dbcv_ari_mean_minmax —
-    min-max normalize mean DBCV and mean ARI on the MCS curve, average,
-    smooth, and pick the left plateau.
+  Inner (choose MCS): grid_objective=dbcv_ari_geomean —
+    clip mean DBCV and mean ARI at 0, take sqrt(dbcv*ari) per bootstrap
+    sample, smooth, then pick the largest MCS within one *paired*
+    standard error of the best (grid_one_se_k, default 1.0).
+    The geometric mean's ranking is invariant to the scales of DBCV and
+    ARI, so neither metric has to be normalized against the curve.
 
   Outer (rank pca × umap cells): at each cell's pooled MCS, combine mean
-    DBCV and mean ARI with the same DBCV+ARI pooling (minmax across cells).
+    DBCV and mean ARI with the *same* clipped geometric mean. Each cell is
+    scored from its own numbers, independently of the other cells.
     best_score stays mean DBCV for heatmaps; outer_score chooses the winner.
 """
 

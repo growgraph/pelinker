@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import pathlib
 import sys
+from dataclasses import replace
 
 import click
 
-from pelinker.config import ClusteringOptimizationConfig
-from pelinker.model_selection import render_model_selection_summary_figures
-from pelinker.model_selection_checkpoint import DEFAULT_CHECKPOINT_NAME
+from pelinker.core.config import ClusteringOptimizationConfig
+from pelinker.search.model_selection import render_model_selection_summary_figures
+from pelinker.search.model_selection_checkpoint import DEFAULT_CHECKPOINT_NAME
 
 
 @click.command(
@@ -52,6 +53,15 @@ from pelinker.model_selection_checkpoint import DEFAULT_CHECKPOINT_NAME
     help="Reference entity count for the cluster-count term (default: max clusters on grid).",
 )
 @click.option(
+    "--grid-one-se-k",
+    type=float,
+    default=None,
+    help=(
+        "How many paired standard errors from the best grid point still count as a tie "
+        "when re-solving chosen min_cluster_size. 0 = pure argmax (default: 1.0)."
+    ),
+)
+@click.option(
     "--all-pca-pairgrid-samples",
     is_flag=True,
     default=False,
@@ -65,15 +75,21 @@ def main(
     checkpoint: pathlib.Path | None,
     grid_cluster_count_reward: float | None,
     grid_n_entities: int | None,
+    grid_one_se_k: float | None,
     all_pca_pairgrid_samples: bool,
 ) -> None:
     report_dir = report_dir.expanduser().resolve()
     opt_config: ClusteringOptimizationConfig | None = None
-    if grid_cluster_count_reward is not None or grid_n_entities is not None:
-        opt_config = ClusteringOptimizationConfig(
-            grid_cluster_count_reward=grid_cluster_count_reward or 0.0,
-            grid_n_entities=grid_n_entities,
-        )
+    overrides = {
+        "grid_cluster_count_reward": grid_cluster_count_reward,
+        "grid_n_entities": grid_n_entities,
+        "grid_one_se_k": grid_one_se_k,
+    }
+    supplied = {k: v for k, v in overrides.items() if v is not None}
+    if supplied:
+        # Start from defaults and apply only what was asked for, so unrelated solver knobs
+        # keep their live-run values instead of being silently reset.
+        opt_config = replace(ClusteringOptimizationConfig(), **supplied)
     res = render_model_selection_summary_figures(
         report_dir,
         checkpoint_path=checkpoint,

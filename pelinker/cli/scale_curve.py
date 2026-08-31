@@ -6,8 +6,8 @@ import pathlib
 
 import click
 
-from pelinker.onto import NEGATIVE_LABEL
-from pelinker.scale_curve import DEFAULT_RUNGS, run_scale_curve
+from pelinker.core.onto import NEGATIVE_LABEL
+from pelinker.search.scale_curve import DEFAULT_RUNGS, run_scale_curve
 
 _EPILOG = """
 Why: min_cluster_size is an absolute row count (and, by HDBSCAN's default,

@@ -166,5 +166,11 @@ nbs/
 debug/
 
 reports/
-paper/
+models/
+**/models/
+*.pth
+*.bin
+*.pt
+*.pkl
+*.joblib
 pelinker/store/*gz

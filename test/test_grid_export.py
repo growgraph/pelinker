@@ -9,9 +9,9 @@ import pathlib
 
 import json
 
-from pelinker.clustering_grid import SmoothedGridOptimumResult
-from pelinker.config import ClusteringOptimizationConfig
-from pelinker.grid_export import (
+from pelinker.clustering.grid import SmoothedGridOptimumResult
+from pelinker.core.config import ClusteringOptimizationConfig
+from pelinker.search.grid_export import (
     GRID_COL_CHOSEN_MIN_CLUSTER_SIZE,
     apply_chosen_min_cluster_size_to_grid,
     grid_chosen_hyperparameters_to_jsonable,
@@ -19,11 +19,8 @@ from pelinker.grid_export import (
     select_grid_points_at_chosen_min_cluster_size,
     write_grid_chosen_hyperparameters,
 )
-from pelinker.reporting import (
-    ClusteringHyperparameters,
-    ModelSelectionReport,
-    entity_negative_label_mask_01,
-)
+from pelinker.data.frames import entity_negative_label_mask_01
+from pelinker.reports.schema import ClusteringHyperparameters, ModelSelectionReport
 
 
 def _minimal_report(
@@ -86,9 +83,12 @@ def test_write_grid_chosen_hyperparameters(tmp_path: pathlib.Path) -> None:
         y_objective=(0.5, 0.6, 0.55),
         y_cluster_term=(-0.1, 0.0, -0.05),
         y_smooth=(0.52, 0.58, 0.56),
-        dy_dx=(0.01, 0.0, -0.01),
-        d2y_dx2=(0.0, 0.0, 0.0),
-        selection="plateau_derivative",
+        selection="one_se_paired",
+        argmax_min_cluster_size=30,
+        y_se=(0.02, 0.0, 0.03),
+        y_eligible=(False, True, True),
+        one_se_k=1.0,
+        n_samples=5,
     )
     cfg = ClusteringOptimizationConfig(grid_cluster_count_reward=0.05)
     path = tmp_path / "grid_chosen_hyperparameters.json"
@@ -109,9 +109,7 @@ def test_grid_chosen_hyperparameters_to_jsonable_sorted() -> None:
         y_objective=(0.5,),
         y_cluster_term=(0.0,),
         y_smooth=(0.5,),
-        dy_dx=(0.0,),
-        d2y_dx2=(0.0,),
-        selection="smoothed_argmax",
+        selection="argmax",
     )
     solved_b = SmoothedGridOptimumResult(
         chosen_min_cluster_size=25,
@@ -122,9 +120,7 @@ def test_grid_chosen_hyperparameters_to_jsonable_sorted() -> None:
         y_objective=(0.6,),
         y_cluster_term=(0.0,),
         y_smooth=(0.6,),
-        dy_dx=(0.0,),
-        d2y_dx2=(0.0,),
-        selection="smoothed_argmax",
+        selection="argmax",
     )
     doc = grid_chosen_hyperparameters_to_jsonable(
         {("z", "1"): solved_a, ("a", "2"): solved_b},

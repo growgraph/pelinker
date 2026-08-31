@@ -1,7 +1,7 @@
 import pandas as pd
 from pathlib import Path
 
-from pelinker.util import fetch_latest_kb
+from pelinker.kb.registry import fetch_latest_kb
 
 
 def main():

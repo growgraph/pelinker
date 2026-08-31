@@ -16,22 +16,12 @@ jobs:
             with:
                 version: "0.10.12"
                 enable-cache: true
+
+        # The dev extra pins en_core_web_lg, so the tests covering tokenization, span
+        # mapping and the HF embedding path actually run here. They skip themselves when
+        # the model is absent, which is how a removed transformers API once reached main.
         -   name: Install dependencies (including dev)
             run: uv sync --extra dev
-
-        # The spaCy pipeline is a ~400 MB out-of-band download. Without it the tests that
-        # exercise tokenization, span mapping and the HF embedding path skip silently --
-        # which is how a removed transformers API once reached main unnoticed. Cache it so
-        # those tests actually run on every PR.
-        -   name: Cache spaCy model
-            id: cache-spacy
-            uses: actions/cache@v4
-            with:
-                path: .venv/lib/python*/site-packages/en_core_web_lg
-                key: spacy-en_core_web_lg-3.8.0-${{ runner.os }}
-        -   name: Download spaCy model
-            if: steps.cache-spacy.outputs.cache-hit != 'true'
-            run: uv run spacy download en_core_web_lg
 
         -   name: Cache Hugging Face weights
             uses: actions/cache@v4

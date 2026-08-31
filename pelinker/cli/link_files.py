@@ -11,17 +11,17 @@ from typing import Any
 import click
 import pandas as pd
 
-from pelinker.ground_truth import (
+from pelinker.kb.ground_truth import (
     GroundTruthScore,
     GtSpan,
     score_predictions_against_ground_truth,
 )
-from pelinker.linker_kb_lemma import (
+from pelinker.linker.kb_lemma import (
     KbLemmaValidationMetrics,
     aggregate_kb_lemma_validation,
 )
 from pelinker.model import DEFAULT_CLUSTER_MEMBERSHIP_THRESHOLD, Linker
-from pelinker.onto import MAX_LENGTH
+from pelinker.core.onto import MAX_LENGTH
 
 logger = logging.getLogger(__name__)
 

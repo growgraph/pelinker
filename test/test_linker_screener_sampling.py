@@ -5,9 +5,9 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from pelinker.config import LinkerFitConfig
+from pelinker.core.config import LinkerFitConfig
 from pelinker.model import _screener_training_frame
-from pelinker.onto import NEGATIVE_LABEL
+from pelinker.core.onto import NEGATIVE_LABEL
 
 
 def _synthetic_frame(n_kb: int, n_neg: int) -> pd.DataFrame:

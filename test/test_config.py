@@ -4,7 +4,7 @@ import pathlib
 
 import pytest
 
-from pelinker.config import ClusteringOptimizationConfig, KBConfig
+from pelinker.core.config import ClusteringOptimizationConfig, KBConfig
 
 
 def test_kb_config_ok():
@@ -88,7 +88,7 @@ def test_clustering_optimization_rejects_invalid_grid_n_entities() -> None:
 
 
 def test_linker_fit_config_load_fields_validate() -> None:
-    from pelinker.config import LinkerFitConfig
+    from pelinker.core.config import LinkerFitConfig
 
     LinkerFitConfig(
         drop_rare_entities=True,
@@ -99,14 +99,14 @@ def test_linker_fit_config_load_fields_validate() -> None:
 
 
 def test_linker_fit_config_rejects_invalid_max_mentions() -> None:
-    from pelinker.config import LinkerFitConfig
+    from pelinker.core.config import LinkerFitConfig
 
     with pytest.raises(ValueError, match="max_mentions_per_entity"):
         LinkerFitConfig(max_mentions_per_entity=0)
 
 
 def test_fingerprint_includes_mention_load_fields(tmp_path: pathlib.Path) -> None:
-    from pelinker.model_selection_checkpoint import fingerprint_config_from_cli
+    from pelinker.search.model_selection_checkpoint import fingerprint_config_from_cli
 
     d = tmp_path / "in"
     d.mkdir()

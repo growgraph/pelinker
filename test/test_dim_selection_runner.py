@@ -8,18 +8,15 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from pelinker.dim_selection.grids import cell_key
-from pelinker.dim_selection.runner import run_dim_selection
-from pelinker.dim_selection.summary import (
+from pelinker.search.dim_selection.grids import cell_key
+from pelinker.search.dim_selection.runner import run_dim_selection
+from pelinker.search.dim_selection.summary import (
     DIM_SELECTION_RESULTS_CSV_BASENAME,
     DIM_SELECTION_SUMMARY_JSON_BASENAME,
 )
-from pelinker.reporting import (
-    ClusteringHyperparameters,
-    ModelSelectionReport,
-    entity_negative_label_mask_01,
-)
-from pelinker.transform import TransformConfig
+from pelinker.data.frames import entity_negative_label_mask_01
+from pelinker.reports.schema import ClusteringHyperparameters, ModelSelectionReport
+from pelinker.clustering.transform import TransformConfig
 
 
 def _metrics_for_score(dbcv: float, ari: float = 0.7) -> pd.DataFrame:
@@ -80,35 +77,35 @@ def test_run_dim_selection_coarse_then_refine(
     base = pd.DataFrame({"entity": ["a"], "embed": [np.zeros(4)]})
 
     monkeypatch.setattr(
-        "pelinker.dim_selection.runner.load_selection_frame",
+        "pelinker.search.dim_selection.runner.load_selection_frame",
         lambda **_kwargs: base,
     )
     monkeypatch.setattr(
-        "pelinker.dim_selection.runner.draw_selection_sample",
+        "pelinker.search.dim_selection.runner.draw_selection_sample",
         lambda frame, _cfg, sample_index: frame,
     )
     monkeypatch.setattr(
-        "pelinker.dim_selection.runner.plot_metrics", lambda *_a, **_k: None
+        "pelinker.search.dim_selection.runner.plot_metrics", lambda *_a, **_k: None
     )
     monkeypatch.setattr(
-        "pelinker.dim_selection.runner.plot_metrics_with_error_bars",
+        "pelinker.search.dim_selection.runner.plot_metrics_with_error_bars",
         lambda *_a, **_k: None,
     )
     # Avoid matplotlib write noise for summary figures in CI.
     monkeypatch.setattr(
-        "pelinker.dim_selection.summary.write_dim_heatmaps",
+        "pelinker.search.dim_selection.summary.write_dim_heatmaps",
         lambda *_a, **_k: [],
     )
     monkeypatch.setattr(
-        "pelinker.dim_selection.summary.write_dim_outer_surface",
+        "pelinker.search.dim_selection.summary.write_dim_outer_surface",
         lambda *_a, **_k: [],
     )
     monkeypatch.setattr(
-        "pelinker.dim_selection.summary.write_dim_metrics_violin",
+        "pelinker.search.dim_selection.summary.write_dim_metrics_violin",
         lambda *_a, **_k: [],
     )
     monkeypatch.setattr(
-        "pelinker.dim_selection.summary.write_dim_dbcv_vs_ari",
+        "pelinker.search.dim_selection.summary.write_dim_dbcv_vs_ari",
         lambda *_a, **_k: [],
     )
 
@@ -124,7 +121,7 @@ def test_run_dim_selection_coarse_then_refine(
         return _fake_evaluate(frame, transform_config, **kwargs)
 
     monkeypatch.setattr(
-        "pelinker.dim_selection.runner.evaluate_selection_sample",
+        "pelinker.search.dim_selection.runner.evaluate_selection_sample",
         tracking_evaluate,
     )
 
@@ -187,34 +184,34 @@ def test_fingerprint_mismatch_aborts(
     base = pd.DataFrame({"entity": ["a"], "embed": [np.zeros(4)]})
 
     monkeypatch.setattr(
-        "pelinker.dim_selection.runner.load_selection_frame",
+        "pelinker.search.dim_selection.runner.load_selection_frame",
         lambda **_kwargs: base,
     )
     monkeypatch.setattr(
-        "pelinker.dim_selection.runner.draw_selection_sample",
+        "pelinker.search.dim_selection.runner.draw_selection_sample",
         lambda frame, _cfg, sample_index: frame,
     )
     monkeypatch.setattr(
-        "pelinker.dim_selection.runner.evaluate_selection_sample",
+        "pelinker.search.dim_selection.runner.evaluate_selection_sample",
         _fake_evaluate,
     )
     monkeypatch.setattr(
-        "pelinker.dim_selection.runner.plot_metrics", lambda *_a, **_k: None
+        "pelinker.search.dim_selection.runner.plot_metrics", lambda *_a, **_k: None
     )
     monkeypatch.setattr(
-        "pelinker.dim_selection.summary.write_dim_heatmaps",
+        "pelinker.search.dim_selection.summary.write_dim_heatmaps",
         lambda *_a, **_k: [],
     )
     monkeypatch.setattr(
-        "pelinker.dim_selection.summary.write_dim_outer_surface",
+        "pelinker.search.dim_selection.summary.write_dim_outer_surface",
         lambda *_a, **_k: [],
     )
     monkeypatch.setattr(
-        "pelinker.dim_selection.summary.write_dim_metrics_violin",
+        "pelinker.search.dim_selection.summary.write_dim_metrics_violin",
         lambda *_a, **_k: [],
     )
     monkeypatch.setattr(
-        "pelinker.dim_selection.summary.write_dim_dbcv_vs_ari",
+        "pelinker.search.dim_selection.summary.write_dim_dbcv_vs_ari",
         lambda *_a, **_k: [],
     )
 

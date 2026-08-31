@@ -6,24 +6,28 @@ import pathlib
 
 import click
 
-from pelinker.model_selection import run_model_selection
-from pelinker.model_selection_checkpoint import DEFAULT_CHECKPOINT_NAME, RunMode
-from pelinker.onto import NEGATIVE_LABEL
-from pelinker.reporting import MODEL_SELECTION_RUN_REPORT_BASENAME
+from pelinker.search.model_selection import run_model_selection
+from pelinker.search.model_selection_checkpoint import DEFAULT_CHECKPOINT_NAME, RunMode
+from pelinker.core.onto import NEGATIVE_LABEL
+from pelinker.reports.paths import MODEL_SELECTION_RUN_REPORT_BASENAME
 
 _EPILOG = """
 MCS = min_cluster_size (HDBSCAN hyperparameter on the inner grid).
 
 Metrics (same two-level stack as dim selection):
 
-  Inner (choose MCS): grid_objective=dbcv_ari_mean_minmax —
-    min-max normalize mean DBCV and mean ARI on the MCS curve, average,
-    smooth, and pick the left plateau.
+  Inner (choose MCS): grid_objective=dbcv_ari_geomean —
+    clip mean DBCV and mean ARI at 0, take sqrt(dbcv*ari) per bootstrap
+    sample, smooth, then pick the largest MCS within one *paired*
+    standard error of the best (grid_one_se_k, default 1.0).
+    The geometric mean's ranking is invariant to the scales of DBCV and
+    ARI, so neither metric has to be normalized against the curve.
 
   Outer (rank model × layer): at each combo's pooled MCS, combine mean
-    DBCV and mean ARI with the same DBCV+ARI pooling (minmax across
-    candidates). best_score stays mean DBCV for heatmaps; outer_score
-    chooses the winner. Fusion proxies use resume-safe 0.5·(DBCV+ARI).
+    DBCV and mean ARI with the *same* clipped geometric mean. Each row is
+    scored from its own numbers, so adding a candidate cannot reorder the
+    others. best_score stays mean DBCV for heatmaps; outer_score chooses
+    the winner.
 """
 
 

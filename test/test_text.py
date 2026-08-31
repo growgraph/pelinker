@@ -1,4 +1,5 @@
-from pelinker.util import process_text, split_into_sentences
+from pelinker.text.embed import process_text
+from pelinker.text.tokenize import split_into_sentences
 
 
 def test_splitting(text):

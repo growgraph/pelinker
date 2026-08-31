@@ -7,8 +7,9 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from pelinker.analysis import drop_entities_with_few_mentions, split_by_negative_label
-from pelinker.config import (
+from pelinker.data.frames import drop_entities_with_few_mentions
+from pelinker.screener.evaluation import split_by_negative_label
+from pelinker.core.config import (
     EmbeddingModelMetadata,
     EmbeddingSourceSpec,
     LinkerFitConfig,
@@ -17,18 +18,17 @@ from pelinker.config import (
     TransformConfig,
 )
 from pelinker.model import Linker
-from pelinker.onto import NEGATIVE_LABEL
+from pelinker.core.onto import NEGATIVE_LABEL
 from pelinker.plotting import (
     CLUSTER_VIZ_MEMBERSHIP_COLUMNS,
     build_fit_cluster_viz_plot_df,
     filter_assignments_for_cluster_viz,
 )
-from pelinker.reporting import (
-    ClusteringHyperparameters,
-    ModelSelectionReport,
+from pelinker.reports.io import (
     read_clustering_report_json,
     write_clustering_report_json,
 )
+from pelinker.reports.schema import ClusteringHyperparameters, ModelSelectionReport
 
 _SUBSAMPLE_ROWS = 80
 

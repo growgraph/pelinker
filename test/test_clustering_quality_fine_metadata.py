@@ -6,13 +6,10 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from pelinker.onto import NEGATIVE_LABEL
-from pelinker.reporting import (
-    ClusteringHyperparameters,
-    ModelSelectionReport,
-    entity_negative_label_mask_01,
-)
-from pelinker.model_selection.fine_metadata import (
+from pelinker.core.onto import NEGATIVE_LABEL
+from pelinker.data.frames import entity_negative_label_mask_01
+from pelinker.reports.schema import ClusteringHyperparameters, ModelSelectionReport
+from pelinker.search.model_selection.fine_metadata import (
     clustering_metadata_df,
     validated_oov_label_series,
 )

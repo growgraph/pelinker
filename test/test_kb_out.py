@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pandas as pd
 
-from pelinker.config import ClusterCompositionSnapshot, KBConfig
-from pelinker.kb_out import (
+from pelinker.core.config import ClusterCompositionSnapshot, KBConfig
+from pelinker.kb.kb_out import (
     KbOutFitProvenance,
     KbOutNamingConfig,
     build_kb_out_catalog,
@@ -15,7 +15,7 @@ from pelinker.kb_out import (
     format_cluster_display_name,
     format_kb_out_entity_id,
 )
-from pelinker.reporting import read_kb_out_json, write_kb_out_json
+from pelinker.reports.io import read_kb_out_json, write_kb_out_json
 
 
 def test_format_cluster_display_name_top_components() -> None:
@@ -164,7 +164,7 @@ def test_find_split_mentions_homonymy() -> None:
 def test_kb_out_json_round_trip(tmp_path) -> None:
     path = tmp_path / "kb_out.json"
     payload = {
-        "schema": "pelinker.kb_out.v1",
+        "schema": "pelinker.kb.kb_out.v1",
         "kb_out": {"entity_count": 1},
         "provenance": {"kb_in": {}, "fit": {"min_cluster_size": 2}},
         "naming": {"min_fraction": 0.05, "top_n": 3, "style": "weighted_dash"},
@@ -187,5 +187,5 @@ def test_kb_out_json_round_trip(tmp_path) -> None:
     }
     write_kb_out_json(path, payload)
     loaded = read_kb_out_json(path)
-    assert loaded["schema"] == "pelinker.kb_out.v1"
+    assert loaded["schema"] == "pelinker.kb.kb_out.v1"
     assert loaded["n_emergent_clusters"] == 1

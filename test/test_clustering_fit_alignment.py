@@ -7,9 +7,10 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from pelinker.analysis import drop_entities_with_few_mentions, split_by_negative_label
-from pelinker.clustering_fit import fit_manifold_clustering
-from pelinker.config import (
+from pelinker.data.frames import drop_entities_with_few_mentions
+from pelinker.screener.evaluation import split_by_negative_label
+from pelinker.clustering.fit import fit_manifold_clustering
+from pelinker.core.config import (
     ClusteringOptimizationConfig,
     EmbeddingModelMetadata,
     EmbeddingSourceSpec,
@@ -18,9 +19,9 @@ from pelinker.config import (
     TransformConfig,
 )
 from pelinker.model import Linker
-from pelinker.onto import NEGATIVE_LABEL
-from pelinker.sampling import draw_selection_sample
-from pelinker.selection import load_selection_frame
+from pelinker.core.onto import NEGATIVE_LABEL
+from pelinker.search.sampling import draw_selection_sample
+from pelinker.search.selection import load_selection_frame
 
 _SUBSAMPLE_ROWS = 80
 

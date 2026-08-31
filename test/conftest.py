@@ -2,7 +2,8 @@ import pytest
 import spacy
 import pandas as pd
 from importlib.resources import files
-from pelinker.util import load_models, split_text_into_batches
+from pelinker.text.chunking import split_text_into_batches
+from pelinker.text.models import load_models
 
 SPACY_MODEL = "en_core_web_lg"
 

@@ -20,9 +20,9 @@ from omegaconf import OmegaConf
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from starlette.middleware.gzip import GZipMiddleware
 
-from pelinker.config import EmbeddingModelMetadata, KBConfig
+from pelinker.core.config import EmbeddingModelMetadata, KBConfig
 from pelinker.model import DEFAULT_CLUSTER_MEMBERSHIP_THRESHOLD, Linker
-from pelinker.onto import MAX_LENGTH
+from pelinker.core.onto import MAX_LENGTH
 
 logger = logging.getLogger(__name__)
 
@@ -137,7 +137,7 @@ def _transform_to_jsonable(linker: Linker) -> dict[str, Any] | None:
 def _embedding_metadata_to_json(
     em: EmbeddingModelMetadata | None,
 ) -> dict[str, Any] | None:
-    """Full serialization of :class:`~pelinker.config.EmbeddingModelMetadata` from the artifact."""
+    """Full serialization of :class:`~pelinker.core.config.EmbeddingModelMetadata` from the artifact."""
     if em is None:
         return None
     return asdict(em)

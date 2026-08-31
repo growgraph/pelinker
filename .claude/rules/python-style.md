@@ -1,0 +1,14 @@
+---
+paths:
+  - "**/*.py"
+---
+
+# Python Coding Rules
+
+- Use python 3.12 conventions: use `type | None` instead of `Optional` etc
+- Use type hints everywhere (PEP 484).
+- Use snake_case for functions and variables, PascalCase for classes.
+- Avoid unused imports.
+- Use `async`/`await` where appropriate.
+- Always keep functions small and composable.
+- Avoid using hasattr at all costs, it's not safe

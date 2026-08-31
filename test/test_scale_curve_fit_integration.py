@@ -8,7 +8,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from pelinker.config import (
+from pelinker.core.config import (
     EmbeddingModelMetadata,
     EmbeddingSourceSpec,
     LinkerFitConfig,
@@ -16,8 +16,8 @@ from pelinker.config import (
     TransformConfig,
 )
 from pelinker.model import Linker
-from pelinker.scale_curve import SCALE_CURVE_SCHEMA, load_scale_curve
-from pelinker.scaling import ScaleRung, fit_scale_curve
+from pelinker.search.scale_curve import SCALE_CURVE_SCHEMA, load_scale_curve
+from pelinker.core.scaling import ScaleRung, fit_scale_curve
 
 
 def _mentions_parquet(tmp_path: Path, n_ent: int = 24) -> tuple[Path, dict[str, str]]:
@@ -114,7 +114,7 @@ def test_without_a_curve_the_documented_default_is_used(tmp_path: Path) -> None:
 
 
 def test_provenance_reaches_the_fit_report(tmp_path: Path) -> None:
-    from pelinker.reporting import clustering_report_to_jsonable_dict
+    from pelinker.reports.io import clustering_report_to_jsonable_dict
 
     linker = _fit(tmp_path, min_cluster_size=None, scale_curve=_curve())
     report = linker.take_fit_clustering_report()
@@ -149,7 +149,7 @@ def test_scale_curve_json_round_trips_through_the_loader(tmp_path: Path) -> None
 def test_loader_rejects_an_unknown_schema(tmp_path: Path) -> None:
     path = tmp_path / "scale_curve.json"
     path.write_text(
-        json.dumps({"schema": "pelinker.scale_curve.v99", "curve": {}}),
+        json.dumps({"schema": "pelinker.search.scale_curve.v99", "curve": {}}),
         encoding="utf-8",
     )
 
