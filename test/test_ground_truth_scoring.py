@@ -55,6 +55,63 @@ def test_zero_length_span_is_rejected() -> None:
         GtSpan(itext=0, a=5, b=5)
 
 
+def test_loads_direction_and_provenance_fields(tmp_path: Path) -> None:
+    p = tmp_path / "gt.json"
+    p.write_text(
+        json.dumps(
+            {
+                "text": "IL-6 is activated by TAMs",
+                "ground_truth": [
+                    {
+                        "a": 5,
+                        "b": 20,
+                        "entity_id": "PEL.000032",
+                        "direction": "inverse",
+                        "subject_span": [21, 25],
+                        "object_span": [0, 4],
+                        "surface": "is activated by",
+                        "annotator": "llm-a",
+                        "source": "llm",
+                        "confidence": 0.9,
+                    },
+                    # A legacy hit in the same file stays loadable.
+                    {"a": 0, "b": 4, "entity_id": "PEL.000001"},
+                ],
+            }
+        )
+    )
+
+    spans = load_ground_truth_spans(p)
+
+    assert spans[0].direction == "inverse"
+    assert spans[0].subject_span == (21, 25)
+    assert spans[0].object_span == (0, 4)
+    assert spans[0].source == "llm"
+    assert spans[0].confidence == 0.9
+    assert spans[1].direction is None
+    assert spans[1].subject_span is None
+
+
+def test_unknown_direction_is_rejected() -> None:
+    with pytest.raises(ValueError, match="direction must be one of"):
+        GtSpan(itext=0, a=0, b=3, direction="backwards")
+
+
+def test_malformed_subject_span_is_rejected(tmp_path: Path) -> None:
+    p = tmp_path / "gt.json"
+    p.write_text(
+        json.dumps(
+            {
+                "text": "x",
+                "ground_truth": [{"a": 0, "b": 3, "subject_span": [1]}],
+            }
+        )
+    )
+
+    with pytest.raises(ValueError, match="subject_span must be"):
+        load_ground_truth_spans(p)
+
+
 # ----------------------------------------------------------------------- detection
 
 

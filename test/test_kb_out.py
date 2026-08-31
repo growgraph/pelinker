@@ -5,6 +5,7 @@ from __future__ import annotations
 import pandas as pd
 
 from pelinker.core.config import ClusterCompositionSnapshot, KBConfig
+from pelinker.core.onto import NEGATIVE_LABEL
 from pelinker.kb.kb_out import (
     KbOutFitProvenance,
     KbOutNamingConfig,
@@ -14,6 +15,7 @@ from pelinker.kb.kb_out import (
     find_split_mentions,
     format_cluster_display_name,
     format_kb_out_entity_id,
+    kb_out_to_kb_in_map,
 )
 from pelinker.reports.io import read_kb_out_json, write_kb_out_json
 
@@ -159,6 +161,64 @@ def test_find_split_mentions_homonymy() -> None:
     splits = find_split_mentions(assignments)
     assert len(splits) == 1
     assert splits[0]["n_clusters"] == 2
+
+
+def test_kb_out_to_kb_in_map_resolves_dominant_labels_to_input_ids() -> None:
+    """The id bridge for gold scoring: minted cluster ids back onto input-KB ids."""
+    assignments = pd.DataFrame(
+        {
+            "entity": ["alpha", "alpha", "beta", NEGATIVE_LABEL, NEGATIVE_LABEL],
+            "cluster": [0, 0, 1, 2, 2],
+            "pmid": ["1", "1", "2", "3", "3"],
+            "mention": ["m", "m", "n", "x", "y"],
+            "cluster_score": [0.9, 0.85, 0.8, 0.7, 0.6],
+        }
+    )
+    composition = ClusterCompositionSnapshot(
+        global_property_mass={"alpha": 2, "beta": 1, NEGATIVE_LABEL: 2},
+        cluster_within_fraction={
+            0: {"alpha": 1.0},
+            1: {"beta": 1.0},
+            2: {NEGATIVE_LABEL: 1.0},
+        },
+        cluster_fraction_of_property_mass={
+            0: {"alpha": 1.0},
+            1: {"beta": 1.0},
+            2: {NEGATIVE_LABEL: 1.0},
+        },
+    )
+    catalog = build_kb_out_catalog(
+        composition,
+        assignments,
+        {"PEL.000002": "alpha", "PEL.000001": "alpha", "RO.0002206": "beta"},
+        kb_config=None,
+        fit_provenance=KbOutFitProvenance(min_cluster_size=2),
+    )
+
+    bridge = kb_out_to_kb_in_map(catalog)
+
+    by_cluster = {c["cluster_id"]: c["entity_id"] for c in catalog["clusters"]}
+    # Duplicate label "alpha": the lexicographically smallest id wins, deterministically.
+    assert bridge[by_cluster[0]] == "PEL.000001"
+    assert bridge[by_cluster[1]] == "RO.0002206"
+    # The negative-dominated cluster stays out: its predictions are non-comparable.
+    assert by_cluster[2] not in bridge
+
+
+def test_kb_out_to_kb_in_map_skips_labels_without_input_ids() -> None:
+    catalog = {
+        "provenance": {"kb_in": {"labels_map": {"PEL.1": "alpha"}}},
+        "clusters": [
+            {
+                "cluster_id": 0,
+                "entity_id": "kb::C0000",
+                "components": [{"entity": "unmapped label"}],
+            },
+            {"cluster_id": 1, "entity_id": "kb::C0001", "components": []},
+        ],
+    }
+
+    assert kb_out_to_kb_in_map(catalog) == {}
 
 
 def test_kb_out_json_round_trip(tmp_path) -> None:

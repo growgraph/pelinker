@@ -16,6 +16,7 @@ from pelinker.kb.ground_truth import (
     GtSpan,
     score_predictions_against_ground_truth,
 )
+from pelinker.kb.kb_out import kb_out_to_kb_in_map
 from pelinker.linker.kb_lemma import (
     KbLemmaValidationMetrics,
     aggregate_kb_lemma_validation,
@@ -76,6 +77,7 @@ def _fmt_rate(x: float | None) -> str:
 def _score_against_ground_truth(
     out: dict[str, Any],
     ground_truth_by_doc: list[list[dict[str, Any]] | None],
+    predicted_id_to_kb_in: dict[str, str] | None = None,
 ) -> "GroundTruthScore | None":
     """Score emitted entities against the char-offset gold spans, if any are present."""
     gold: list[GtSpan] = []
@@ -100,7 +102,9 @@ def _score_against_ground_truth(
     if not gold:
         return None
     entities = out.get("entities") or []
-    return score_predictions_against_ground_truth(entities, gold)
+    return score_predictions_against_ground_truth(
+        entities, gold, predicted_id_to_kb_in=predicted_id_to_kb_in
+    )
 
 
 def _aggregate_lemma_validation(pres: object) -> "KbLemmaValidationMetrics | None":
@@ -406,7 +410,14 @@ def main(
         out["ground_truth"] = ground_truth_by_doc
         # Previously the ground truth was parsed and echoed but never scored; the README
         # pointed at a scoring script that does not exist. Score it here instead.
-        score = _score_against_ground_truth(out, ground_truth_by_doc)
+        # The KB-out catalog translates minted cluster ids back onto input-KB ids so
+        # entity accuracy is computable, not permanently undefined.
+        id_bridge = (
+            kb_out_to_kb_in_map(linker.kb_out_catalog)
+            if linker.kb_out_catalog is not None
+            else None
+        )
+        score = _score_against_ground_truth(out, ground_truth_by_doc, id_bridge)
         if score is not None:
             out["ground_truth_score"] = score.to_jsonable()
             logger.info(
@@ -422,8 +433,9 @@ def main(
             )
             if score.n_id_comparable == 0 and score.n_matched > 0:
                 logger.info(
-                    "Entity accuracy is undefined: predicted ids are minted KB-out "
-                    "cluster ids and the gold file carries input-KB ids. Detection "
+                    "Entity accuracy is undefined: no predicted id could be mapped "
+                    "onto an input-KB id (old artifact without a KB-out catalog, or "
+                    "every matched cluster is negative-dominated). Detection "
                     "precision/recall above are still meaningful."
                 )
 

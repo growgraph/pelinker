@@ -46,7 +46,14 @@ def main():
     ro_df = ro_df[~mask].copy()
     print(f"number of dropped items in ro_df : {sum(mask)}")
 
+    # RO's `owl:inverseOf` pairs ride along; sources without the column get NA. This is
+    # the KB's own statement that two entries are one relation read from two ends — the
+    # signal a direction model needs. No `orientation` column is materialized: RO does
+    # not name a canonical member of a pair, and inventing one would put an assertion in
+    # the KB that no source makes.
     df = pd.concat([ro_df, present_gg_df, add_gg_df])
+    if "inverse_entity_id" not in df.columns:
+        df["inverse_entity_id"] = pd.NA
 
     # assign id to ad hoc properties
     df_no_id = df[df["entity_id"].isnull()].sort_values("label").copy()
@@ -76,10 +83,21 @@ def main():
     print(df.isnull().sum(0))
     current_version = version + 1
 
-    if set(df["entity_id"]) != reference_ids:
-        df.sort_values(["entity_id", "label"]).to_csv(
-            f"./data/derived/properties.synthesis.{current_version}.csv", index=False
+    # A new version is warranted when the vocabulary changes *or* when the schema does —
+    # the id-only check silently swallowed added columns (e.g. inverse_entity_id).
+    reference_columns = set(reference_df.columns) if fname is not None else set()
+    ids_changed = set(df["entity_id"]) != reference_ids
+    columns_changed = set(df.columns) != reference_columns
+    if ids_changed or columns_changed:
+        out_path = f"./data/derived/properties.synthesis.{current_version}.csv"
+        df.sort_values(["entity_id", "label"]).to_csv(out_path, index=False)
+        print(
+            f"wrote {out_path} (ids changed: {ids_changed}, "
+            f"columns changed: {columns_changed}, "
+            f"{int(df['inverse_entity_id'].notna().sum())} inverse pairs)"
         )
+    else:
+        print("no vocabulary or schema change; not writing a new version")
 
 
 if __name__ == "__main__":

@@ -17,6 +17,7 @@ from pelinker.clustering.composition import (
     filter_emergent_assignments,
 )
 from pelinker.core.config import ClusterCompositionSnapshot, KBConfig
+from pelinker.core.onto import NEGATIVE_LABEL
 from pelinker.linker.cluster_training import (
     _disambiguate_consensus_names,
     consensus_cluster_names,
@@ -390,6 +391,44 @@ def build_kb_out_catalog(
             str(k): v for k, v in sorted(cluster_id_to_entity_id.items())
         },
     }
+
+
+def kb_out_to_kb_in_map(catalog: dict[str, Any]) -> dict[str, str]:
+    """Minted KB-out entity id → dominant input-KB entity id.
+
+    Each catalog cluster carries its ``components`` (KB-in entity *labels* with
+    within-cluster mass, dominant first) and the KB-in provenance block carries the
+    ``entity_id → label`` map. Resolving the dominant component's label back to its id
+    yields the translation :func:`~pelinker.kb.ground_truth
+    .score_predictions_against_ground_truth` needs as ``predicted_id_to_kb_in`` — without
+    it, minted ids (``kb::C0007``) never match gold ids (``PEL.000032``) and entity
+    accuracy stays undefined.
+
+    Clusters whose dominant component is the synthetic negative label, or whose label has
+    no KB-in id, are omitted: predictions there stay non-comparable rather than being
+    scored against an arbitrary id. When several KB-in ids share one label, the
+    lexicographically smallest id wins, deterministically.
+    """
+    kb_in = catalog.get("provenance", {}).get("kb_in", {})
+    id_to_label = kb_in.get("labels_map", {})
+    label_to_id: dict[str, str] = {}
+    for eid in sorted(id_to_label):
+        label = str(id_to_label[eid])
+        label_to_id.setdefault(label, str(eid))
+
+    out: dict[str, str] = {}
+    for cluster in catalog.get("clusters", []):
+        components = cluster.get("components") or []
+        if not components:
+            continue
+        dominant_label = str(components[0]["entity"])
+        if dominant_label == NEGATIVE_LABEL:
+            continue
+        kb_in_id = label_to_id.get(dominant_label)
+        if kb_in_id is None:
+            continue
+        out[str(cluster["entity_id"])] = kb_in_id
+    return out
 
 
 def cluster_labels_from_catalog(

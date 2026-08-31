@@ -55,8 +55,18 @@ docs = [
   "mkdocstrings-python>=2.0.3",
   "mkdocstrings[python]>=0.29.1"
 ]
+eval = [
+  # LLM-assisted gold pre-annotation (run/eval/annotate_llm.py); the linker itself
+  # never calls an LLM.
+  "anthropic>=1.0"
+]
 gpu = [
   "cupy-cuda12x>=13.6.0"
+]
+preprocess = [
+  # KB regeneration only (run/preprocessing/extract_properties_*.py); the linker never
+  # parses ontologies at fit or serve time.
+  "rdflib>=7.0"
 ]
 
 [project.scripts]

@@ -31,19 +31,55 @@ from typing import Any, Iterable, Mapping, Sequence
 
 MatchMode = "overlap", "exact"
 
+GT_DIRECTIONS = ("forward", "inverse", "symmetric", "na")
+"""Predicate orientation relative to the KB entry's canonical argument order.
+
+``forward`` — surface arguments follow the KB entry (``X activates Y``);
+``inverse`` — reversed, typically passive voice or a converse phrasing
+(``Y is activated by X``); ``symmetric`` — the predicate has no orientation
+(``X interacts with Y``); ``na`` — orientation not annotated / not applicable.
+"""
+
 
 @dataclass(frozen=True)
 class GtSpan:
-    """One ground-truth annotation: a character range in a document, plus its KB id."""
+    """One ground-truth annotation: a character range in a document, plus its KB id.
+
+    The required core (``itext``/``a``/``b``/``entity_id``) is what the scorer consumes.
+    The optional fields carry annotation provenance and the directionality contract;
+    older ``*.gt.json`` files without them load unchanged.
+    """
 
     itext: int
     a: int
     b: int
     entity_id: str | None = None
 
+    direction: str | None = None
+    """One of :data:`GT_DIRECTIONS`, or ``None`` for legacy annotations."""
+    subject_span: tuple[int, int] | None = None
+    object_span: tuple[int, int] | None = None
+    surface: str | None = None
+    annotator: str | None = None
+    source: str | None = None
+    """Annotation channel, e.g. ``"llm"`` or ``"human"``."""
+    confidence: float | None = None
+
     def __post_init__(self) -> None:
         if self.b <= self.a:
             raise ValueError(f"span end must exceed start, got a={self.a} b={self.b}")
+        if self.direction is not None and self.direction not in GT_DIRECTIONS:
+            raise ValueError(
+                f"direction must be one of {GT_DIRECTIONS}, got {self.direction!r}"
+            )
+
+
+def _optional_span(value: object, *, field: str) -> tuple[int, int] | None:
+    if value is None:
+        return None
+    if not isinstance(value, (list, tuple)) or len(value) != 2:
+        raise ValueError(f"{field} must be a [start, end] pair, got {value!r}")
+    return int(value[0]), int(value[1])
 
 
 def load_ground_truth_spans(path: pathlib.Path | str) -> list[GtSpan]:
@@ -64,6 +100,27 @@ def load_ground_truth_spans(path: pathlib.Path | str) -> list[GtSpan]:
                     b=int(hit["b"]),
                     entity_id=(
                         None if hit.get("entity_id") is None else str(hit["entity_id"])
+                    ),
+                    direction=(
+                        None if hit.get("direction") is None else str(hit["direction"])
+                    ),
+                    subject_span=_optional_span(
+                        hit.get("subject_span"), field="subject_span"
+                    ),
+                    object_span=_optional_span(
+                        hit.get("object_span"), field="object_span"
+                    ),
+                    surface=(
+                        None if hit.get("surface") is None else str(hit["surface"])
+                    ),
+                    annotator=(
+                        None if hit.get("annotator") is None else str(hit["annotator"])
+                    ),
+                    source=(None if hit.get("source") is None else str(hit["source"])),
+                    confidence=(
+                        None
+                        if hit.get("confidence") is None
+                        else float(hit["confidence"])
                     ),
                 )
             )
