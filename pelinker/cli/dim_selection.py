@@ -10,6 +10,7 @@ from pelinker.search.dim_selection import run_dim_selection
 from pelinker.search.dim_selection.checkpoint import DEFAULT_CHECKPOINT_NAME
 from pelinker.search.dim_selection.grids import DEFAULT_PCA_GRID, DEFAULT_UMAP_GRID
 from pelinker.core.onto import NEGATIVE_LABEL
+from pelinker.core.paths import ExpandedPath
 
 _EPILOG = """
 MCS = min_cluster_size (HDBSCAN hyperparameter on the inner grid).
@@ -36,13 +37,13 @@ Metrics (same two-level stack as model selection):
 )
 @click.option(
     "--input-parquet",
-    type=click.Path(path_type=pathlib.Path),
+    type=ExpandedPath(path_type=pathlib.Path),
     required=True,
     help="Single mention-level embedding parquet (one model/layer).",
 )
 @click.option(
     "--report-path",
-    type=click.Path(path_type=pathlib.Path),
+    type=ExpandedPath(path_type=pathlib.Path),
     required=True,
     help="Directory for dim-selection outputs and checkpoint.",
 )
@@ -185,7 +186,7 @@ Metrics (same two-level stack as model selection):
 )
 @click.option(
     "--selected-labels-kb-path",
-    type=click.Path(path_type=pathlib.Path),
+    type=ExpandedPath(path_type=pathlib.Path),
     default=None,
     help="Optional path to selected labels KB CSV. If provided, clustering uses only those labels.",
 )
@@ -223,7 +224,7 @@ Metrics (same two-level stack as model selection):
 )
 @click.option(
     "--checkpoint-path",
-    type=click.Path(path_type=pathlib.Path),
+    type=ExpandedPath(path_type=pathlib.Path),
     default=None,
     help=f"Checkpoint JSON path (default: <report-path>/{DEFAULT_CHECKPOINT_NAME})",
 )
@@ -240,6 +241,16 @@ Metrics (same two-level stack as model selection):
     default="lda",
     show_default=True,
     help="Estimator saved on Linker when fitting from this pipeline (analysis always logs both).",
+)
+@click.option(
+    "--persist-labels/--no-persist-labels",
+    default=False,
+    show_default=True,
+    help=(
+        "Write per-bootstrap cluster assignments to sample_cluster_labels.parquet, so "
+        "cluster-identity stability can be measured across draws (run/analysis/"
+        "cluster_stability.py). Off by default: it adds one row per mention per draw."
+    ),
 )
 def main(
     input_parquet: pathlib.Path,
@@ -273,6 +284,7 @@ def main(
     checkpoint_path: pathlib.Path | None,
     negative_label: str,
     screener_kind: str,
+    persist_labels: bool,
 ) -> None:
     run_dim_selection(
         input_parquet=input_parquet,
@@ -306,6 +318,7 @@ def main(
         checkpoint_path=checkpoint_path,
         negative_label=negative_label,
         screener_kind=screener_kind,
+        persist_labels=persist_labels,
     )
 
 

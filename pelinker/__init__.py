@@ -1,17 +1,12 @@
 """pelinker -- property/entity linking for BERT-like models.
 
-Importing torch's triton runtime eagerly, before anything can pull in TensorFlow, is a
-workaround for a native-library conflict: if TensorFlow is initialised first, importing
-``triton.runtime`` afterwards segfaults the interpreter (inside ``triton/knobs.py``).
-pelinker loads both -- torch for the encoders, TensorFlow via ``tf-keras`` for
-ParametricUMAP -- so entry points that touched them in that order died on import.
+Deliberately free of heavy imports: importing anything under ``pelinker`` must not pull in
+torch or TensorFlow. Scripts that only touch the KB, the gold schema or the evaluation
+harness pay nothing for the ML stack, and a process that has already loaded TensorFlow
+(a debugger, a notebook) can import this package without tripping the native
+torch/TensorFlow load-order conflict.
 
-Both imports are optional: a torch build without CUDA ships no triton, and neither is
-needed by the pure-dataclass modules.
+That conflict is real, and it is handled where it arises:
+:func:`pelinker.core.runtime.preload_torch_before_tensorflow`, called at the two sites
+that import ``umap.parametric_umap``.
 """
-
-try:  # pragma: no cover - depends on the installed torch build
-    import torch  # noqa: F401
-    import triton.runtime  # noqa: F401
-except ImportError:  # pragma: no cover
-    pass

@@ -19,6 +19,7 @@ from pelinker.text.lexical import (
     compute_kb_generality_scores,
     get_word_frequencies_from_library,
 )
+from pelinker.core.paths import ExpandedPath
 
 logger = logging.getLogger(__name__)
 
@@ -107,7 +108,7 @@ def select_diverse_entities(
 @click.command()
 @click.option(
     "--input-table-path",
-    type=click.Path(path_type=pathlib.Path),
+    type=ExpandedPath(path_type=pathlib.Path),
     required=True,
     help="Path to the dataframe to load (CSV/TSV, optionally gzipped).",
 )
@@ -168,7 +169,7 @@ def select_diverse_entities(
 )
 @click.option(
     "--output-path",
-    type=click.Path(path_type=pathlib.Path),
+    type=ExpandedPath(path_type=pathlib.Path),
     required=True,
     help="Path for saving selected entities CSV file.",
 )

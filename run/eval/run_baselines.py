@@ -12,7 +12,8 @@ Systems:
 - ``encoder`` — sentence-encoder cosine top-1 over KB label+description (linking-only;
   end-to-end reuses the lexical span proposer)
 - ``llm`` — LLM constrained choice over the KB (linking-only; needs the ``eval`` extra
-  and a credential; responses are cached under ``--llm-cache-dir``)
+  and a provider credential; responses are cached under ``--llm-cache-dir``). Must not
+  be the model that annotated the gold, or the comparison is circular.
 - ``linker`` — a fitted PELinker artifact (both regimes), with the KB-out → KB-in id
   bridge applied so entity accuracy is comparable
 
@@ -41,11 +42,13 @@ from pelinker.eval.baselines import (
     LexicalLemmaBaseline,
     LlmLinkerBaseline,
 )
+from pelinker.eval.llm import DEFAULT_MODEL, DEFAULT_PROVIDER, PROVIDERS
 from pelinker.eval.harness import (
     evaluate_end_to_end,
     evaluate_linking_only,
     load_gold_docs,
 )
+from pelinker.core.paths import ExpandedPath
 
 logger = logging.getLogger(__name__)
 
@@ -54,7 +57,7 @@ _ALL_SYSTEMS = ("lexical", "encoder", "llm", "linker")
 
 def _linker_predict_fn(linker, thr_score: float):
     def predict(texts: list[str]) -> list[dict]:
-        result = linker.predict(texts, thr_score=thr_score)
+        result = linker.predict(texts, threshold=thr_score)
         return [dict(row) for row in (result.entities or [])]
 
     return predict
@@ -64,7 +67,7 @@ def _linker_link_fn(linker, thr_score: float):
     """Linking-only: predict over the span's own text and take the covering row."""
 
     def link(text: str, a: int, b: int) -> str | None:
-        result = linker.predict([text], thr_score=thr_score)
+        result = linker.predict([text], threshold=thr_score)
         best: tuple[int, str] | None = None
         for row in result.entities or []:
             ra, rb = int(row["a"]), int(row["b"])
@@ -79,9 +82,9 @@ def _linker_link_fn(linker, thr_score: float):
 
 
 @click.command()
-@click.option("--gold", required=True, type=click.Path(exists=True))
-@click.option("--kb-csv-path", required=True, type=click.Path(exists=True))
-@click.option("--report-dir", required=True, type=click.Path())
+@click.option("--gold", required=True, type=ExpandedPath(exists=True))
+@click.option("--kb-csv-path", required=True, type=ExpandedPath(exists=True))
+@click.option("--report-dir", required=True, type=ExpandedPath())
 @click.option("--systems", default="lexical,encoder", show_default=True)
 @click.option("--nlp-model", default="en_core_web_lg", show_default=True)
 @click.option(
@@ -89,10 +92,19 @@ def _linker_link_fn(linker, thr_score: float):
     default="neuml/pubmedbert-base-embeddings",
     show_default=True,
 )
-@click.option("--llm-model", default="claude-sonnet-5", show_default=True)
-@click.option("--llm-cache-dir", default=None)
 @click.option(
-    "--model-path", default=None, help="Fitted linker artifact (system: linker)."
+    "--llm-provider",
+    type=click.Choice(PROVIDERS),
+    default=DEFAULT_PROVIDER,
+    show_default=True,
+)
+@click.option("--llm-model", default=DEFAULT_MODEL, show_default=True)
+@click.option("--llm-cache-dir", default=None, type=ExpandedPath(file_okay=False))
+@click.option(
+    "--model-path",
+    default=None,
+    type=ExpandedPath(),
+    help="Fitted linker artifact (system: linker).",
 )
 @click.option("--thr-score", default=None, type=float)
 @click.option("--match-mode", default="overlap", show_default=True)
@@ -103,6 +115,7 @@ def main(
     systems: str,
     nlp_model: str,
     encoder_model: str,
+    llm_provider: str,
     llm_model: str,
     llm_cache_dir: str | None,
     model_path: str | None,
@@ -163,8 +176,14 @@ def main(
 
     if "llm" in wanted:
         cache = Path(llm_cache_dir or (Path(report_dir) / ".llm_cache"))
-        llm = LlmLinkerBaseline(kb, model=llm_model, cache_dir=cache)
-        runs.append(evaluate_linking_only(llm.link, docs, system=f"llm:{llm_model}"))
+        llm = LlmLinkerBaseline(
+            kb, model=llm_model, cache_dir=cache, provider=llm_provider
+        )
+        runs.append(
+            evaluate_linking_only(
+                llm.link, docs, system=f"llm:{llm_provider}:{llm_model}"
+            )
+        )
 
     if "linker" in wanted:
         if model_path is None:

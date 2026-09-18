@@ -23,6 +23,7 @@ from pelinker.linker.kb_lemma import (
 )
 from pelinker.model import DEFAULT_CLUSTER_MEMBERSHIP_THRESHOLD, Linker
 from pelinker.core.onto import MAX_LENGTH
+from pelinker.core.paths import ExpandedPath
 
 logger = logging.getLogger(__name__)
 
@@ -275,7 +276,7 @@ def _flatten_inputs(
     "-m",
     "--model",
     "model_path",
-    type=click.Path(path_type=Path),
+    type=ExpandedPath(path_type=Path),
     required=True,
     help="Linker artifact path (same as Linker.dump / Linker.load, with or without .gz).",
 )
@@ -308,14 +309,14 @@ def _flatten_inputs(
     "-o",
     "--output",
     "output_path",
-    type=click.Path(path_type=Path),
+    type=ExpandedPath(path_type=Path),
     default=None,
     help="Write the entity report JSON (UTF-8) to this path.",
 )
 @click.option(
     "--dump-mention-anomaly",
     "dump_mention_anomaly",
-    type=click.Path(path_type=Path),
+    type=ExpandedPath(path_type=Path),
     default=None,
     help=(
         "If set, write one row per extracted mention with is_kb_match and PCA anomaly "
@@ -334,7 +335,7 @@ def _flatten_inputs(
     "files",
     nargs=-1,
     required=True,
-    type=click.Path(exists=True, readable=True, path_type=Path),
+    type=ExpandedPath(exists=True, readable=True, path_type=Path),
 )
 def main(
     model_path: Path,

@@ -8,6 +8,7 @@ import click
 
 from pelinker.core.onto import NEGATIVE_LABEL
 from pelinker.search.scale_curve import DEFAULT_RUNGS, run_scale_curve
+from pelinker.core.paths import ExpandedPath
 
 _EPILOG = """
 Why: min_cluster_size is an absolute row count (and, by HDBSCAN's default,
@@ -35,13 +36,13 @@ size. Widen the grid and re-run before trusting the slope.
 )
 @click.option(
     "--input-parquet",
-    type=click.Path(path_type=pathlib.Path),
+    type=ExpandedPath(path_type=pathlib.Path),
     required=True,
     help="Single mention-level embedding parquet (one model/layer).",
 )
 @click.option(
     "--report-path",
-    type=click.Path(path_type=pathlib.Path),
+    type=ExpandedPath(path_type=pathlib.Path),
     required=True,
     help="Directory for scale_curve.json, the log-log figure, and grid rows.",
 )

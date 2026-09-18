@@ -11,6 +11,7 @@ import click
 from pelinker.core.config import ClusteringOptimizationConfig
 from pelinker.search.model_selection import render_model_selection_summary_figures
 from pelinker.search.model_selection_checkpoint import DEFAULT_CHECKPOINT_NAME
+from pelinker.core.paths import ExpandedPath
 
 
 @click.command(
@@ -29,14 +30,14 @@ from pelinker.search.model_selection_checkpoint import DEFAULT_CHECKPOINT_NAME
 )
 @click.argument(
     "report_dir",
-    type=click.Path(
+    type=ExpandedPath(
         path_type=pathlib.Path, exists=True, file_okay=False, dir_okay=True
     ),
 )
 @click.option(
     "--checkpoint",
     "-c",
-    type=click.Path(path_type=pathlib.Path, dir_okay=False),
+    type=ExpandedPath(path_type=pathlib.Path, dir_okay=False),
     default=None,
     help=f"Checkpoint path (default: <report-dir>/{DEFAULT_CHECKPOINT_NAME})",
 )

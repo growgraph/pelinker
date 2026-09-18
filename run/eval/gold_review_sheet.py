@@ -32,6 +32,7 @@ from pathlib import Path
 import click
 import pandas as pd
 from sklearn.metrics import cohen_kappa_score
+from pelinker.core.paths import ExpandedPath
 
 logger = logging.getLogger(__name__)
 
@@ -114,15 +115,15 @@ def main() -> None:
 
 
 @main.command("export")
-@click.option("--gold", required=True, type=click.Path(exists=True))
+@click.option("--gold", required=True, type=ExpandedPath(exists=True))
 @click.option(
     "--other",
     default=None,
-    type=click.Path(exists=True),
+    type=ExpandedPath(exists=True),
     help="Second annotator's gold over the same docs (adds agreement columns + κ).",
 )
-@click.option("--kb-csv-path", required=True, type=click.Path(exists=True))
-@click.option("--output", required=True, type=click.Path())
+@click.option("--kb-csv-path", required=True, type=ExpandedPath(exists=True))
+@click.option("--output", required=True, type=ExpandedPath())
 def export_cmd(gold: str, other: str | None, kb_csv_path: str, output: str) -> None:
     docs = load_gold(gold)
     kb = pd.read_csv(kb_csv_path)
@@ -173,10 +174,10 @@ def export_cmd(gold: str, other: str | None, kb_csv_path: str, output: str) -> N
 
 
 @main.command("import")
-@click.option("--gold", required=True, type=click.Path(exists=True))
-@click.option("--sheet", required=True, type=click.Path(exists=True))
+@click.option("--gold", required=True, type=ExpandedPath(exists=True))
+@click.option("--sheet", required=True, type=ExpandedPath(exists=True))
 @click.option("--verified-by", required=True)
-@click.option("--output", required=True, type=click.Path())
+@click.option("--output", required=True, type=ExpandedPath())
 def import_cmd(gold: str, sheet: str, verified_by: str, output: str) -> None:
     docs = load_gold(gold)
     sheet_df = pd.read_csv(sheet, sep="\t", dtype=str).fillna("")
@@ -234,8 +235,8 @@ def import_cmd(gold: str, sheet: str, verified_by: str, output: str) -> None:
 
 
 @main.command("agreement")
-@click.option("--gold", required=True, type=click.Path(exists=True))
-@click.option("--other", required=True, type=click.Path(exists=True))
+@click.option("--gold", required=True, type=ExpandedPath(exists=True))
+@click.option("--other", required=True, type=ExpandedPath(exists=True))
 def agreement_cmd(gold: str, other: str) -> None:
     report = kappa_report(load_gold(gold), load_gold(other))
     click.echo(json.dumps(report, indent=1))

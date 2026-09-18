@@ -157,7 +157,12 @@ def _build_selection_assignments(
     labels: np.ndarray,
 ) -> pd.DataFrame:
     assignments = dfr_manifold[["entity"]].copy()
-    for optional_col in ["pmid", "mention"]:
+    # ``a_abs``/``b_abs``/``itext`` carry through so a row keeps an identity across
+    # bootstrap draws — ``(pmid, itext, a_abs, b_abs)`` addresses one mention, while
+    # ``(pmid, mention)`` repeats whenever a document mentions a predicate twice. Cluster
+    # identity across draws cannot be measured without it (see
+    # :mod:`pelinker.clustering.stability`).
+    for optional_col in ["pmid", "mention", "itext", "a_abs", "b_abs"]:
         if optional_col in dfr_manifold.columns:
             assignments[optional_col] = dfr_manifold[optional_col]
     assignments["cluster"] = labels.astype(int, copy=False)

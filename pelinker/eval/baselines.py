@@ -9,23 +9,25 @@ in how a span gets its id:
 - :class:`EncoderKnnBaseline` — embed the span's context window and the KB's
   ``label: description`` strings with a sentence encoder; cosine top-1.
 - :class:`LlmLinkerBaseline` — ask an LLM to pick an id from the full KB for the marked
-  mention; disk-cached, so re-scoring is free. Use a different model family than the one
-  that pre-annotated the gold.
+  mention; disk-cached, so re-scoring is free. Configure a different model (ideally a
+  different family) from the one that pre-annotated the gold, or the comparison is
+  circular. Provider seam and credentials: :mod:`pelinker.eval.llm`.
 
-Heavy imports (spaCy models, sentence-transformers, anthropic) happen at construction or
-call time, never at module import.
+Heavy imports (spaCy models, sentence-transformers, the LLM SDK) happen at construction
+or call time, never at module import.
 """
 
 from __future__ import annotations
 
-import hashlib
-import json
 import pathlib
 import re
 from typing import Any
 
 import numpy as np
 import pandas as pd
+
+from pelinker.eval.kb_prompt import render_kb_catalog
+from pelinker.eval.llm import DEFAULT_PROVIDER, complete
 
 _MAX_WINDOW = 4
 _FENCE_RE = re.compile(r"^```(?:json)?\s*|\s*```$", re.MULTILINE)
@@ -128,14 +130,30 @@ class LexicalLemmaBaseline:
 
 
 class EncoderKnnBaseline:
-    """Sentence-encoder cosine top-1 against KB ``label: description`` strings."""
+    """Sentence-encoder cosine top-1 of the mention against the KB label strings.
+
+    Two defaults are deliberate, and both were chosen by sweeping them on gold rather
+    than assumed:
+
+    - ``context_chars=0`` — the mention is embedded alone. Padding it with surrounding
+      sentence text makes the vector a function of the *sentence* rather than the
+      predicate: adjacent mentions then collapse onto the same prediction, and accuracy
+      falls off a cliff as the window grows.
+    - ``include_description=False`` — labels are matched bare. A KB description is prose
+      about the relation, and concatenating it pulls the label vector away from the
+      surface form the mention actually resembles.
+
+    Getting these wrong turns a competitive baseline into a strawman, which is precisely
+    the failure the baseline exists to rule out.
+    """
 
     def __init__(
         self,
         kb: pd.DataFrame,
         *,
         model_name: str = "neuml/pubmedbert-base-embeddings",
-        context_chars: int = 120,
+        context_chars: int = 0,
+        include_description: bool = False,
         min_similarity: float | None = None,
     ) -> None:
         from sentence_transformers import SentenceTransformer
@@ -146,9 +164,12 @@ class EncoderKnnBaseline:
         self._entity_ids = [eid for eid, _, _ in records]
         self._model = SentenceTransformer(model_name)
         label_texts = [
-            f"{label}: {desc}" if desc else label for _, label, desc in records
+            f"{label}: {desc}" if (include_description and desc) else label
+            for _, label, desc in records
         ]
-        kb_matrix = np.asarray(self._model.encode(label_texts, batch_size=32))
+        kb_matrix = np.asarray(
+            self._model.encode(label_texts, batch_size=32, show_progress_bar=False)
+        )
         self._kb_matrix = kb_matrix / np.linalg.norm(kb_matrix, axis=1, keepdims=True)
 
     def _context(self, text: str, a: int, b: int) -> str:
@@ -157,7 +178,9 @@ class EncoderKnnBaseline:
         return text[lo:hi]
 
     def link(self, text: str, a: int, b: int) -> str | None:
-        vec = np.asarray(self._model.encode([self._context(text, a, b)]))[0]
+        vec = np.asarray(
+            self._model.encode([self._context(text, a, b)], show_progress_bar=False)
+        )[0]
         vec = vec / np.linalg.norm(vec)
         sims = self._kb_matrix @ vec
         best = int(np.argmax(sims))
@@ -170,12 +193,12 @@ class LlmLinkerBaseline:
     """LLM constrained choice over the KB for a marked mention; disk-cached."""
 
     _SYSTEM_TEMPLATE = (
-        "You link predicate mentions in biomedical text to a fixed knowledge base of "
-        "relation properties.\n\nKnowledge base (entity_id, label, description):\n\n"
+        "You link predicate mentions in biomedical text to a fixed list of relations.\n\n"
+        "Relations (numbered; label in quotes):\n\n"
         "{kb_table}\n\n"
         "The user message contains a passage with ONE mention marked between 【 and 】. "
-        "Reply with the single best-matching entity_id, exactly as written in the "
-        "knowledge base, or NONE if no property fits. Reply with only that token."
+        "Reply with the single best-matching relation label, copied exactly and without "
+        "quotes, or NONE if no relation fits. Reply with only that label."
     )
 
     def __init__(
@@ -184,52 +207,35 @@ class LlmLinkerBaseline:
         *,
         model: str,
         cache_dir: pathlib.Path | str,
+        provider: str = DEFAULT_PROVIDER,
         context_chars: int = 240,
     ) -> None:
         records = _label_records(kb)
-        self._kb_ids = {eid for eid, _, _ in records}
-        kb_table = "\n".join(f"{eid}\t{label}\t{desc}" for eid, label, desc in records)
-        self._system = self._SYSTEM_TEMPLATE.replace("{kb_table}", kb_table)
+        # Labels, not ids, and rendered through the same cleaner the annotator uses: a
+        # baseline handicapped by a messier prompt than the system it is compared with
+        # is not a baseline, it is a strawman.
+        self._label_index = {label.strip().casefold(): eid for eid, label, _ in records}
+        self._system = self._SYSTEM_TEMPLATE.replace(
+            "{kb_table}", render_kb_catalog(kb)
+        )
         self._model_name = model
+        self._provider = provider
         self._cache_dir = pathlib.Path(cache_dir)
         self._context_chars = context_chars
-
-    def _cached_completion(self, user: str) -> str:
-        key = hashlib.sha256(
-            json.dumps([self._model_name, self._system, user]).encode("utf-8")
-        ).hexdigest()[:32]
-        cache_file = self._cache_dir / f"{key}.json"
-        if cache_file.exists():
-            return json.loads(cache_file.read_text(encoding="utf-8"))["text"]
-
-        import anthropic
-
-        client = anthropic.Anthropic()
-        response = client.messages.create(
-            model=self._model_name,
-            max_tokens=64,
-            system=[
-                {
-                    "type": "text",
-                    "text": self._system,
-                    "cache_control": {"type": "ephemeral"},
-                }
-            ],
-            messages=[{"role": "user", "content": user}],
-        )
-        text = "".join(b.text for b in response.content if b.type == "text")
-        self._cache_dir.mkdir(parents=True, exist_ok=True)
-        cache_file.write_text(
-            json.dumps({"model": self._model_name, "text": text}), encoding="utf-8"
-        )
-        return text
 
     def link(self, text: str, a: int, b: int) -> str | None:
         lo = max(0, a - self._context_chars)
         hi = min(len(text), b + self._context_chars)
         marked = text[lo:a] + "【" + text[a:b] + "】" + text[b:hi]
-        raw = _FENCE_RE.sub("", self._cached_completion(marked).strip()).strip()
-        token = raw.split()[0] if raw.split() else ""
-        if token == "NONE" or token not in self._kb_ids:
+        raw = complete(
+            system=self._system,
+            user=marked,
+            cache_dir=self._cache_dir,
+            provider=self._provider,
+            model=self._model_name,
+            max_output_tokens=64,
+        )
+        answer = _FENCE_RE.sub("", raw.strip()).strip().strip('"')
+        if not answer or answer.upper() == "NONE":
             return None
-        return token
+        return self._label_index.get(answer.casefold())

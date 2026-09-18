@@ -56,9 +56,11 @@ docs = [
   "mkdocstrings[python]>=0.29.1"
 ]
 eval = [
-  # LLM-assisted gold pre-annotation (run/eval/annotate_llm.py); the linker itself
-  # never calls an LLM.
-  "anthropic>=1.0"
+  # LLM-assisted gold pre-annotation and the LLM linking baseline; the linker itself
+  # never calls an LLM. Provider is selectable (see pelinker/eval/llm.py) — Gemini is
+  # the default; install `anthropic` alongside it to run a second model family for the
+  # annotator-agreement slice.
+  "google-genai>=1.0"
 ]
 gpu = [
   "cupy-cuda12x>=13.6.0"

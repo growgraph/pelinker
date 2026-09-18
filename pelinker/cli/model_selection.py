@@ -10,6 +10,7 @@ from pelinker.search.model_selection import run_model_selection
 from pelinker.search.model_selection_checkpoint import DEFAULT_CHECKPOINT_NAME, RunMode
 from pelinker.core.onto import NEGATIVE_LABEL
 from pelinker.reports.paths import MODEL_SELECTION_RUN_REPORT_BASENAME
+from pelinker.core.paths import ExpandedPath
 
 _EPILOG = """
 MCS = min_cluster_size (HDBSCAN hyperparameter on the inner grid).
@@ -37,13 +38,13 @@ Metrics (same two-level stack as dim selection):
 )
 @click.option(
     "--input-dir",
-    type=click.Path(path_type=pathlib.Path),
+    type=ExpandedPath(path_type=pathlib.Path),
     required=True,
     help="Directory containing parquet files",
 )
 @click.option(
     "--report-path",
-    type=click.Path(path_type=pathlib.Path),
+    type=ExpandedPath(path_type=pathlib.Path),
     required=True,
     help=(
         "Directory for all run outputs. Canonical artifact: "
@@ -168,7 +169,7 @@ Metrics (same two-level stack as dim selection):
 )
 @click.option(
     "--selected-labels-kb-path",
-    type=click.Path(path_type=pathlib.Path),
+    type=ExpandedPath(path_type=pathlib.Path),
     default=None,
     help="Optional path to selected labels KB CSV file. If provided, clustering will only use labels from this KB.",
 )
@@ -224,7 +225,7 @@ Metrics (same two-level stack as dim selection):
 )
 @click.option(
     "--checkpoint-path",
-    type=click.Path(path_type=pathlib.Path),
+    type=ExpandedPath(path_type=pathlib.Path),
     default=None,
     help=f"Checkpoint JSON path (default: <report-path>/{DEFAULT_CHECKPOINT_NAME})",
 )

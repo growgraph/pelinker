@@ -13,10 +13,18 @@ from dataclasses import dataclass
 
 import numpy as np
 import pandas as pd
-import umap
 from sklearn.decomposition import PCA
 
 from pelinker.core.config import TransformConfig
+from pelinker.core.runtime import preload_torch_before_tensorflow
+
+# ``import umap`` pulls in TensorFlow (tf-keras, for ParametricUMAP). Torch and its triton
+# runtime have to be in the process first: with TensorFlow initialised first, a later
+# ``import triton.runtime`` segfaults the interpreter. This is the single place that
+# ordering is enforced — see pelinker.core.runtime.
+preload_torch_before_tensorflow()
+
+import umap  # noqa: E402  (must follow the preload above)
 
 logger = logging.getLogger(__name__)
 

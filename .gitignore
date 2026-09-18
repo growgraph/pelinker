@@ -174,3 +174,5 @@ models/
 *.pkl
 *.joblib
 pelinker/store/*gz
+
+.env*

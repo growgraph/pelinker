@@ -54,6 +54,7 @@ from pelinker.reports.paths import (
     linker_fit_clustering_report_path,
     linker_fit_kb_out_path,
 )
+from pelinker.core.paths import ExpandedPath
 
 _PIE_SAMPLE_MAX_CLUSTERS = 6
 _FIGURE_EXTS = ("png", "pdf")
@@ -290,7 +291,7 @@ def _load_composition_df(
 )
 @click.argument(
     "report_dir",
-    type=click.Path(
+    type=ExpandedPath(
         path_type=pathlib.Path, exists=True, file_okay=False, dir_okay=True
     ),
 )
@@ -323,7 +324,7 @@ def _load_composition_df(
 )
 @click.option(
     "--pmid-text-table",
-    type=click.Path(path_type=pathlib.Path, dir_okay=False),
+    type=ExpandedPath(path_type=pathlib.Path, dir_okay=False),
     default=None,
     help=(
         "TSV/CSV (optional gzip) with PMID and full text columns. "

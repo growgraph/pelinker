@@ -43,6 +43,7 @@ import click
 import pandas as pd
 
 from pelinker.clustering.composition import filter_emergent_assignments
+from pelinker.core.paths import ExpandedPath
 
 logger = logging.getLogger(__name__)
 
@@ -164,19 +165,21 @@ def _assignments_from_fit_report(path: str) -> pd.DataFrame:
 
 
 @click.command()
-@click.option("--kb-csv-path", required=True, type=click.Path(exists=True))
-@click.option("--report-dir", required=True, type=click.Path())
-@click.option("--model-path", default=None, help="Fitted linker artifact.")
+@click.option("--kb-csv-path", required=True, type=ExpandedPath(exists=True))
+@click.option("--report-dir", required=True, type=ExpandedPath())
+@click.option(
+    "--model-path", default=None, type=ExpandedPath(), help="Fitted linker artifact."
+)
 @click.option(
     "--fit-report",
     default=None,
-    type=click.Path(exists=True),
+    type=ExpandedPath(exists=True),
     help="linker_fit.clustering_report.json.gz from a completed fit.",
 )
 @click.option(
     "--assignments-parquet",
     default=None,
-    type=click.Path(exists=True),
+    type=ExpandedPath(exists=True),
     help="Mention frame with 'entity' and 'cluster' columns.",
 )
 @click.option(

@@ -12,6 +12,7 @@ import click
 import requests
 
 from pelinker.data import load_json_path
+from pelinker.core.paths import ExpandedPath
 
 _DEFAULT_LINK_BODY: dict[str, Any] = {
     "texts": [
@@ -103,12 +104,14 @@ def _request_json(
 )
 @click.option(
     "--input-path",
-    type=click.Path(path_type=pathlib.Path, exists=True, dir_okay=False, readable=True),
+    type=ExpandedPath(
+        path_type=pathlib.Path, exists=True, dir_okay=False, readable=True
+    ),
     help="JSON body for POST endpoints; must include 'text' or 'texts' (optional thr_score, use_gpu, …).",
 )
 @click.option(
     "--output",
-    type=click.Path(path_type=pathlib.Path),
+    type=ExpandedPath(path_type=pathlib.Path),
     help="Write JSON response to this path instead of printing.",
 )
 @click.option("--timeout", type=float, default=300.0, show_default=True)

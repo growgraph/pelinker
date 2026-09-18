@@ -154,6 +154,46 @@ def merge_new_frames_into_screener_eval_jsonl(
     tmp.replace(path)
 
 
+def append_sample_labels_parquet(
+    path: pathlib.Path,
+    new_frames: list[pd.DataFrame],
+) -> None:
+    """Accumulate per-bootstrap cluster assignments for stability analysis.
+
+    Appends rather than overwrites so a resumed or multi-cell run keeps every draw, and
+    de-duplicates on the mention's identity plus the draw and dims it came from — the
+    same row re-clustered in a later cell is a *different* observation, the same row in
+    the same cell is a repeat.
+    """
+    if not new_frames:
+        return
+    new_df = pd.concat(new_frames, ignore_index=True)
+    if new_df.empty:
+        return
+    prior = pd.read_parquet(path) if path.exists() else None
+    merged = (
+        pd.concat([prior, new_df], ignore_index=True) if prior is not None else new_df
+    )
+    dup_subset = [
+        c
+        for c in (
+            "pmid",
+            "itext",
+            "a_abs",
+            "b_abs",
+            "sample_idx",
+            "pca_components",
+            "umap_dim",
+        )
+        if c in merged.columns
+    ]
+    if dup_subset:
+        merged = merged.drop_duplicates(subset=dup_subset, keep="last")
+    tmp = path.with_name(path.name + ".tmp")
+    merged.to_parquet(tmp, index=False)
+    tmp.replace(path)
+
+
 def per_datapoint_scores_df(
     scores: PerDatapointScores,
     *,

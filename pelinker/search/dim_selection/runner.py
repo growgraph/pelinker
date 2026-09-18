@@ -47,6 +47,7 @@ from pelinker.search.grid_export import grid_export_rows_from_report
 from pelinker.search.model_selection.artifacts import (
     merge_new_frames_into_fine_metadata_jsonl,
     merge_new_frames_into_per_sample_grid_csv,
+    append_sample_labels_parquet,
     merge_new_frames_into_screener_eval_jsonl,
     per_datapoint_scores_df,
 )
@@ -58,6 +59,7 @@ from pelinker.data.tables import parse_model_filename
 from pelinker.plotting import plot_metrics, plot_metrics_with_error_bars
 from pelinker.reports.paths import (
     CLUSTERING_SEARCH_FINE_METADATA_BASENAME,
+    CLUSTERING_SEARCH_SAMPLE_LABELS_BASENAME,
     CLUSTERING_SEARCH_GRID_PER_SAMPLE_CSV_BASENAME,
     FINE_SCREENER_EVAL_BASENAME,
 )
@@ -209,6 +211,7 @@ def run_dim_selection(
     max_mentions_per_entity: int | None = None,
     max_mentions_negative: int | None = None,
     mention_cap_seed: int = 13,
+    persist_labels: bool = False,
 ) -> None:
     """
     Search ``(pca_components, umap_dim)`` for one embedding parquet.
@@ -245,8 +248,14 @@ def run_dim_selection(
     detail_path = report_path / CLUSTERING_SEARCH_GRID_PER_SAMPLE_CSV_BASENAME
     fine_metadata_path = report_path / CLUSTERING_SEARCH_FINE_METADATA_BASENAME
     fine_screener_eval_path = report_path / FINE_SCREENER_EVAL_BASENAME
+    sample_labels_path = report_path / CLUSTERING_SEARCH_SAMPLE_LABELS_BASENAME
     if not resume:
-        for artifact in (detail_path, fine_metadata_path, fine_screener_eval_path):
+        for artifact in (
+            detail_path,
+            fine_metadata_path,
+            fine_screener_eval_path,
+            sample_labels_path,
+        ):
             try:
                 if artifact.exists():
                     artifact.unlink()
@@ -377,6 +386,7 @@ def run_dim_selection(
         grid_report_samples: list[tuple[int, ModelSelectionReport]] = []
         fine_frames: list[pd.DataFrame] = []
         screener_frames: list[pd.DataFrame] = []
+        label_frames: list[pd.DataFrame] = []
 
         for sample_idx in range(n_sample):
             try:
@@ -410,6 +420,12 @@ def run_dim_selection(
                         sample_idx=sample_idx,
                     )
                 )
+                if persist_labels and report.assignments is not None:
+                    labels_df = report.assignments.copy()
+                    labels_df["sample_idx"] = sample_idx
+                    labels_df["pca_components"] = pca_k
+                    labels_df["umap_dim"] = umap_d
+                    label_frames.append(labels_df)
                 if report.screener_oos_datapoints is not None:
                     screener_frames.append(
                         per_datapoint_scores_df(
@@ -452,6 +468,8 @@ def run_dim_selection(
             merge_new_frames_into_screener_eval_jsonl(
                 fine_screener_eval_path, screener_frames
             )
+        if label_frames:
+            append_sample_labels_parquet(sample_labels_path, label_frames)
 
         if len(file_metrics) > 1:
             plot_metrics_with_error_bars(
