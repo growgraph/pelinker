@@ -2,7 +2,7 @@
 
 ### Entity linking for BERT-like models
 
-![Python](https://img.shields.io/badge/python-3.10-blue.svg) 
+![Python](https://img.shields.io/badge/python-3.10.6%2B-blue.svg) 
 [![License](https://img.shields.io/badge/license-BSD--3--Clause-blue?style=flat-square)](https://img.shields.io/badge/license-BSD--3--Clause-blue?style=flat-square)
 [![pre-commit](https://github.com/growgraph/pelinker/actions/workflows/pre-commit.yml/badge.svg)](https://github.com/growgraph/pelinker/actions/workflows/pre-commit.yml)
 
@@ -18,11 +18,10 @@ Entity linking for BERT-like models
 
 1. Make sure there is an available version of python specified in `pyproject.toml`, for example installed using pyenv.
 2. Install `uv` : `curl -LsSf https://astral.sh/uv/install.sh | sh`
-3. Run `uv sync --all-groups` to create a local environment with project dependencies specified in `uv.lock`
-4. Add a spacy language model `uv run spacy download en_core_web_lg`
-5. Set up `pre-commit` hooks:  `uv run pre-commit install`.
-6. To run `pre-commit` independently from `git commit`, run `uv run pre-commit run --all-files`
-7. To run tests run `pytest test`
+3. Run `uv sync --extra dev` to create a local environment with project dependencies specified in `uv.lock`. The `dev` extra pins the spaCy `en_core_web_lg` model, so no separate `spacy download` is needed. Other extras: `docs` (MkDocs), `eval` (LLM SDKs for the gold pipeline), `preprocess` (ontology parsing), `gpu` (CuPy). Name every extra you want in one command — `uv sync` uninstalls the ones it is not given.
+4. Set up `pre-commit` hooks:  `uv run pre-commit install`.
+5. To run `pre-commit` independently from `git commit`, run `uv run pre-commit run --all-files`
+6. To run tests run `uv run pytest test`
 
 
 NB.
@@ -54,19 +53,38 @@ Add `--kb-validation` for a `kb_lemma_validation` block: the rate at which a men
 predicted entity agrees with the entity its own lemma resolves to in the KB. That is a
 distant-supervision consistency check, not end-task accuracy.
 
-Programmatic entry points: `pelinker.ground_truth.score_predictions_against_ground_truth`
-and `pelinker.linker_kb_lemma.aggregate_kb_lemma_validation`.
+Programmatic entry points: `pelinker.kb.ground_truth.score_predictions_against_ground_truth`
+and `pelinker.linker.kb_lemma.aggregate_kb_lemma_validation`.
 
-## Serialize Model
+## Gold evaluation
 
-"Train" a model on a corpus
+The scoring above compares against whatever ground truth a file happens to carry. For the
+human-verified gold set — canonical predicate vocabulary, LLM pre-annotation, annotator
+agreement, and reference baselines (lexical / encoder k-NN / LLM / the linker itself)
+scored through one harness — see the [gold evaluation
+guide](https://growgraph.github.io/pelinker/user_guide/evaluation/) and the drivers in
+`run/eval/`.
 
+## Fit a model
 
-- `uv run python run/save_model.py`
+Train a linker on a corpus and serialize the artifact:
+
+```commandline
+uv run pelinker-fit \
+  pipeline=both \
+  kb_path=data/derived/properties.synthesis.2.csv \
+  input_text_table_path=<corpus>.tsv.gz \
+  embeddings_parquet=<workdir>/corpus_pubmedbert_1.parquet \
+  model_path=<models>/pelinker.pubmedbert.run1 \
+  report_path=<workdir>/reports/run1
+```
+
+See [`run/README.md`](run/README.md) for the stages, the parameters and how hyperparameters
+reach the fit from the selection searches.
 
 ### Run server
 
-- `poetry run python run/serve`
+- `uv run pelinker-serves` (FastAPI; default port 8599, `/docs` for the interactive API)
 
 ## Container
 1. Build image: `docker buildx build -t gg/pelinker:<current_version> --ssh default=$SSH_AUTH_SOCK . 2>&1 | tee build.log`

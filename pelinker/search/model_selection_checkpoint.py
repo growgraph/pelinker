@@ -22,6 +22,7 @@ from pelinker.search.checkpoint_base import (
 )
 from pelinker.core.onto import NEGATIVE_LABEL
 from pelinker.reports.paths import MODEL_SELECTION_CHECKPOINT_BASENAME
+from pelinker.kb.classes import ClassView
 
 __all__ = [
     "CHECKPOINT_VERSION",
@@ -163,6 +164,8 @@ def fingerprint_config_from_cli(
     max_mentions_per_entity: int | None = None,
     max_mentions_negative: int | None = None,
     mention_cap_seed: int = 13,
+    class_view: ClassView = "raw",
+    class_kb_path: pathlib.Path | None = None,
 ) -> dict[str, Any]:
     return {
         **shared_fingerprint_fields(
@@ -185,6 +188,8 @@ def fingerprint_config_from_cli(
             max_mentions_per_entity=max_mentions_per_entity,
             max_mentions_negative=max_mentions_negative,
             mention_cap_seed=mention_cap_seed,
+            class_view=class_view,
+            class_kb_path=class_kb_path,
         ),
         "input_dir": str(input_dir.expanduser().resolve()),
         "pca_components": pca_components,

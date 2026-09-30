@@ -201,3 +201,35 @@ def test_wider_gold_span_backs_off_to_the_matching_sub_window(nlp) -> None:
 
     # Exact-only matching would abstain here and make the baseline a strawman.
     assert baseline.link(TEXT_B, 5, 20) == "PEL.5"
+
+
+def test_linking_only_scores_in_canonical_space(gold_file: Path) -> None:
+    """A converse-member answer is the right relation under the other name."""
+    docs = load_gold_docs(gold_file)
+    converse_of = {
+        span.entity_id: "RO.2" for doc in docs for span in doc.spans if span.entity_id
+    }
+
+    def link(text: str, a: int, b: int) -> str:
+        return "RO.2"
+
+    canonical = {"RO.2": next(iter(converse_of))}
+    run = evaluate_linking_only(link, docs, system="stub", canonicalize=canonical)
+
+    assert run.score["n_predicted"] == run.score["n_spans"]
+    assert run.score["n_correct"] >= 1
+
+
+def test_linking_only_drops_ids_the_bridge_cannot_map(gold_file: Path) -> None:
+    docs = load_gold_docs(gold_file)
+
+    run = evaluate_linking_only(
+        lambda text, a, b: "kb::CUNKNOWN",
+        docs,
+        system="stub",
+        predicted_id_to_kb_in={"kb::C1": "PEL.1"},
+    )
+
+    # Unmappable ids are not abstentions and not errors: they are incomparable.
+    assert run.score["n_predicted"] == 0
+    assert run.score["n_correct"] == 0

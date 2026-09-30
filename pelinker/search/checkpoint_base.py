@@ -20,6 +20,7 @@ from typing import Any
 
 from pelinker.data.json_files import is_gzip_file_path, load_json_path
 from pelinker.core.onto import NEGATIVE_LABEL
+from pelinker.kb.classes import ClassView, file_sha256
 
 CHECKPOINT_VERSION = 2
 """Bumped to 2: outer DBCV+ARI scores switched from ``0.5*(dbcv+ari)`` to the clipped
@@ -96,6 +97,8 @@ def shared_fingerprint_fields(
     max_mentions_per_entity: int | None = None,
     max_mentions_negative: int | None = None,
     mention_cap_seed: int = 13,
+    class_view: ClassView = "raw",
+    class_kb_path: pathlib.Path | None = None,
 ) -> dict[str, Any]:
     """The fingerprint fields common to every search; callers add their own on top.
 
@@ -109,7 +112,18 @@ def shared_fingerprint_fields(
     resolved_min_scale = (
         min_scale if min_scale is not None else max(1, min_class_size // 2)
     )
+    # A class view changes what the objective's ARI scores against, so it is part of the
+    # fingerprint. It is added only when set, so a raw-label run keeps the fingerprint it
+    # had before the option existed. The KB enters by content: a re-derived pairs KB
+    # changes the classes under the same path.
+    view_fields: dict[str, Any] = {}
+    if class_view != "raw":
+        view_fields["class_view"] = class_view
+        view_fields["class_kb_sha256"] = (
+            file_sha256(class_kb_path) if class_kb_path is not None else None
+        )
     return {
+        **view_fields,
         "batch_size": batch_size,
         "clustering_grid_step": clustering_grid_step,
         "clustering_sample_rows": clustering_sample_rows,

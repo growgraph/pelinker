@@ -9,6 +9,7 @@ from typing import Any, ClassVar, Literal
 from numpy.random import RandomState
 
 from pelinker.core.onto import NEGATIVE_LABEL
+from pelinker.kb.classes import ClassView
 from pelinker.core.scaling import ScaleCurve
 
 GridObjectiveSpec = Literal[
@@ -316,6 +317,13 @@ class LinkerFitConfig:
     max_mentions_per_entity: int | None = None
     max_mentions_negative: int | None = None
     mention_cap_seed: int = 13
+    class_view: ClassView = "raw"
+    """Which classes agreement metrics (ARI) score clusters against — see
+    :mod:`pelinker.kb.classes`. ``raw`` is the matched label; ``reldir`` (canonical
+    relation + direction) treats every relation's voices alike and needs ``class_kb_path``.
+    """
+    class_kb_path: str | None = None
+    """Pairs KB (``*.pairs.csv``) the ``rel`` / ``reldir`` views are computed from."""
     ambient_screener: NegativeScreenerConfig = field(
         default_factory=NegativeScreenerConfig
     )
@@ -372,6 +380,8 @@ class LinkerFitConfig:
             max_mentions_per_entity=self.max_mentions_per_entity,
             max_mentions_negative=self.max_mentions_negative,
             mention_cap_seed=self.mention_cap_seed,
+            class_view=self.class_view,
+            class_kb_path=self.class_kb_path,
             ambient_screener=self.ambient_screener,
             projection_screener=self.projection_screener,
         )
@@ -430,6 +440,13 @@ class ClusteringOptimizationConfig:
     max_mentions_per_entity: int | None = None
     max_mentions_negative: int | None = None
     mention_cap_seed: int = 13
+    class_view: ClassView = "raw"
+    """Which classes agreement metrics (ARI) score clusters against — see
+    :mod:`pelinker.kb.classes`. ``raw`` is the matched label; ``reldir`` (canonical
+    relation + direction) treats every relation's voices alike and needs ``class_kb_path``.
+    """
+    class_kb_path: str | None = None
+    """Pairs KB (``*.pairs.csv``) the ``rel`` / ``reldir`` views are computed from."""
     grid_objective: GridObjectiveSpec = "dbcv_ari_geomean"
     """Which scalar to optimize on the grid.
 

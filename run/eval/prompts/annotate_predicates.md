@@ -1,7 +1,7 @@
 # Predicate-mention annotation prompt
 
 Slots: `{kb_table}` (a numbered catalog, one relation per line, rendered by
-`pelinker.eval.kb_prompt`: `N. "label" | def: … | converse wording: "…"`),
+`pelinker.eval.kb_prompt`: `N. "label" | def: … | symmetric | converse wording: "…"`),
 `{abstract}` (the document text). The model returns **labels, not ids**: opaque ids
 carry no meaning for a language model, and asking it to transcribe one turns a semantic
 judgement into a copying task that silently fails. Ids are resolved afterwards by
@@ -12,7 +12,8 @@ pair, so a passive mention could otherwise be encoded two equally valid ways —
 by"/forward or "regulates"/inverse — and that ambiguity is what put contradictory labels
 on the same span in the pipeline's own weak supervision. Here the relation and its
 orientation are annotated separately: pick the canonical relation, then say which way it
-runs.
+runs. Relations marked `symmetric` have no orientation; the decoder sets their direction
+to "symmetric" whatever the model answers, and flags the hit when it had to.
 
 ## System
 
@@ -25,8 +26,8 @@ expresses one of them, produce one annotation record. Ignore relations that no l
 entry covers. Do not annotate entity names, only relation expressions.
 
 Relations — a numbered list, one per line. Each entry is
-`N. "label" | def: definition | converse wording: "other surface form"`, where `def` and
-`converse wording` may be absent. Only the quoted `label` is a valid answer; the number is
+`N. "label" | def: definition | symmetric | converse wording: "other surface form"`, where
+`def`, `symmetric` and `converse wording` may be absent. Only the quoted `label` is a valid answer; the number is
 for reference only and the converse wording is never itself an answer.
 
 {kb_table}
@@ -47,7 +48,8 @@ Rules:
      "activates").
    - "inverse" — the sentence reads the other way round: passive voice or the converse
      wording (Y is activated by X ⇒ still label "activates", direction "inverse").
-   - "symmetric" — the relation has no orientation (X interacts with Y).
+   - "symmetric" — the relation has no orientation (X interacts with Y). Always use
+     "symmetric" for relations marked `symmetric` in the list, whatever the voice.
    - "na" — orientation is not determinable from the sentence.
 5. `subject_text` / `object_text`: the verbatim surface strings of the relation's
    arguments, assigned by their roles **under the label's forward reading** — so for an

@@ -31,6 +31,10 @@ class SimplifiedToken(BaseDataclass):
     tag: str
     pos: str | None = None  # spaCy ``token.pos_``; ``None`` only for legacy payloads
     is_stop: bool | None = None  # spaCy ``token.is_stop``
+    # Dependency parse, kept to label weak-supervision mentions; never a model feature.
+    i: int | None = None  # spaCy ``token.i`` within the parsed chunk
+    head_i: int | None = None  # ``token.head.i``
+    dep: str | None = None  # ``token.dep_``
 
 
 @dataclasses.dataclass

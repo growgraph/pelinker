@@ -15,6 +15,7 @@ from pelinker.search.model_selection_checkpoint import combination_key_from_memb
 from pelinker.reports.schema import ClusteringSearchSummaryRow, ModelSelectionReport
 from pelinker.search.selection import evaluate_selection_from_paths
 from pelinker.clustering.transform import TransformConfig
+from pelinker.kb.classes import ClassView
 
 
 def path_by_model_layer(
@@ -39,6 +40,8 @@ def clustering_optimization_config_for_run(
     max_mentions_per_entity: int | None,
     max_mentions_negative: int | None,
     mention_cap_seed: int,
+    class_view: ClassView = "raw",
+    class_kb_path: pathlib.Path | None = None,
 ) -> ClusteringOptimizationConfig:
     kind: Literal["lda", "svm"] = "svm" if screener_kind == "svm" else "lda"
     ns = NegativeScreenerConfig(kind=kind, negative_label=negative_label)
@@ -56,6 +59,8 @@ def clustering_optimization_config_for_run(
         max_mentions_per_entity=max_mentions_per_entity,
         max_mentions_negative=max_mentions_negative,
         mention_cap_seed=mention_cap_seed,
+        class_view=class_view,
+        class_kb_path=None if class_kb_path is None else str(class_kb_path),
         ambient_screener=ns,
     )
 

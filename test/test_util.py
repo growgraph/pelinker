@@ -154,6 +154,7 @@ class _FakeReport:
         self.texts = texts
         self._by_wg = by_wg
         self.chunk_mapper = _FakeChunkMapper()
+        self.stokens_per_chunk = None  # no parse: every label is matched lexically
 
     def available_groupings(self):
         return list(self._by_wg.keys())

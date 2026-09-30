@@ -59,6 +59,8 @@ nav:
 -   User Guide:
     -   Run scripts & CLIs: user_guide/run_scripts_and_cli.md
     -   Vector representations: user_guide/vector_representation.md
+    -   Gold evaluation: user_guide/evaluation.md
+    -   HTTP API: user_guide/api.md
 -   API Reference: reference/
 
 markdown_extensions:

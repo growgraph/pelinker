@@ -14,6 +14,9 @@ raw they carry four things that hurt an annotation prompt, in rough order of sev
    a sentence, which is the only thing the annotator has to judge.
 4. **Boilerplate**: source URLs, indentation, trailing whitespace.
 
+Symmetric relations are marked ``symmetric`` on their line, so the model is told — not
+left to guess — that orientation does not apply to them.
+
 Entries are numbered and labels quoted so each is a discrete, unambiguously delimited
 item — most labels contain spaces ("has part", "is concretized as"), and an unquoted
 label in a dash-joined line has no visible boundary.
@@ -74,6 +77,13 @@ def render_kb_catalog(
         description = clean_description(row.get("description"), max_chars=max_chars)
         if description:
             parts.append(f"def: {description}")
+        is_symmetric = row.get("is_symmetric")
+        if (
+            is_symmetric is not None
+            and not pd.isna(is_symmetric)
+            and bool(is_symmetric)
+        ):
+            parts.append("symmetric")
         if include_converse:
             converse = row.get("inverse_label")
             if isinstance(converse, str) and converse.strip():

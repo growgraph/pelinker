@@ -18,6 +18,7 @@ from pelinker.clustering.composition import (
 )
 from pelinker.core.config import ClusterCompositionSnapshot, KBConfig
 from pelinker.core.onto import NEGATIVE_LABEL
+from pelinker.kb.classes import RELATION_DIRECTION_COLUMN
 from pelinker.linker.cluster_training import (
     _disambiguate_consensus_names,
     consensus_cluster_names,
@@ -45,6 +46,10 @@ class KbOutFitProvenance:
     min_cluster_size: int
     clustering_sample_index: int = 0
     seed: int | None = None
+    class_view: str | None = None
+    """Class view the fit's agreement metrics scored against (:mod:`pelinker.kb.classes`)."""
+    class_kb_sha256: str | None = None
+    """Content hash of the pairs KB that view was computed from."""
 
 
 def kb_slug_from_config(kb_config: KBConfig | None, *, fallback: str = "kb") -> str:
@@ -364,6 +369,10 @@ def build_kb_out_catalog(
     }
     if fit_provenance.seed is not None:
         fit_prov["seed"] = int(fit_provenance.seed)
+    if fit_provenance.class_view is not None:
+        fit_prov["class_view"] = fit_provenance.class_view
+    if fit_provenance.class_kb_sha256 is not None:
+        fit_prov["class_kb_sha256"] = fit_provenance.class_kb_sha256
 
     return {
         "schema": KB_OUT_SCHEMA,
@@ -429,6 +438,74 @@ def kb_out_to_kb_in_map(catalog: dict[str, Any]) -> dict[str, str]:
             continue
         out[str(cluster["entity_id"])] = kb_in_id
     return out
+
+
+def cluster_direction_summary(
+    assignments: pd.DataFrame,
+    *,
+    direction_column: str = RELATION_DIRECTION_COLUMN,
+) -> dict[int, dict[str, Any]]:
+    """Per emergent cluster: the share of mention mass in each direction, and the mode.
+
+    Directions are relative to each mention's canonical relation (see
+    :func:`pelinker.kb.classes.add_view_columns`), so a cluster that holds both voices of
+    one relation shows up as a mixed cluster here rather than as a merge of two entries.
+    The dominant direction breaks ties by name, deterministically. Noise is excluded.
+    """
+    if direction_column not in assignments.columns or "cluster" not in assignments:
+        return {}
+    work = assignments.loc[
+        assignments["cluster"].astype(int) != HDBSCAN_NOISE_CLUSTER_ID,
+        ["cluster", direction_column],
+    ]
+    out: dict[int, dict[str, Any]] = {}
+    for cid, grp in work.groupby("cluster", sort=True):
+        counts = grp[direction_column].astype(str).value_counts()
+        total = int(counts.sum())
+        if total == 0:
+            continue
+        mix = {str(d): float(n) / total for d, n in sorted(counts.items())}
+        dominant = min(mix, key=lambda d: (-mix[d], d))
+        out[int(cid)] = {
+            "direction_mix": mix,
+            "dominant_direction": dominant,
+            "direction_mentions": total,
+        }
+    return out
+
+
+def annotate_cluster_directions(
+    catalog: dict[str, Any], assignments: pd.DataFrame
+) -> dict[str, str]:
+    """Add ``direction_mix`` / ``dominant_direction`` to each catalog cluster, in place.
+
+    Returns:
+        KB-out entity id → dominant direction, for the clusters that have one. This is
+        the direction the linker emits for a mention it links to that entity.
+    """
+    summary = cluster_direction_summary(assignments)
+    by_entity: dict[str, str] = {}
+    for cluster in catalog.get("clusters", []):
+        info = summary.get(int(cluster["cluster_id"]))
+        if info is None:
+            continue
+        cluster.update(info)
+        by_entity[str(cluster["entity_id"])] = str(info["dominant_direction"])
+    return by_entity
+
+
+def kb_out_to_reldir_map(catalog: dict[str, Any]) -> dict[str, tuple[str, str | None]]:
+    """Minted KB-out entity id → (dominant input-KB id, dominant direction).
+
+    The id half is :func:`kb_out_to_kb_in_map`. The direction is ``None`` for a catalog
+    built without a class view, which carries no per-cluster direction.
+    """
+    ids = kb_out_to_kb_in_map(catalog)
+    direction_of = {
+        str(c["entity_id"]): c.get("dominant_direction")
+        for c in catalog.get("clusters", [])
+    }
+    return {eid: (kb_in, direction_of.get(eid)) for eid, kb_in in ids.items()}
 
 
 def cluster_labels_from_catalog(

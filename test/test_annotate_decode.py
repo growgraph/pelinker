@@ -9,6 +9,8 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
+from pelinker.core.onto import SimplifiedToken
+
 _MODULE_PATH = Path(__file__).resolve().parents[1] / "run" / "eval" / "annotate_llm.py"
 
 
@@ -249,3 +251,221 @@ def test_flip_direction_leaves_symmetric_and_na_alone() -> None:
     assert ann.flip_direction("inverse") == "forward"
     assert ann.flip_direction("symmetric") == "symmetric"
     assert ann.flip_direction(None) is None
+
+
+def test_an_oriented_answer_on_a_symmetric_relation_is_coerced_and_flagged() -> None:
+    kb = pd.DataFrame(
+        {
+            "entity_id": ["RO.34"],
+            "label": ["interacts with"],
+            "is_symmetric": [True],
+            "is_canonical": [True],
+            "canonical_entity_id": ["RO.34"],
+        }
+    )
+
+    hits, rejected = ann.resolve_annotations(
+        "p53 interacts with MDM2.",
+        [
+            {
+                "surface": "interacts with",
+                "occurrence": 1,
+                "label": "interacts with",
+                "direction": "forward",
+            }
+        ],
+        label_index=ann.build_label_index(kb),
+        annotator="llm-a",
+        symmetric=ann.symmetric_ids(kb),
+    )
+
+    assert rejected == []
+    assert hits[0]["direction"] == "symmetric"
+    assert hits[0]["direction_coerced"] is True
+
+
+def test_a_symmetric_answer_needs_no_coercion() -> None:
+    kb = pd.DataFrame(
+        {
+            "entity_id": ["RO.34"],
+            "label": ["interacts with"],
+            "is_symmetric": [True],
+            "is_canonical": [True],
+            "canonical_entity_id": ["RO.34"],
+        }
+    )
+
+    hits, _ = ann.resolve_annotations(
+        "p53 interacts with MDM2.",
+        [
+            {
+                "surface": "interacts with",
+                "occurrence": 1,
+                "label": "interacts with",
+                "direction": "symmetric",
+            }
+        ],
+        label_index=ann.build_label_index(kb),
+        annotator="llm-a",
+        symmetric=ann.symmetric_ids(kb),
+    )
+
+    assert hits[0]["direction"] == "symmetric"
+    assert "direction_coerced" not in hits[0]
+
+
+def test_a_nominal_surface_on_a_verb_label_is_rejected(kb) -> None:
+    """Training sees verb mentions only; a noun in gold scores a skill never taught."""
+    text = "The association of IL-6 with TAMs regulates growth."
+    item = {"surface": "association", "occurrence": 1, "label": "regulates"}
+
+    hits, rejected = ann.resolve_annotations(
+        text,
+        [item],
+        label_index=ann.build_label_index(kb),
+        annotator="llm-a",
+        verb_labels=frozenset({"regulates"}),
+        has_verb=lambda a, b: False,
+    )
+
+    assert hits == []
+    assert rejected[0]["reasons"] == ["non_verbal"]
+
+
+def test_a_non_verb_label_keeps_its_noun_surface(kb) -> None:
+    hits, rejected = ann.resolve_annotations(
+        "TAMs secrete IL-10.",
+        [{"surface": "secrete", "occurrence": 1, "label": "secretes"}],
+        label_index=ann.build_label_index(kb),
+        annotator="llm-a",
+        verb_labels=frozenset({"regulates"}),  # "secretes" is not in the verb set here
+        has_verb=lambda a, b: False,
+    )
+
+    assert rejected == [] and len(hits) == 1
+
+
+def _tok(ix: int, text: str, lemma: str) -> SimplifiedToken:
+    return SimplifiedToken(ix=ix, ix_end=ix + len(text), text=text, lemma=lemma, tag="")
+
+
+def test_anchor_check_tells_label_wording_from_paraphrase() -> None:
+    # "Smoking leads to cancer and causes harm."
+    tokens = [
+        _tok(0, "Smoking", "smoking"),
+        _tok(8, "leads", "lead"),
+        _tok(14, "to", "to"),
+        _tok(17, "cancer", "cancer"),
+        _tok(24, "and", "and"),
+        _tok(28, "causes", "cause"),
+        _tok(35, "harm", "harm"),
+    ]
+    anchors = {"PEL.4": [frozenset({"cause"})]}
+    anchored = ann.anchor_check(tokens, anchors)
+
+    assert anchored(28, 34, "PEL.4") is True  # "causes"
+    assert anchored(8, 16, "PEL.4") is False  # "leads to": a paraphrase
+    assert anchored(28, 34, "PEL.unknown") is False
+
+
+def test_resolved_hits_carry_the_anchor_flag(kb) -> None:
+    hits, _ = ann.resolve_annotations(
+        "TAMs secrete IL-10.",
+        [{"surface": "secrete", "occurrence": 1, "label": "secretes"}],
+        label_index=ann.build_label_index(kb),
+        annotator="llm-a",
+        is_anchored=lambda a, b, entity_id: entity_id == "PEL.3",
+    )
+
+    assert hits[0]["surface_anchored"] is True
+
+
+# ------------------------------------------------------------- response handling
+
+
+def test_an_object_wrapping_one_array_is_unwrapped() -> None:
+    """Object-only JSON modes wrap the requested array; the records are what counts."""
+    raw = '{"annotations": [{"surface": "binds", "occurrence": 1}]}'
+
+    assert ann.parse_llm_response(raw) == [{"surface": "binds", "occurrence": 1}]
+
+
+def test_an_object_that_is_not_a_wrapper_is_still_refused() -> None:
+    with pytest.raises(ValueError, match="JSON array"):
+        ann.parse_llm_response('{"surface": "binds", "occurrence": 1}')
+
+
+def test_a_reemitted_mention_is_reported_as_a_duplicate(kb) -> None:
+    """Quoting text that is absent and repeating a mention are different failures."""
+    item = {"surface": "secrete", "occurrence": 1, "label": "secretes"}
+
+    hits, rejected = ann.resolve_annotations(
+        TEXT,
+        [item, dict(item), {**item, "surface": "secreted"}],
+        label_index=ann.build_label_index(kb),
+        annotator="llm-a",
+    )
+
+    assert len(hits) == 1
+    assert [r["reasons"] for r in rejected] == [
+        ["duplicate_occurrence"],
+        ["surface_not_found"],
+    ]
+
+
+def test_a_truncated_document_is_reported_and_left_out(
+    kb, nlp, tmp_path: Path, monkeypatch
+) -> None:
+    """An unanswered document must not read as one where the annotator found nothing."""
+    import json
+
+    from click.testing import CliRunner
+
+    from pelinker.eval.llm import LLMIncompleteError
+
+    kb_path = tmp_path / "kb.csv"
+    kb.assign(needs_review=False, is_symmetric=False).to_csv(kb_path, index=False)
+    sample = tmp_path / "gold"
+    sample.mkdir()
+    pd.DataFrame({"doc_id": [1, 2], "role": ["primary", "primary"]}).to_csv(
+        sample / "sample_manifest.csv", index=False
+    )
+    (sample / "sample_texts.jsonl").write_text(
+        "\n".join(json.dumps({"doc_id": i, "text": TEXT}) for i in (1, 2)),
+        encoding="utf-8",
+    )
+
+    calls: list[str] = []
+
+    def fake_complete(*, user, **kw):
+        calls.append(user)
+        if len(calls) > 1:
+            raise LLMIncompleteError("stopped at max_output_tokens")
+        return '[{"surface": "secrete", "occurrence": 1, "label": "secretes"}]'
+
+    monkeypatch.setattr(ann, "complete", fake_complete)
+    monkeypatch.setattr(ann.spacy, "load", lambda name: nlp)
+    out = tmp_path / "gold.llm-b.json"
+
+    result = CliRunner().invoke(
+        ann.main,
+        [
+            "--sample-dir",
+            str(sample),
+            "--kb-csv-path",
+            str(kb_path),
+            "--output-path",
+            str(out),
+            "--roles",
+            "primary",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    docs = json.loads(out.read_text(encoding="utf-8"))
+    assert [d["doc_id"] for d in docs] == [1]
+    report = json.loads(out.with_suffix(".report.json").read_text(encoding="utf-8"))
+    assert report["n_truncated"] == 1
+    assert [
+        r["doc_id"] for r in report["rejected"] if r["reasons"] == ["truncated"]
+    ] == [2]

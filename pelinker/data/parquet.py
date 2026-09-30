@@ -34,6 +34,10 @@ class ParquetWriter:
             pa.field("ichunk", pa.int64()),
             # For embeddings, we'll use list of float64
             pa.field("embed", pa.list_(pa.float64())),
+            # How the weak label was assigned: parse-based voice for verb predicates
+            # (``direction`` forward|inverse|symmetric), ``lexical`` otherwise.
+            pa.field("direction", pa.string()),
+            pa.field("surface_rule", pa.string()),
         ]
         return pa.schema(fields)
 
@@ -53,6 +57,8 @@ class ParquetWriter:
         itext_vals = [row.get("itext") for row in data]
         ichunk_vals = [row.get("ichunk") for row in data]
         embeds = [row["embed"] for row in data]
+        directions = [row.get("direction") for row in data]
+        surface_rules = [row.get("surface_rule") for row in data]
 
         # Create PyArrow arrays directly with explicit types
         pmid_array = pa.array(pmids, type=pa.string())
@@ -65,6 +71,8 @@ class ParquetWriter:
         itext_array = pa.array(itext_vals, type=pa.int64())
         ichunk_array = pa.array(ichunk_vals, type=pa.int64())
         embed_array = pa.array(embeds, type=pa.list_(pa.float64()))
+        direction_array = pa.array(directions, type=pa.string())
+        surface_rule_array = pa.array(surface_rules, type=pa.string())
 
         return (
             pmid_array,
@@ -77,6 +85,8 @@ class ParquetWriter:
             itext_array,
             ichunk_array,
             embed_array,
+            direction_array,
+            surface_rule_array,
         )
 
     def _dict_list_to_arrow_table(self, data: list[dict]) -> pa.Table:

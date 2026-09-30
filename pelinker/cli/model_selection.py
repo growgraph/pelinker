@@ -11,6 +11,7 @@ from pelinker.search.model_selection_checkpoint import DEFAULT_CHECKPOINT_NAME, 
 from pelinker.core.onto import NEGATIVE_LABEL
 from pelinker.reports.paths import MODEL_SELECTION_RUN_REPORT_BASENAME
 from pelinker.core.paths import ExpandedPath
+from pelinker.kb.classes import check_class_view
 
 _EPILOG = """
 MCS = min_cluster_size (HDBSCAN hyperparameter on the inner grid).
@@ -150,6 +151,23 @@ Metrics (same two-level stack as dim selection):
     help="Seed for per-entity mention cap draws (default: --seed).",
 )
 @click.option(
+    "--class-view",
+    type=click.Choice(["raw", "rel", "reldir"]),
+    default="reldir",
+    show_default=True,
+    help=(
+        "Classes the objective's ARI scores clusters against: raw matched label, "
+        "canonical relation, or canonical relation + direction. rel/reldir need "
+        "--class-kb-path."
+    ),
+)
+@click.option(
+    "--class-kb-path",
+    type=ExpandedPath(path_type=pathlib.Path, dir_okay=False, exists=True),
+    default=None,
+    help="Pairs KB (*.pairs.csv) the mentions were embedded with; required unless --class-view raw.",
+)
+@click.option(
     "--batch-size",
     type=click.INT,
     default=1000,
@@ -271,6 +289,8 @@ def main(
     max_mentions_per_entity: int | None,
     max_mentions_negative: int | None,
     mention_cap_seed: int | None,
+    class_view: str,
+    class_kb_path: pathlib.Path | None,
     batch_size: int,
     n_sample: int,
     prefix: str,
@@ -304,6 +324,8 @@ def main(
         max_mentions_per_entity=max_mentions_per_entity,
         max_mentions_negative=max_mentions_negative,
         mention_cap_seed=seed if mention_cap_seed is None else mention_cap_seed,
+        class_view=check_class_view(class_view, class_kb_path),
+        class_kb_path=class_kb_path,
         batch_size=batch_size,
         n_sample=n_sample,
         prefix=prefix,

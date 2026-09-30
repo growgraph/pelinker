@@ -48,8 +48,9 @@ def map_spans_to_spans_basic(
     return map_ix_jx
 
 
-def text_to_tokens(nlp, text) -> list[SimplifiedToken]:
-    stokens = [
+def tokens_from_doc(doc) -> list[SimplifiedToken]:
+    """spaCy ``Doc`` → :class:`SimplifiedToken` list (use with ``nlp.pipe``)."""
+    return [
         SimplifiedToken(
             **{
                 "lemma": token.lemma_,
@@ -57,14 +58,19 @@ def text_to_tokens(nlp, text) -> list[SimplifiedToken]:
                 "tag": token.tag_,
                 "pos": token.pos_,
                 "is_stop": bool(token.is_stop),
+                "i": token.i,
+                "head_i": token.head.i,
+                "dep": token.dep_,
                 "ix": token.idx,
                 "ix_end": token.idx + len(token),
             }
         )
-        for token in nlp(text)
+        for token in doc
     ]
 
-    return stokens
+
+def text_to_tokens(nlp, text) -> list[SimplifiedToken]:
+    return tokens_from_doc(nlp(text))
 
 
 def keep_expression_for_prediction(expr: Expression) -> bool:

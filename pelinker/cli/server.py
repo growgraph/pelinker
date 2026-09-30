@@ -157,6 +157,9 @@ def build_info_payload(state: ServerState) -> dict[str, Any]:
         "vocabulary_size": len(linker.vocabulary),
         "cluster_count": len(cluster_ids),
         "transform_config": _transform_to_jsonable(linker),
+        # True for a linker fitted with a class view: /link rows then carry
+        # ``direction_predicted``.
+        "emits_direction": bool(linker.cluster_direction),
     }
 
 

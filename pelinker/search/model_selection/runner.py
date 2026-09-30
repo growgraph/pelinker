@@ -99,6 +99,7 @@ from pelinker.search.selection import (
     load_selection_frame,
 )
 from pelinker.clustering.transform import TransformConfig
+from pelinker.kb.classes import ClassView
 
 
 def json_ready_flat_row(row: ClusteringSearchSummaryRow) -> dict[str, object]:
@@ -141,6 +142,8 @@ def run_model_selection(
     max_mentions_per_entity: int | None,
     max_mentions_negative: int | None,
     mention_cap_seed: int,
+    class_view: ClassView = "raw",
+    class_kb_path: pathlib.Path | None = None,
     manifold_kind: str = "umap",
     umap_n_neighbors: int | None = None,
 ) -> None:
@@ -227,6 +230,8 @@ def run_model_selection(
         max_mentions_per_entity=max_mentions_per_entity,
         max_mentions_negative=max_mentions_negative,
         mention_cap_seed=mention_cap_seed,
+        class_view=class_view,
+        class_kb_path=class_kb_path,
     )
     run_fingerprint = compute_run_fingerprint(fp_payload)
 
@@ -400,6 +405,8 @@ def run_model_selection(
                     max_mentions_per_entity=max_mentions_per_entity,
                     max_mentions_negative=max_mentions_negative,
                     mention_cap_seed=mention_cap_seed,
+                    class_view=class_view,
+                    class_kb_path=class_kb_path,
                 )
 
                 status_parts_base = [
@@ -680,6 +687,8 @@ def run_model_selection(
                         max_mentions_per_entity=max_mentions_per_entity,
                         max_mentions_negative=max_mentions_negative,
                         mention_cap_seed=mention_cap_seed,
+                        class_view=class_view,
+                        class_kb_path=class_kb_path,
                     )
 
                     fusion_status_base = (
@@ -1010,6 +1019,8 @@ def run_model_selection(
             max_mentions_per_entity=max_mentions_per_entity,
             max_mentions_negative=max_mentions_negative,
             mention_cap_seed=mention_cap_seed,
+            class_view=class_view,
+            class_kb_path=class_kb_path,
         )
         console.print(
             "[cyan]Materializing best clustering report for UMAP (not held in memory)...[/cyan]"
@@ -1164,6 +1175,7 @@ def run_model_selection(
                     ),
                     umap_n_neighbors=umap_n_neighbors,
                     run_fingerprint=run_fingerprint,
+                    class_view=class_view,
                     outer_score=(
                         None
                         if best_overall_score is None

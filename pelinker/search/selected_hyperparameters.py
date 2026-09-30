@@ -43,6 +43,14 @@ class SelectedHyperparameters:
     umap_n_neighbors: int | None = None
     run_fingerprint: str | None = None
     outer_score: float | None = None
+    class_view: str | None = None
+    """Class view the search's ARI scored against (:mod:`pelinker.kb.classes`). ``None``
+    for a handoff written before views existed, which scored against raw labels."""
+
+    @property
+    def effective_class_view(self) -> str:
+        """The view the search actually used: ``raw`` when none was recorded."""
+        return self.class_view or "raw"
 
     def __post_init__(self) -> None:
         if not self.model:
@@ -75,6 +83,7 @@ class SelectedHyperparameters:
                 None if self.umap_n_neighbors is None else int(self.umap_n_neighbors)
             ),
             "run_fingerprint": self.run_fingerprint,
+            "class_view": self.class_view,
             "outer_score": (
                 None if self.outer_score is None else float(self.outer_score)
             ),
@@ -106,6 +115,7 @@ class SelectedHyperparameters:
                 else int(data["umap_n_neighbors"])
             ),
             run_fingerprint=data.get("run_fingerprint"),
+            class_view=data.get("class_view"),
             outer_score=(
                 None if data.get("outer_score") is None else float(data["outer_score"])
             ),

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pandas as pd
+import pytest
 
 from pelinker.core.config import ClusterCompositionSnapshot, KBConfig
 from pelinker.core.onto import NEGATIVE_LABEL
@@ -249,3 +250,36 @@ def test_kb_out_json_round_trip(tmp_path) -> None:
     loaded = read_kb_out_json(path)
     assert loaded["schema"] == "pelinker.kb.kb_out.v1"
     assert loaded["n_emergent_clusters"] == 1
+
+
+def test_cluster_direction_summary_breaks_ties_by_name_and_skips_noise() -> None:
+    from pelinker.kb.kb_out import cluster_direction_summary
+
+    assignments = pd.DataFrame(
+        {
+            "cluster": [0, 0, 1, 1, 1, -1],
+            "relation_direction": [
+                "inverse",
+                "forward",
+                "inverse",
+                "inverse",
+                "forward",
+                "forward",
+            ],
+        }
+    )
+
+    summary = cluster_direction_summary(assignments)
+
+    assert set(summary) == {0, 1}
+    assert summary[0]["dominant_direction"] == "forward"  # 1:1 tie → by name
+    assert summary[1]["dominant_direction"] == "inverse"
+    assert summary[1]["direction_mix"] == pytest.approx(
+        {"forward": 1 / 3, "inverse": 2 / 3}
+    )
+
+
+def test_cluster_direction_summary_is_empty_without_a_view() -> None:
+    from pelinker.kb.kb_out import cluster_direction_summary
+
+    assert cluster_direction_summary(pd.DataFrame({"cluster": [0, 1]})) == {}

@@ -20,6 +20,11 @@ with quality. Pass ``predicted_id_to_kb_in`` to translate, and read
 :attr:`GroundTruthScore.n_id_comparable` before trusting
 :attr:`GroundTruthScore.entity_accuracy` — when it is 0, the ids were never comparable
 and the metric is undefined rather than bad.
+
+There is a second id space to reconcile: the KB holds both members of many converse pairs,
+while gold is annotated in *canonical* space with orientation carried in ``direction``.
+Pass ``canonicalize`` so a converse-member id counts as the relation it names rather than
+as a wrong answer.
 """
 
 from __future__ import annotations
@@ -194,6 +199,7 @@ def score_predictions_against_ground_truth(
     *,
     match_mode: str = "overlap",
     predicted_id_to_kb_in: Mapping[str, str] | None = None,
+    canonicalize: Mapping[str, str] | None = None,
 ) -> GroundTruthScore:
     """Greedy one-to-one span matching within each document.
 
@@ -207,6 +213,12 @@ def score_predictions_against_ground_truth(
         predicted_id_to_kb_in: Maps ``entity_id_predicted`` onto input-KB ids so the
             comparison is meaningful. Without it, minted KB-out ids never match and
             ``n_id_comparable`` stays 0.
+        canonicalize: Folds each converse pair onto its canonical member
+            (:func:`pelinker.eval.kb.canonical_id_map`), applied **after**
+            ``predicted_id_to_kb_in`` and to both sides. Gold is annotated in canonical
+            space, so without it a system that answers "regulated by" where gold says
+            ("regulates", inverse) is scored wrong for picking the other name of the
+            relation it got right. Ids the map does not mention pass through untouched.
 
     Matching is greedy in document order, and each gold span is consumed at most once, so
     duplicate predictions over one annotation count as false positives rather than
@@ -260,8 +272,12 @@ def score_predictions_against_ground_truth(
                 # Unmappable prediction: not comparable, so it neither helps nor hurts.
                 continue
             pred_id = str(mapped)
+        gold_id = hit.entity_id
+        if canonicalize is not None:
+            pred_id = str(canonicalize.get(pred_id, pred_id))
+            gold_id = str(canonicalize.get(gold_id, gold_id))
         n_id_comparable += 1
-        if pred_id == hit.entity_id:
+        if pred_id == gold_id:
             n_id_correct += 1
 
     return GroundTruthScore(

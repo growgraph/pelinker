@@ -1,0 +1,7 @@
+entity_id,label,note
+PEL.000002,associates,association is symmetric: A associated with B iff B associated with A
+PEL.000040,associated with,association is symmetric: A associated with B iff B associated with A
+PEL.000003,binds to,physical binding is symmetric
+PEL.000041,bound by,physical binding is symmetric
+RO.0002170,connected to,connected to is symmetric (RO chain inverse(connects) o connects); connects is an equivalent
+RO.0002176,connects

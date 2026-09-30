@@ -156,3 +156,17 @@ def test_the_shipped_kb_renders_one_line_per_relation() -> None:
     lines = render_kb_catalog(kb).split("\n")
 
     assert len(lines) == len(kb)
+
+
+def test_symmetric_relations_are_marked() -> None:
+    kb = _kb(
+        label=["interacts with", "regulates"],
+        entity_id=["E1", "E2"],
+        description=["", ""],
+        is_symmetric=[True, False],
+    )
+
+    first, second = render_kb_catalog(kb).split("\n")
+
+    assert first == '1. "interacts with" | symmetric'
+    assert "symmetric" not in second

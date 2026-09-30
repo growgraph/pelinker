@@ -291,3 +291,53 @@ def test_unenriched_rows_lower_the_resolvable_rate_rather_than_the_match_rate() 
     assert m.n_predicted == 2
     assert m.n_resolvable == 1
     assert m.match_rate == 1.0
+
+
+def test_a_converse_id_counts_as_the_relation_it_names() -> None:
+    """Gold is canonical; "regulated by" is the same relation seen from the other end."""
+    preds = [_pred(0, 5, "RO.2")]
+    gold = [_gold(0, 5, "PEL.1")]
+
+    s = score_predictions_against_ground_truth(
+        preds, gold, canonicalize={"RO.2": "PEL.1", "PEL.1": "PEL.1"}
+    )
+
+    assert s.n_id_comparable == 1
+    assert s.entity_accuracy == 1.0
+
+
+def test_canonicalization_does_not_excuse_a_genuinely_wrong_id() -> None:
+    preds = [_pred(0, 5, "PEL.9")]
+    gold = [_gold(0, 5, "PEL.1")]
+
+    s = score_predictions_against_ground_truth(
+        preds, gold, canonicalize={"RO.2": "PEL.1", "PEL.1": "PEL.1", "PEL.9": "PEL.9"}
+    )
+
+    assert (s.n_id_comparable, s.n_id_correct) == (1, 0)
+
+
+def test_an_id_outside_the_canonical_map_is_left_alone() -> None:
+    """An id the KB never mentions is not this map's to rewrite — it is still comparable."""
+    preds = [_pred(0, 5, "PEL.1")]
+    gold = [_gold(0, 5, "PEL.1")]
+
+    s = score_predictions_against_ground_truth(
+        preds, gold, canonicalize={"RO.2": "PEL.1"}
+    )
+
+    assert s.entity_accuracy == 1.0
+
+
+def test_canonicalization_applies_after_the_kb_out_bridge() -> None:
+    preds = [_pred(0, 5, "kb::C0007")]
+    gold = [_gold(0, 5, "PEL.1")]
+
+    s = score_predictions_against_ground_truth(
+        preds,
+        gold,
+        predicted_id_to_kb_in={"kb::C0007": "RO.2"},
+        canonicalize={"RO.2": "PEL.1"},
+    )
+
+    assert s.entity_accuracy == 1.0

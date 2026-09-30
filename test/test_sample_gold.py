@@ -6,6 +6,7 @@ import importlib.util
 import sys
 from pathlib import Path
 
+import pandas as pd
 import pytest
 
 _MODULE_PATH = Path(__file__).resolve().parents[1] / "run" / "eval" / "sample_gold.py"
@@ -105,3 +106,85 @@ def test_the_drawn_sample_is_pmid_only_and_fully_identified() -> None:
     assert not frame["pmid"].duplicated().any()
     # mag is retained: it is the key the fit corpus uses for overlap checks.
     assert frame["mag"].notna().all()
+
+
+# --------------------------------------------------------------- strata and draws
+
+
+def _pool() -> "pd.DataFrame":
+    import pandas as pd
+
+    rows = []
+    for i in range(60):
+        rows.append(
+            {
+                "doc_id": i,
+                "doc_uid": str(1000 + i),
+                "publication_year": 1995 + i % 30,
+                "n_verb_mentions": 0 if i < 12 else 1 + i % 5,
+                "labels_detected": ""
+                if i < 12
+                else ("rare" if i % 3 == 0 else "common"),
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def test_tail_labels_are_those_outside_the_top_k() -> None:
+    import pandas as pd
+
+    labels = pd.Series(["a|b", "a", "a|c", "b"])
+
+    assert sg.tail_labels(labels, top_k=2) == frozenset({"c"})
+
+
+def test_strata_split_density_and_tail() -> None:
+    pool = _pool()
+    strata = sg.assign_strata(pool, frozenset({"rare"}))
+
+    assert strata[pool["n_verb_mentions"] == 0].str.endswith("-none").all()
+    positive = strata[pool["n_verb_mentions"] > 0]
+    assert positive.str.endswith(("-tail", "-common")).all()
+    assert (strata[pool["labels_detected"] == "rare"].str.endswith("-tail")).all()
+
+
+def test_a_draw_records_inclusion_probabilities_and_the_negative_quota() -> None:
+    pool = _pool()
+    pool["stratum"] = sg.assign_strata(pool, frozenset({"rare"}))
+
+    drawn = sg.draw_batch(pool, n_total=20, none_fraction=0.1, tail_weight=2.0, seed=1)
+
+    assert len(drawn) == 20
+    assert (drawn["n_verb_mentions"] == 0).sum() == 2
+    sizes = pool.groupby("stratum").size()
+    for name, group in drawn.groupby("stratum"):
+        assert group["p_incl"].iloc[0] == len(group) / sizes[name]
+
+
+def test_tail_weight_over_allocates_tail_strata() -> None:
+    import pandas as pd
+
+    sizes = pd.Series({"a-tail": 10, "b-common": 10})
+    weights = pd.Series({"a-tail": 3.0, "b-common": 1.0})
+
+    alloc = sg.allocate(sizes, 8, weights)
+
+    assert alloc.sum() == 8
+    assert alloc["a-tail"] == 6 and alloc["b-common"] == 2
+
+
+def test_allocation_never_exceeds_a_stratum() -> None:
+    import pandas as pd
+
+    sizes = pd.Series({"a": 2, "b": 50})
+    alloc = sg.allocate(sizes, 10, pd.Series({"a": 10.0, "b": 1.0}))
+
+    assert alloc["a"] == 2 and alloc.sum() == 10
+
+
+def test_roles_follow_the_requested_proportions() -> None:
+    roles = sg.assign_roles(12, 4, 1, 1)
+
+    assert roles.count("primary") == 8
+    assert roles.count("double") == 2
+    assert roles.count("reserve") == 2

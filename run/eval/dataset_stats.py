@@ -21,8 +21,8 @@ measurement writeup.
 Usage:
 
     uv run python run/eval/dataset_stats.py \
-        --kb-csv-path data/derived/properties.synthesis.2.inverse.csv \
-        --fit-report reports/fit-b-full-2/linker_fit.clustering_report.json.gz \
+        --kb-csv-path data/derived/properties.synthesis.2.pairs.csv \
+        --fit-report <report-dir>/linker_fit.clustering_report.json.gz \
         --report-dir <workdir>/eval-runs/dataset-stats
 """
 

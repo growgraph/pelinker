@@ -57,6 +57,12 @@ from pelinker.data.fusion import (
 )
 from pelinker.search.sampling import draw_selection_sample, stratified_mention_sample
 from pelinker.core.scaling import MinClusterSizeProvenance, resolve_min_cluster_size
+from pelinker.kb.classes import (
+    RELATION_COLUMN,
+    RELATION_DIRECTION_COLUMN,
+    VIEW_COLUMNS,
+    file_sha256,
+)
 from pelinker.search.selection import load_selection_frame
 from pelinker.clustering.transform import (
     EmbeddingTransformer,
@@ -79,6 +85,7 @@ from pelinker.reports.schema import (
 from pelinker.kb.kb_out import (
     KbOutFitProvenance,
     KbOutNamingConfig,
+    annotate_cluster_directions,
     build_kb_out_catalog,
 )
 from pelinker.linker.cluster_training import (
@@ -136,6 +143,7 @@ _LINKER_LOAD_DEFAULTS: dict[str, object] = {
     "predict_mode": "legacy",
     "min_cluster_size_provenance": None,
     "distillation_fidelity": None,
+    "cluster_direction": {},
 }
 
 
@@ -618,6 +626,11 @@ def _build_training_cluster_frame(
     for col in MENTION_PROVENANCE_COLUMNS:
         if col in manifold_full.columns:
             frame[col] = manifold_full[col].values
+    # The matcher's direction and the class-view columns travel with each mention, so
+    # the catalog can read merges between relations and a direction per cluster.
+    for col in ("direction", *VIEW_COLUMNS):
+        if col in manifold_full.columns:
+            frame[col] = manifold_full[col].values
     frame["cluster"] = cluster_labels
     frame["screener_score"] = screener_decision[manifold_mask]
     frame["projection_score"] = projection_scores[manifold_mask]
@@ -657,23 +670,31 @@ def _finalize_linker_cluster_state(
     kb_out_naming: KbOutNamingConfig | None = None,
     kb_in_labels_map_path: str | None = None,
 ) -> None:
+    tcf = linker.training_cluster_frame
+    assert tcf is not None
+    # Under a class view, composition is read between canonical relations: the two
+    # voices of one relation are one entity whose clusters differ in direction, not two
+    # entities a cluster merged. Direction is summarized per cluster below.
+    composition_frame = (
+        tcf.assign(entity=tcf[RELATION_COLUMN])
+        if RELATION_COLUMN in tcf.columns
+        else tcf
+    )
     linker.cluster_composition = cluster_composition_from_training_frame(
-        linker.training_cluster_frame
+        composition_frame
     )
     linker.cluster_consensus_names = consensus_cluster_names(linker.cluster_composition)
 
     linker.kb_in_labels_map = dict(linker.labels_map)
     linker.kb_in_entity_clusters = _provisional_cluster_assignments_from_training_frame(
         linker.kb_in_labels_map,
-        linker.training_cluster_frame,
+        composition_frame,
     )
     linker.cluster_assignments = dict(linker.kb_in_entity_clusters)
 
-    tcf = linker.training_cluster_frame
-    assert tcf is not None
     assign_cols = ["entity", "cluster", "pmid", "mention"]
     assign_cols.extend(c for c in MENTION_PROVENANCE_COLUMNS if c in tcf.columns)
-    assignments = tcf[assign_cols].copy()
+    assignments = composition_frame[assign_cols].copy()
 
     linker.kb_out_catalog = build_kb_out_catalog(
         linker.cluster_composition,
@@ -683,6 +704,11 @@ def _finalize_linker_cluster_state(
         fit_provenance=fit_provenance,
         naming=kb_out_naming,
         kb_in_labels_map_path=kb_in_labels_map_path,
+    )
+    linker.cluster_direction = (
+        annotate_cluster_directions(linker.kb_out_catalog, tcf)
+        if RELATION_DIRECTION_COLUMN in tcf.columns
+        else {}
     )
     labels_map = linker.kb_out_catalog["labels_map"]
     linker.labels_map = {str(k): str(v) for k, v in labels_map.items()}
@@ -845,6 +871,9 @@ class Linker:
         self.kb_in_labels_map: dict[str, str] = {}
         self.kb_in_entity_clusters: dict[str, int] = {}
         self.cluster_id_to_entity_id: dict[int, str] = {}
+        self.cluster_direction: dict[str, str] = {}
+        """KB-out entity id → dominant direction of its training mentions, relative to
+        the canonical relation. Empty for a fit without a class view."""
         self.kb_out_catalog: dict[str, object] | None = None
         self.screener: NegativeClassScreener | None = None
         self.screener_in_sample_metrics: NegativeScreenerInSampleMetrics | None = None
@@ -1418,6 +1447,12 @@ class Linker:
                 min_cluster_size=min_cluster_size,
                 clustering_sample_index=fit_cfg.clustering_sample_index,
                 seed=fit_cfg.base_seed,
+                class_view=fit_cfg.class_view,
+                class_kb_sha256=(
+                    file_sha256(fit_cfg.class_kb_path)
+                    if fit_cfg.class_kb_path is not None
+                    else None
+                ),
             ),
             kb_out_naming=kb_out_naming,
             kb_in_labels_map_path=kb_in_labels_map_path,
@@ -2078,6 +2113,10 @@ class Linker:
                 projection_score=float(oov_scores_k[j]),
             )
             cast(dict[str, object], row)["mention_source_index"] = int(mention_i)
+            if self.cluster_direction:
+                cast(dict[str, object], row)["direction_predicted"] = (
+                    self.cluster_direction.get(predicted_entity)
+                )
             candidates.append(row)
 
         deduped = self._dedupe_overlapping_prediction_rows(candidates)

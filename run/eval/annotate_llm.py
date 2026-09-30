@@ -21,10 +21,17 @@ Two deliberate design points:
   post-hoc parsing fixes are free — parsing happens after the cache, not before.
 
 Requires the ``eval`` extra (``uv sync --extra dev --extra eval``) and a credential for
-the chosen provider: Gemini by default (``GEMINI_API_KEY`` / ``GOOGLE_API_KEY``). For the
-agreement slice, run twice with different ``--provider`` / ``--model`` / ``--annotator``
-values and compare with ``gold_review_sheet.py``; a second *model family* makes the κ
-more informative than a second checkpoint of the same one.
+the chosen provider: Gemini by default (``GEMINI_API_KEY`` / ``GOOGLE_API_KEY``). Run it
+twice with different ``--provider`` / ``--model`` / ``--annotator`` values, both over
+``primary,double``, and compare with ``gold_review_sheet.py``. The second annotator
+serves two purposes: κ, and recall — verified gold only ever contains spans one of the
+annotators proposed. A second *model family* serves both better than a second checkpoint
+of the same one.
+
+For a reasoning model, pin ``--reasoning-effort`` and raise ``--max-tokens``: the
+reasoning counts against the output limit. A document whose answer was cut off is
+reported as ``truncated`` and left out of the output. Nothing is cached for it, so
+re-running with a larger limit retries only those documents.
 
 Usage:
 
@@ -40,16 +47,28 @@ from __future__ import annotations
 import json
 import logging
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
 import click
 import pandas as pd
+import spacy
 
+from pelinker.eval import kb as eval_kb
 from pelinker.eval.kb_prompt import render_kb_catalog
-from pelinker.eval.llm import DEFAULT_MODEL, DEFAULT_PROVIDER, PROVIDERS, complete
+from pelinker.eval.llm import (
+    DEFAULT_MODEL,
+    DEFAULT_PROVIDER,
+    PROVIDERS,
+    LLMIncompleteError,
+    complete,
+)
 from pelinker.kb.ground_truth import GT_DIRECTIONS
 from pelinker.core.paths import ExpandedPath
+from pelinker.core.onto import SimplifiedToken
+from pelinker.text.mentions import split_predicate_labels
+from pelinker.text.tokenize import text_to_tokens
 
 logger = logging.getLogger(__name__)
 
@@ -76,7 +95,7 @@ def load_prompt_template(path: Path) -> PromptParts:
     return PromptParts(system=system.strip(), user_template=user.strip())
 
 
-def canonical_kb(kb: pd.DataFrame) -> pd.DataFrame:
+def canonical_kb(kb: pd.DataFrame, *, kb_csv_path: str | None = None) -> pd.DataFrame:
     """Only the canonical member of each converse pair is offered to the annotator.
 
     A KB without ``is_canonical`` predates the pair derivation, so both members of every
@@ -84,13 +103,10 @@ def canonical_kb(kb: pd.DataFrame) -> pd.DataFrame:
     encodings — the ambiguity the canonical vocabulary exists to remove. That is a silent
     change to what the gold means, so it is refused rather than tolerated.
     """
-    if "is_canonical" not in kb.columns:
-        raise click.ClickException(
-            "KB has no 'is_canonical' column: it predates the converse-pair derivation. "
-            "Build it with run/preprocessing/derive_inverse_pairs.py and pass "
-            "data/derived/properties.synthesis.2.pairs.csv."
-        )
-    return kb.loc[kb["is_canonical"].astype(bool)]
+    try:
+        return eval_kb.canonical_kb(kb, kb_csv_path=kb_csv_path)
+    except ValueError as err:
+        raise click.ClickException(str(err)) from err
 
 
 def kb_table_text(kb: pd.DataFrame) -> str:
@@ -114,20 +130,71 @@ def build_label_index(kb: pd.DataFrame) -> dict[str, tuple[str, bool]]:
     mentions specifically — the exact population the directionality analysis needs — so
     they are mapped onto the canonical id with the direction flipped, and flagged.
     """
+    canonical_of = eval_kb.canonical_id_map(kb)
     index: dict[str, tuple[str, bool]] = {}
     for _, r in kb.iterrows():
         label = str(r["label"]).strip().casefold()
-        canonical = r.get("canonical_entity_id")
         entity_id = str(r["entity_id"])
-        if isinstance(canonical, str) and canonical:
-            flip = canonical != entity_id
-            index[label] = (canonical, flip)
-        else:
-            index[label] = (entity_id, False)
+        canonical = canonical_of.get(entity_id, entity_id)
+        index[label] = (canonical, canonical != entity_id)
     return index
 
 
 _OPPOSITE_DIRECTION = {"forward": "inverse", "inverse": "forward"}
+
+
+def symmetric_ids(kb: pd.DataFrame) -> frozenset[str]:
+    """Canonical ids whose direction is always ``symmetric``."""
+    return eval_kb.symmetric_ids(kb)
+
+
+def verb_label_set(labels: list[str], nlp) -> frozenset[str]:
+    """Casefolded labels that are verb predicates (same test as the fit's matcher)."""
+    specs, _ = split_predicate_labels(labels, nlp)
+    return frozenset(spec.label.strip().casefold() for spec in specs)
+
+
+def label_anchors(kb: pd.DataFrame, nlp) -> dict[str, list[frozenset[str]]]:
+    """Canonical id -> content-lemma sets of every KB label folding onto it.
+
+    A hit is *anchored* when its surface carries one of these sets: the text uses the
+    label's own wording ("increased" for ``increases``, "caused by" for ``causes``). A hit
+    whose surface carries none is a *paraphrase* ("leads to" for ``causes``) — a valid
+    mention that a lemma-anchored linker never saw in training, so it is scored as its own
+    slice.
+    """
+    canonical_of = eval_kb.canonical_id_map(kb)
+    anchors: dict[str, list[frozenset[str]]] = {}
+    for _, row in kb.iterrows():
+        tokens = [t for t in text_to_tokens(nlp, str(row["label"])) if t.pos != "PUNCT"]
+        content = frozenset(t.lemma.lower() for t in tokens if not t.is_stop)
+        if not content:
+            content = frozenset(t.lemma.lower() for t in tokens)
+        entity_id = str(row["entity_id"])
+        anchors.setdefault(canonical_of.get(entity_id, entity_id), []).append(content)
+    return anchors
+
+
+def anchor_check(
+    tokens: list[SimplifiedToken], anchors: dict[str, list[frozenset[str]]]
+) -> Callable[[int, int, str], bool]:
+    """``(a, b, canonical_id) -> bool``: does the span use one of the id's label wordings?"""
+
+    def anchored(a: int, b: int, entity_id: str) -> bool:
+        lemmas = {t.lemma.lower() for t in tokens if t.ix < b and t.ix_end > a}
+        return any(s and s <= lemmas for s in anchors.get(entity_id, []))
+
+    return anchored
+
+
+def verb_span_check(tokens: list[SimplifiedToken]) -> Callable[[int, int], bool]:
+    """``(a, b) -> bool``: does the character span overlap a verb token?"""
+    verbs = [(t.ix, t.ix_end) for t in tokens if t.pos == "VERB"]
+
+    def has_verb(a: int, b: int) -> bool:
+        return any(start < b and end > a for start, end in verbs)
+
+    return has_verb
 
 
 def flip_direction(direction: str | None) -> str | None:
@@ -216,9 +283,18 @@ def nearest_occurrence(text: str, needle: str, anchor: int) -> tuple[int, int] |
 
 
 def parse_llm_response(raw: str) -> list[dict]:
-    """Parse the model's JSON array, tolerating stray code fences."""
+    """Parse the model's JSON array, tolerating stray code fences.
+
+    An object with exactly one key holding a list (``{"annotations": [...]}``) is
+    unwrapped. Providers whose JSON mode can only produce an object wrap the requested
+    array this way; the records inside are what was asked for.
+    """
     cleaned = _FENCE_RE.sub("", raw.strip()).strip()
     data = json.loads(cleaned)
+    if isinstance(data, dict) and len(data) == 1:
+        (only,) = data.values()
+        if isinstance(only, list):
+            data = only
     if not isinstance(data, list):
         raise ValueError("expected a JSON array")
     return [d for d in data if isinstance(d, dict)]
@@ -230,13 +306,25 @@ def resolve_annotations(
     *,
     label_index: dict[str, tuple[str, bool]],
     annotator: str,
+    symmetric: frozenset[str] = frozenset(),
+    verb_labels: frozenset[str] = frozenset(),
+    has_verb: Callable[[int, int], bool] | None = None,
+    is_anchored: Callable[[int, int, str], bool] | None = None,
 ) -> tuple[list[dict], list[dict]]:
     """LLM records → offset-resolved gt hits; unresolvable records are reported.
 
-    Two recoveries are applied and flagged rather than dropped, because dropping either
+    Three recoveries are applied and flagged rather than dropped, because dropping any
     would bias the gold set rather than merely shrink it: a mis-counted ``occurrence``
-    (which loses repeated mentions) and a converse label used in place of its canonical
-    partner (which loses inverse-direction mentions specifically).
+    (which loses repeated mentions), a converse label used in place of its canonical
+    partner (which loses inverse-direction mentions specifically), and an oriented
+    ``direction`` on a relation in ``symmetric`` (the label is right; orientation does
+    not apply to it, so the direction is set to ``symmetric``).
+
+    One rejection is specific to scope: when ``has_verb`` is given, a record whose label
+    is in ``verb_labels`` (casefolded) but whose span contains no verb — a nominal form
+    such as "association" or "inhibition" — is rejected as ``non_verbal``. The linker is
+    trained on verb mentions only, so a noun in gold would score a skill it is never
+    taught. Labels that are not verb predicates ("has part") keep noun surfaces.
     """
     hits: list[dict] = []
     rejected: list[dict] = []
@@ -252,11 +340,24 @@ def resolve_annotations(
             text, surface, occurrence, claimed=claimed
         )
         if span is None:
-            reasons.append("surface_not_found")
+            # Present but every occurrence already taken: the model re-emitted a
+            # mention, which is a different failure from quoting text that is not there.
+            reasons.append(
+                "duplicate_occurrence"
+                if iter_occurrences(text, surface)
+                else "surface_not_found"
+            )
         if resolved is None:
             reasons.append("unknown_label")
         if direction is not None and direction not in GT_DIRECTIONS:
             reasons.append("bad_direction")
+        if (
+            span is not None
+            and has_verb is not None
+            and label.strip().casefold() in verb_labels
+            and not has_verb(*span)
+        ):
+            reasons.append("non_verbal")
         if reasons:
             rejected.append({**item, "reasons": reasons})
             continue
@@ -264,6 +365,9 @@ def resolve_annotations(
         entity_id, needs_flip = resolved
         if needs_flip:
             direction = flip_direction(direction)
+        direction_coerced = entity_id in symmetric and direction != "symmetric"
+        if direction_coerced:
+            direction = "symmetric"
         a, b = span
         claimed.add(span)
         hit: dict = {
@@ -280,6 +384,10 @@ def resolve_annotations(
             hit["occurrence_fallback"] = True
         if needs_flip:
             hit["label_canonicalized"] = True
+        if direction_coerced:
+            hit["direction_coerced"] = True
+        if is_anchored is not None:
+            hit["surface_anchored"] = is_anchored(a, b, entity_id)
         if item.get("confidence") is not None:
             hit["confidence"] = float(item["confidence"])
         for key, field in (
@@ -329,9 +437,20 @@ def drop_nested_spans(hits: list[dict]) -> tuple[list[dict], list[dict]]:
 )
 @click.option("--model", default=DEFAULT_MODEL, show_default=True)
 @click.option(
+    "--reasoning-effort",
+    default=None,
+    help=(
+        "Reasoning effort for a reasoning model (openai only), e.g. low / medium. "
+        "Part of the cache key, so each setting is its own annotation run."
+    ),
+)
+@click.option(
     "--annotator",
     default=None,
-    help="Annotator tag recorded on every hit (default: the model id).",
+    help=(
+        "Annotator tag recorded on every hit "
+        "(default: the model id, plus @<effort> when --reasoning-effort is set)."
+    ),
 )
 @click.option(
     "--roles",
@@ -353,12 +472,23 @@ def drop_nested_spans(hits: list[dict]) -> tuple[list[dict], list[dict]]:
     is_flag=True,
     help="Print request sizes and exit without calling the LLM.",
 )
+@click.option(
+    "--verbal-only/--no-verbal-only",
+    default=True,
+    show_default=True,
+    help=(
+        "Reject hits on verb-predicate labels whose span has no verb (nominal forms). "
+        "Applied after the response cache, so toggling it costs no LLM calls."
+    ),
+)
+@click.option("--nlp-model", default="en_core_web_lg", show_default=True)
 def main(
     sample_dir: str,
     kb_csv_path: str,
     output_path: str,
     provider: str,
     model: str,
+    reasoning_effort: str | None,
     annotator: str | None,
     roles: str,
     cache_dir: str | None,
@@ -366,9 +496,13 @@ def main(
     max_tokens: int,
     limit: int | None,
     dry_run: bool,
+    verbal_only: bool,
+    nlp_model: str,
 ) -> None:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
-    annotator = annotator or model
+    annotator = annotator or (
+        f"{model}@{reasoning_effort}" if reasoning_effort else model
+    )
     sample = Path(sample_dir)
     cache = Path(cache_dir) if cache_dir else sample / ".llm_cache"
 
@@ -389,14 +523,35 @@ def main(
     logger.info("Annotating %d docs (roles: %s)", len(docs), sorted(wanted_roles))
 
     kb_all = pd.read_csv(kb_csv_path)
-    kb = canonical_kb(kb_all)
+    kb = canonical_kb(kb_all, kb_csv_path=kb_csv_path)
+    pending = eval_kb.pending_review_pairs(kb_all)
+    if len(pending):
+        # A heuristic pair that turns out to be wrong merges two distinct relations onto
+        # one canonical id, and every downstream artifact then agrees with the mistake.
+        logger.warning(
+            "%d KB rows are in converse pairs no curator has reviewed "
+            "(needs_review=True); annotating on top of them bakes any wrong pair into "
+            "the gold. Review them via --review-csv in %s.",
+            len(pending),
+            "run/preprocessing/derive_inverse_pairs.py",
+        )
     # Prompt: canonical only. Decoder: the whole KB, so a converse answer is recovered
     # (with its direction flipped) instead of discarded.
     label_index = build_label_index(kb_all)
+    symmetric = symmetric_ids(kb_all)
+    nlp = None if dry_run else spacy.load(nlp_model)
+    verb_labels = (
+        verb_label_set(kb_all["label"].dropna().astype(str).tolist(), nlp)
+        if nlp is not None and verbal_only
+        else frozenset()
+    )
+    anchors = label_anchors(kb_all, nlp) if nlp is not None else {}
     logger.info(
-        "Offering %d  canonical relation labels (decoder accepts %d incl. converse forms)",
+        "Offering %d canonical relation labels (decoder accepts %d incl. converse "
+        "forms; %d symmetric)",
         len(kb),
         len(label_index),
+        len(symmetric),
     )
     prompt = load_prompt_template(Path(prompt_path))
     system = prompt.system.replace("{kb_table}", kb_table_text(kb))
@@ -416,28 +571,50 @@ def main(
     out_docs: list[dict] = []
     all_rejected: list[dict] = []
     n_hits = 0
+    n_truncated = 0
     for itext, doc in enumerate(docs):
         text = doc["text"]
         user = prompt.user_template.replace("{abstract}", text)
-        raw = complete(
-            system=system,
-            user=user,
-            cache_dir=cache,
-            provider=provider,
-            model=model,
-            max_output_tokens=max_tokens,
-            # The prompt asks for a JSON array; have the provider guarantee that shape
-            # rather than parsing it back out of prose.
-            json_mode=True,
-        )
+        try:
+            raw = complete(
+                system=system,
+                user=user,
+                cache_dir=cache,
+                provider=provider,
+                model=model,
+                max_output_tokens=max_tokens,
+                # The prompt asks for a JSON array; have the provider guarantee that
+                # shape rather than parsing it back out of prose.
+                json_mode=True,
+                reasoning_effort=reasoning_effort,
+            )
+        except LLMIncompleteError as err:
+            # Left out of the output rather than written with no hits: an empty
+            # document would read as "the annotator found nothing" in the agreement
+            # stats, when in fact it never answered.
+            logger.warning("doc_id=%s: %s", doc["doc_id"], err)
+            all_rejected.append(
+                {"doc_id": doc["doc_id"], "reasons": ["truncated"], "detail": str(err)}
+            )
+            n_truncated += 1
+            continue
         try:
             items = parse_llm_response(raw)
         except (ValueError, json.JSONDecodeError):
             logger.warning("doc_id=%s: unparsable response", doc["doc_id"])
             all_rejected.append({"doc_id": doc["doc_id"], "reasons": ["unparsable"]})
             items = []
+        assert nlp is not None  # dry runs return before decoding
+        doc_tokens = text_to_tokens(nlp, text)
         hits, rejected = resolve_annotations(
-            text, items, label_index=label_index, annotator=annotator
+            text,
+            items,
+            label_index=label_index,
+            annotator=annotator,
+            symmetric=symmetric,
+            verb_labels=verb_labels,
+            has_verb=verb_span_check(doc_tokens) if verbal_only else None,
+            is_anchored=anchor_check(doc_tokens, anchors),
         )
         for r in rejected:
             all_rejected.append({"doc_id": doc["doc_id"], **r})
@@ -462,8 +639,10 @@ def main(
     report = {
         "provider": provider,
         "model": model,
+        "reasoning_effort": reasoning_effort,
         "annotator": annotator,
         "n_docs": len(out_docs),
+        "n_truncated": n_truncated,
         "n_hits": n_hits,
         "n_rejected": len(all_rejected),
         "rejected": all_rejected,
@@ -478,6 +657,13 @@ def main(
         len(all_rejected),
         report_path,
     )
+    if n_truncated:
+        logger.warning(
+            "%d docs were cut off at --max-tokens=%d and left out; re-run with a larger "
+            "limit to retry only those (nothing was cached for them)",
+            n_truncated,
+            max_tokens,
+        )
 
 
 if __name__ == "__main__":

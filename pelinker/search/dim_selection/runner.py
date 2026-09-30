@@ -72,6 +72,7 @@ from pelinker.search.selected_hyperparameters import (
 )
 from pelinker.search.selection import evaluate_selection_sample, load_selection_frame
 from pelinker.clustering.transform import TransformConfig
+from pelinker.kb.classes import ClassView
 
 
 def _write_handoff(
@@ -84,6 +85,7 @@ def _write_handoff(
     manifold_kind: str,
     umap_n_neighbors: int | None,
     run_fingerprint: str,
+    class_view: str = "raw",
 ) -> None:
     """Emit ``selected_hyperparameters.json`` so ``pelinker-fit`` can read the winner."""
     chosen = payload.get("chosen")
@@ -111,6 +113,7 @@ def _write_handoff(
         umap_n_neighbors=umap_n_neighbors,
         run_fingerprint=run_fingerprint,
         outer_score=chosen.get("outer_score"),
+        class_view=class_view,
     )
     out = write_selected_hyperparameters(selected, report_path)
     console.print(
@@ -211,6 +214,8 @@ def run_dim_selection(
     max_mentions_per_entity: int | None = None,
     max_mentions_negative: int | None = None,
     mention_cap_seed: int = 13,
+    class_view: ClassView = "raw",
+    class_kb_path: pathlib.Path | None = None,
     persist_labels: bool = False,
 ) -> None:
     """
@@ -288,6 +293,8 @@ def run_dim_selection(
         max_mentions_per_entity=max_mentions_per_entity,
         max_mentions_negative=max_mentions_negative,
         mention_cap_seed=mention_cap_seed,
+        class_view=class_view,
+        class_kb_path=class_kb_path,
     )
     run_fingerprint = compute_run_fingerprint(fp_payload)
 
@@ -342,6 +349,8 @@ def run_dim_selection(
         max_mentions_per_entity=max_mentions_per_entity,
         max_mentions_negative=max_mentions_negative,
         mention_cap_seed=mention_cap_seed,
+        class_view=class_view,
+        class_kb_path=class_kb_path,
     )
 
     console.print(
@@ -607,6 +616,7 @@ def run_dim_selection(
         manifold_kind=manifold_kind,
         umap_n_neighbors=umap_n_neighbors,
         run_fingerprint=run_fingerprint,
+        class_view=class_view,
     )
 
     table = Table(title="Dim selection results (outer DBCV+ARI at pooled MCS)")

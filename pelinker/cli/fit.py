@@ -29,6 +29,7 @@ from pelinker.clustering.composition import (
     cluster_score_percentile_summary,
     with_noise_cluster_label,
 )
+from pelinker.kb.classes import check_class_view
 from pelinker.kb.kb_out import KbOutNamingConfig, cluster_labels_from_catalog
 from pelinker.reports.io import (
     write_cluster_composition_json,
@@ -87,6 +88,12 @@ class FitCliConfig:
     max_mentions_negative: int | None = None
     mention_cap_seed: int | None = None
     """Seed for per-entity mention cap; defaults to ``seed`` when omitted."""
+    class_view: str = "reldir"
+    """Classes the fit's ARI and catalog composition use (:mod:`pelinker.kb.classes`):
+    ``raw`` (matched label), ``rel`` (canonical relation) or ``reldir`` (canonical relation +
+    direction). ``rel`` / ``reldir`` read the pairs KB; ``raw`` reproduces earlier fits."""
+    class_kb_path: str | None = None
+    """Pairs KB for the class view; defaults to ``kb_path``."""
     seed: int = 13
     """Bootstrap seed for clustering subsample draws (``base_seed``); also default for mention-cap and screener draws."""
     pca_seed: int = 13
@@ -99,8 +106,10 @@ class FitCliConfig:
     """Bootstrap index for clustering subsample (match model-selection ``sample_idx``)."""
     # Stage-B HDBSCAN ``min_cluster_size`` (choose upstream, e.g. ``pelinker.search.model_selection``).
     min_cluster_size: int | None = None
-    """Explicit HDBSCAN ``min_cluster_size``. Omit to resolve from ``scale_curve_path``,
-    or fall back to 20 when neither is given. An explicit value always wins."""
+    """Explicit HDBSCAN ``min_cluster_size``. Omit to resolve from ``selection_report``,
+    then ``scale_curve_path``, then :data:`~pelinker.core.scaling.DEFAULT_MIN_CLUSTER_SIZE`.
+    An explicit value always wins, and the origin is recorded in the fit report under
+    ``min_cluster_size_provenance``."""
     scale_curve_path: str | None = None
     """``scale_curve.json`` from ``pelinker-scale-curve``. When set (and
     ``min_cluster_size`` is not), ``min_cluster_size`` is extrapolated to this fit's
@@ -565,6 +574,17 @@ def _resolve_selection_hyperparameters(cfg: FitCliConfig) -> _ResolvedSelection:
                 implied,
             )
 
+        if selected.effective_class_view != cfg.class_view:
+            logger.warning(
+                "Selection scored ARI against class_view=%r but this fit uses "
+                "class_view=%r. min_cluster_size=%d was chosen for a different reference "
+                "partition; re-run the search with --class-view %s to align them.",
+                selected.effective_class_view,
+                cfg.class_view,
+                selected.min_cluster_size,
+                cfg.class_view,
+            )
+
     def _pick(name: str, explicit, from_report, fallback):
         if explicit is not None:
             if from_report is not None and from_report != explicit:
@@ -609,6 +629,11 @@ def _resolve_selection_hyperparameters(cfg: FitCliConfig) -> _ResolvedSelection:
 
 def _build_linker_fit_config(cfg: FitCliConfig) -> LinkerFitConfig:
     cap_seed = cfg.seed if cfg.mention_cap_seed is None else cfg.mention_cap_seed
+    class_kb_path = (
+        None
+        if cfg.class_view == "raw"
+        else expand_config_path(cfg.class_kb_path or cfg.kb_path)
+    )
     scale_curve = None
     if cfg.scale_curve_path:
         # Imported lazily: only fits that opt into the curve pay for the import.
@@ -660,6 +685,8 @@ def _build_linker_fit_config(cfg: FitCliConfig) -> LinkerFitConfig:
             on_failure=cfg.distillation_on_failure,  # type: ignore[arg-type]
         ),
         scale_curve=scale_curve,
+        class_view=check_class_view(cfg.class_view, class_kb_path),
+        class_kb_path=None if class_kb_path is None else str(class_kb_path),
     )
 
 

@@ -33,6 +33,11 @@ from pelinker.core.config import (
 )
 from pelinker.data.fusion import concat_mention_level_embedding_sources
 from pelinker.data.frames import entity_negative_label_mask_01, mention_quality_frame
+from pelinker.kb.classes import (
+    ENTITY_CLASS_COLUMN,
+    KbClasses,
+    add_view_columns,
+)
 from pelinker.reports.schema import (
     AllScreenerCvResult,
     ClusteringHyperparameters,
@@ -109,7 +114,31 @@ def load_selection_frame(
         )
         if len(frame) == 0:
             return None
-    return frame
+    return apply_class_view(frame, config)
+
+
+def apply_class_view(
+    frame: pd.DataFrame, config: ClusteringOptimizationConfig
+) -> pd.DataFrame:
+    """Add the configured class view's columns (:mod:`pelinker.kb.classes`) to ``frame``.
+
+    ``raw`` leaves the frame untouched, so agreement metrics keep scoring against the
+    matched label. Any other view needs ``config.class_kb_path``.
+    """
+    if config.class_view == "raw":
+        return frame
+    if config.class_kb_path is None:
+        raise ValueError(
+            f"class_view={config.class_view!r} needs class_kb_path (the pairs KB the "
+            "mentions were embedded with); use class_view='raw' for matched labels."
+        )
+    classes = KbClasses.from_csv(config.class_kb_path)
+    return add_view_columns(
+        frame,
+        classes,
+        config.class_view,
+        passthrough_labels=frozenset({config.ambient_screener.negative_label}),
+    )
 
 
 def _prepare_screener_cv_arrays(
@@ -256,9 +285,12 @@ def evaluate_selection_sample(
     if unified is not None:
         all_screener_cv, screener_oos_dp = unified
 
-    umap_clustering_df = artifacts.umap_clustering_df().assign(
-        entity=dfr_manifold["entity"].values
-    )
+    reference_columns = {"entity": dfr_manifold["entity"].values}
+    if ENTITY_CLASS_COLUMN in dfr_manifold.columns:
+        reference_columns[ENTITY_CLASS_COLUMN] = dfr_manifold[
+            ENTITY_CLASS_COLUMN
+        ].values
+    umap_clustering_df = artifacts.umap_clustering_df().assign(**reference_columns)
 
     sizes = list(
         np.arange(
@@ -269,7 +301,7 @@ def evaluate_selection_sample(
     )
     metrics_df = evaluate_cluster_size_grid(
         umap_clustering_df,
-        [c for c in umap_clustering_df.columns if c != "entity"],
+        [c for c in umap_clustering_df.columns if c not in reference_columns],
         sizes,
     )
     if len(metrics_df) == 0:

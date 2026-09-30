@@ -1,12 +1,44 @@
 import pandas as pd
 import rdflib
 from rdflib import Namespace
-from rdflib.namespace import OWL, RDFS
+from rdflib.collection import Collection
+from rdflib.namespace import OWL, RDF, RDFS
 
 
 def iri_to_entity_id(iri: str) -> str:
     """``.../RO_0002206`` → ``RO.0002206`` (the id form used across the KB)."""
     return ".".join(str(iri).split("/")[-1].split("_"))
+
+
+def symmetric_property_iris(g: rdflib.Graph) -> set[rdflib.URIRef]:
+    """Properties whose orientation carries no information.
+
+    Two ways a property is symmetric in RO:
+
+    - declared ``owl:SymmetricProperty`` ("interacts with", "overlaps");
+    - defined by the chain ``inverse(P) ∘ P`` — "a connected to b iff some c connects a
+      and c connects b". The chain reads the same from either end, so the property is
+      symmetric by construction even where RO omits the declaration.
+
+    Symmetry matters downstream because a symmetric relation has no converse entry: a
+    passive or reversed mention is still the same relation, and pairing it with a
+    look-alike label ("connected to" / "connects") would fold two relations onto one id.
+    """
+    found = {
+        s
+        for s in g.subjects(RDF.type, OWL.SymmetricProperty)
+        if isinstance(s, rdflib.URIRef)
+    }
+    for prop, chain in g.subject_objects(OWL.propertyChainAxiom):
+        if not isinstance(prop, rdflib.URIRef):
+            continue
+        links = list(Collection(g, chain))
+        if len(links) != 2:
+            continue
+        first, second = links
+        if g.value(first, OWL.inverseOf) == second:
+            found.add(prop)
+    return found
 
 
 def main():
@@ -81,10 +113,16 @@ def main():
     else:
         ro_df["inverse_entity_id"] = pd.NA
 
+    ro_df["is_symmetric"] = ro_df["iri"].isin(symmetric_property_iris(g))
+
     ro_df = ro_df.drop("iri", axis=1)
 
     n_pairs = int(ro_df["inverse_entity_id"].notna().sum())
-    print(f"Extracted {len(ro_df)} properties, {n_pairs} with a declared inverse")
+    n_symmetric = int(ro_df["is_symmetric"].sum())
+    print(
+        f"Extracted {len(ro_df)} properties, {n_pairs} with a declared inverse, "
+        f"{n_symmetric} symmetric"
+    )
 
     ro_df.to_csv("./data/derived/properties.ro.csv", index=False)
 

@@ -97,8 +97,13 @@ def evaluate_end_to_end(
     system: str,
     match_mode: str = "overlap",
     predicted_id_to_kb_in: Mapping[str, str] | None = None,
+    canonicalize: Mapping[str, str] | None = None,
 ) -> EvalRun:
-    """Span+link scoring of a full predictor over the gold documents."""
+    """Span+link scoring of a full predictor over the gold documents.
+
+    ``canonicalize`` folds converse pairs onto the canonical space gold is annotated in;
+    see :func:`pelinker.eval.kb.canonical_id_map`.
+    """
     gold = [span for doc in docs for span in doc.spans]
     t0 = time.perf_counter()
     predictions = predict_fn([doc.text for doc in docs])
@@ -108,6 +113,7 @@ def evaluate_end_to_end(
         gold,
         match_mode=match_mode,
         predicted_id_to_kb_in=predicted_id_to_kb_in,
+        canonicalize=canonicalize,
     )
     return EvalRun(
         system=system,
@@ -162,8 +168,16 @@ def evaluate_linking_only(
     docs: Sequence[GoldDoc],
     *,
     system: str,
+    predicted_id_to_kb_in: Mapping[str, str] | None = None,
+    canonicalize: Mapping[str, str] | None = None,
 ) -> EvalRun:
-    """Score id assignment over the gold spans that carry an entity id."""
+    """Score id assignment over the gold spans that carry an entity id.
+
+    Ids are compared in the same space as the end-to-end regime: mapped onto input-KB ids
+    when the system emits minted ones, then folded onto the canonical member of each
+    converse pair. Direction is not scored here — the reference baselines assign an id and
+    nothing else, so orientation belongs to the gold's own directionality analysis.
+    """
     n_spans = n_predicted = n_correct = 0
     t0 = time.perf_counter()
     for doc in docs:
@@ -174,8 +188,20 @@ def evaluate_linking_only(
             predicted = link_fn(doc.text, span.a, span.b)
             if predicted is None:
                 continue
+            pred_id = str(predicted)
+            if predicted_id_to_kb_in is not None:
+                mapped = predicted_id_to_kb_in.get(pred_id)
+                if mapped is None:
+                    # Unmappable id: not comparable, so it counts as neither a hit nor a
+                    # miss — the same convention the end-to-end scorer uses.
+                    continue
+                pred_id = str(mapped)
             n_predicted += 1
-            if str(predicted) == span.entity_id:
+            gold_id = span.entity_id
+            if canonicalize is not None:
+                pred_id = str(canonicalize.get(pred_id, pred_id))
+                gold_id = str(canonicalize.get(gold_id, gold_id))
+            if pred_id == gold_id:
                 n_correct += 1
     wall = time.perf_counter() - t0
     score = LinkingOnlyScore(

@@ -30,6 +30,12 @@ from pelinker.text.chunking import (
     split_text_into_token_budget,
 )
 from pelinker.text.models import normalize_layers_spec
+from pelinker.text.mentions import (
+    LEXICAL_RULE,
+    keep_one_per_site,
+)
+from pelinker.text.mentions import split_predicate_labels as _split_predicate_labels
+from pelinker.text.predicates import PredicateMatcher, PredicateSpec
 from pelinker.text.tokenize import (
     text_to_tokens,
     token_list_with_window,
@@ -289,14 +295,14 @@ def texts_to_vrep(
     )
 
     # spaCy once per encoder chunk (reused for every word_modes pass)
-    stoken_per_chunk: list[list[SimplifiedToken]] = [
+    stokens_per_chunk: list[list[SimplifiedToken]] = [
         text_to_tokens(nlp=nlp, text=chunk) for chunk in chunk_mapper.chunks
     ]
 
     # ichunk -> itext, ichunk local
     ichunk_to_itext_ichunk_local_list = [
         chunk_mapper.ichunk_to_itext_ichunk_local(k)
-        for k, _ in enumerate(stoken_per_chunk)
+        for k, _ in enumerate(stokens_per_chunk)
     ]
 
     data: list[ExpressionHolderBatch] = []
@@ -306,7 +312,7 @@ def texts_to_vrep(
                 chunk_tokens, word_grouping, ichunk=ichunk_local, itext=itext
             )
             for chunk_tokens, (itext, ichunk_local) in zip(
-                stoken_per_chunk, ichunk_to_itext_ichunk_local_list
+                stokens_per_chunk, ichunk_to_itext_ichunk_local_list
             )
         ]
 
@@ -340,7 +346,12 @@ def texts_to_vrep(
                 word_grouping=word_grouping,
             )
         ]
-    return ReportBatch(chunk_mapper=chunk_mapper, texts=texts, _data=data)
+    return ReportBatch(
+        chunk_mapper=chunk_mapper,
+        texts=texts,
+        _data=data,
+        stokens_per_chunk=stokens_per_chunk,
+    )
 
 
 def embed_texts(
@@ -415,6 +426,8 @@ def _mention_row_dict(
     itext: int,
     ichunk: int,
     embed_list: list[float],
+    direction: str | None = None,
+    surface_rule: str | None = None,
 ) -> dict[str, object]:
     return {
         "pmid": pmid,
@@ -427,7 +440,89 @@ def _mention_row_dict(
         "itext": itext,
         "ichunk": ichunk,
         "embed": embed_list,
+        "direction": direction,
+        "surface_rule": surface_rule,
     }
+
+
+def split_predicate_labels(
+    entities: list[str],
+    nlp,
+    symmetric_labels: frozenset[str] = frozenset(),
+) -> tuple[list[PredicateSpec], list[str]]:
+    """Verb-predicate labels (matched from the parse) and the rest (matched lexically)."""
+    return _split_predicate_labels(
+        entities, nlp, symmetric_labels, tokenize=text_to_tokens
+    )
+
+
+def one_label_per_span(rows: list[dict]) -> list[dict]:
+    """Keep one mention row per site (:func:`pelinker.text.mentions.keep_one_per_site`)."""
+    return keep_one_per_site(
+        rows,
+        span=lambda r: (int(r["a_abs"]), int(r["b_abs"])),
+        preference=lambda r: (
+            1 if r.get("surface_rule") == LEXICAL_RULE else 0,
+            str(r["entity"]),
+        ),
+    )
+
+
+def _predicate_rows(
+    report_batch: "ReportBatch",
+    matcher: PredicateMatcher,
+    containers_by_wg: dict[WordGrouping, ExpressionHolderBatch],
+    pmids: list[str],
+) -> list[list[dict]]:
+    """Parse-labelled mention rows per text; embeddings come from the W1/W2 windows."""
+    out: list[list[dict]] = [[] for _ in report_batch.texts]
+    stokens = report_batch.stokens_per_chunk
+    if stokens is None:
+        return out
+    lookup: dict[tuple[WordGrouping, int], dict[tuple[int, int, int], int]] = {}
+
+    def index_for(wg: WordGrouping, itext: int) -> dict[tuple[int, int, int], int]:
+        key = (wg, itext)
+        if key not in lookup:
+            holder = containers_by_wg[wg].expression_data[itext]
+            lookup[key] = {
+                (int(e.ichunk or 0), int(e.a or 0), int(e.b or 0)): k
+                for k, e in enumerate(holder.expressions)
+            }
+        return lookup[key]
+
+    cm = report_batch.chunk_mapper
+    for k, tokens in enumerate(stokens):
+        itext, ichunk_local = cm.ichunk_to_itext_ichunk_local(k)
+        by_i = {t.i: t for t in tokens}
+        for m in matcher.match(tokens):
+            wg = WordGrouping.W1 if m.start == m.head else WordGrouping.W2
+            if wg not in containers_by_wg:
+                continue
+            a, b = by_i[m.start].ix, by_i[m.head].ix_end
+            pos = index_for(wg, itext).get((ichunk_local, a, b))
+            if pos is None:  # window lost in tokenizer alignment
+                continue
+            holder = containers_by_wg[wg].expression_data[itext]
+            offset = cm.map_chunk_to_text(itext, ichunk_local)
+            text = report_batch.texts[itext]
+            out[itext].append(
+                _mention_row_dict(
+                    pmid=pmids[itext],
+                    entity=m.label,
+                    mention=text[offset + a : offset + b],
+                    a=a,
+                    b=b,
+                    a_abs=offset + a,
+                    b_abs=offset + b,
+                    itext=itext,
+                    ichunk=ichunk_local,
+                    embed_list=holder.tt[pos].numpy().tolist(),
+                    direction=m.direction,
+                    surface_rule=m.rule,
+                )
+            )
+    return out
 
 
 def extract_and_embed_mentions(
@@ -445,10 +540,18 @@ def extract_and_embed_mentions(
     random_seed: int | None = None,
     negative_random_state: np.random.RandomState | None = None,
     on_encoder_batch: Callable[[int, int, int], None] | None = None,
+    symmetric_labels: frozenset[str] = frozenset(),
 ) -> List[dict]:
     """
     Modified to return list of dicts instead of DataFrame for better memory management
     and consistent schema handling.
+
+    Labels that are verb predicates are matched from the dependency parse
+    (:mod:`pelinker.text.predicates`): each verb mention gets at most one label, chosen
+    by voice, with ``direction`` and ``surface_rule`` recorded on the row. Other labels
+    are matched lexically on lemma windows (``surface_rule="lexical"``). Either way a
+    mention site keeps one label (:func:`one_label_per_span`). ``symmetric_labels`` are
+    never given an inverse direction.
 
     Negative rows are sampled with :class:`numpy.random.RandomState`. Pass
     ``negative_random_state`` to reuse one RNG across several calls (e.g. successive
@@ -477,9 +580,14 @@ def extract_and_embed_mentions(
         data_pmids[i : i + batch_size] for i in range(0, len(data), batch_size)
     ]
 
+    predicate_specs, lexical_entities = split_predicate_labels(
+        entities, nlp, symmetric_labels
+    )
+    matcher = PredicateMatcher(predicate_specs)
+
     # Pre-tokenize entities and resolve each entity's matching grouping once.
     entity_specs: list[tuple[str, list[SimplifiedToken], WordGrouping]] = []
-    for entity in entities:
+    for entity in lexical_entities:
         wg = _wg_for_property(entity)
         if wg is None:
             continue
@@ -532,8 +640,29 @@ def extract_and_embed_mentions(
                             itext=e.itext,
                             ichunk=e.ichunk,
                             embed_list=tt.numpy().tolist(),
+                            surface_rule=LEXICAL_RULE,
                         )
                     )
+
+        predicate_rows = _predicate_rows(
+            report_batch, matcher, containers_by_wg, batch_pmids
+        )
+        for itext in range(len(report_batch.texts)):
+            merged = one_label_per_span(
+                positive_rows_by_text[itext] + predicate_rows[itext]
+            )
+            positive_rows_by_text[itext] = merged
+            positive_keys_by_text[itext] = {
+                _mention_key(
+                    wg.value,
+                    int(r["ichunk"]),
+                    int(r["a"]),
+                    int(r["b"]),
+                    str(r["mention"]),
+                )
+                for r in merged
+                for wg in wg_iter_order
+            }
 
         # Phase B: emit positives and optionally add globally-negative samples.
         if negatives_per_positive == 0:
@@ -662,6 +791,8 @@ class ReportBatch(BaseDataclass):
     _data: list[ExpressionHolderBatch]
     texts: list[str]
     chunk_mapper: ChunkMapper
+    # Parsed tokens per encoder chunk (global chunk order), for parse-based labelling.
+    stokens_per_chunk: list[list[SimplifiedToken]] | None = None
 
     def __post_init__(self):
         for item in self._data:

@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 from pelinker.core.config import GridObjectiveSpec
+from pelinker.kb.classes import reference_label_column
 
 import hdbscan
 import numpy as np
@@ -748,7 +749,9 @@ def evaluate_cluster_size_grid(
     Evaluate clustering metrics on a grid of min_cluster_size values.
 
     Uses DBCV (Density-Based Clustering Validation) and, when ``entity`` is present,
-    adjusted Rand index vs. entity codes (noise label -1 excluded).
+    adjusted Rand index vs. the reference labels (noise label -1 excluded). The reference
+    is ``entity_class`` when a class view was applied (:mod:`pelinker.kb.classes`),
+    otherwise the raw ``entity`` label.
 
     Returns:
         DataFrame with columns: min_cluster_size, icm, n_clusters, dbcv, ari
@@ -757,7 +760,7 @@ def evaluate_cluster_size_grid(
     entity_codes: np.ndarray | None = None
     if "entity" in dfr2.columns:
         entity_codes = (
-            dfr2["entity"]
+            dfr2[reference_label_column(dfr2)]
             .astype("category")
             .cat.codes.to_numpy(dtype=np.int64, copy=False)
         )

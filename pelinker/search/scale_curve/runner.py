@@ -44,6 +44,7 @@ from pelinker.core.scaling import (
     fit_scale_curve,
 )
 from pelinker.search.selection import evaluate_selection_sample, load_selection_frame
+from pelinker.kb.classes import ClassView
 
 SCALE_CURVE_JSON_BASENAME = "scale_curve.json"
 SCALE_CURVE_FIGURE_BASENAME = "scale_curve"
@@ -207,6 +208,8 @@ def run_scale_curve(
     max_mentions_per_entity: int | None = None,
     max_mentions_negative: int | None = None,
     mention_cap_seed: int = 13,
+    class_view: ClassView = "raw",
+    class_kb_path: pathlib.Path | None = None,
 ) -> ScaleCurve | None:
     """Sweep ``clustering_sample_rows`` and fit ``log(MCS*) ~ a + b·log(N)``.
 
@@ -261,6 +264,8 @@ def run_scale_curve(
         max_mentions_per_entity=max_mentions_per_entity,
         max_mentions_negative=max_mentions_negative,
         mention_cap_seed=mention_cap_seed,
+        class_view=class_view,
+        class_kb_path=class_kb_path,
     )
     viz_method = cluster_viz_method.lower()
     if viz_method not in ("pca", "umap"):

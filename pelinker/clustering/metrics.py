@@ -4,6 +4,7 @@ import math
 
 import numpy as np
 import pandas as pd
+from pelinker.kb.classes import reference_label_column
 from pelinker.reports.schema import ClusteringFitMetrics
 from sklearn.metrics import (
     adjusted_rand_score,
@@ -67,7 +68,9 @@ def compute_clustering_fit_metrics(
 
     ari_score: float | None
     if "entity" in manifold_df.columns and len(manifold_df) == n:
-        property_labels = manifold_df["entity"].astype("category").cat.codes.values
+        # The configured class view's key when one was applied (pelinker.kb.classes).
+        reference = reference_label_column(manifold_df)
+        property_labels = manifold_df[reference].astype("category").cat.codes.values
         ari_score = compute_adjusted_rand_index(property_labels, labels)
     else:
         ari_score = None

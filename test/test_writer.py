@@ -144,7 +144,7 @@ def test_basic_write_record_batch(temp_dir, sample_data):
     # Verify content
     table = read_parquet_file(output_path)
     assert table.num_rows == 3
-    assert table.num_columns == 10
+    assert table.num_columns == 12  # + direction, surface_rule
 
     # Check column names
     expected_columns = [
@@ -158,6 +158,8 @@ def test_basic_write_record_batch(temp_dir, sample_data):
         "itext",
         "ichunk",
         "embed",
+        "direction",
+        "surface_rule",
     ]
     assert table.column_names == expected_columns
 
@@ -188,7 +190,7 @@ def test_basic_write_table(temp_dir, sample_data):
     assert output_path.exists()
     table = read_parquet_file(output_path)
     assert table.num_rows == 3
-    assert table.num_columns == 10
+    assert table.num_columns == 12  # + direction, surface_rule
 
 
 def test_multiple_batches(temp_dir, sample_data):

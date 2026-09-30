@@ -1,6 +1,7 @@
 import os
 import pathlib
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
+from typing import TypeVar
 
 import logging
 
@@ -31,6 +32,19 @@ from pelinker.text.models import str2layers
 from pelinker.data.parquet import ParquetWriter
 
 logger = logging.getLogger(__name__)
+
+T = TypeVar("T")
+
+
+def prepend_first(first: T, rest: Iterator[T]) -> Iterator[T]:
+    """``first`` followed by the rest of an iterator it was taken from.
+
+    A module-level function, not a closure: a closure over the caller's iterator variable
+    sees it after it is rebound to this very generator, which then consumes itself at the
+    second item ("generator already executing").
+    """
+    yield first
+    yield from rest
 
 
 def _progress_disabled() -> bool:
@@ -66,6 +80,13 @@ def _embed_corpus_single_source(
 
     df_kb = pd.read_csv(training.kb_csv_path)
     entities = df_kb["label"].tolist()
+    # Symmetric relations are never given an inverse direction; the pairs KB carries the
+    # flag, a plain KB has none.
+    symmetric_labels = (
+        frozenset(df_kb.loc[df_kb["is_symmetric"].fillna(False).astype(bool), "label"])
+        if "is_symmetric" in df_kb.columns
+        else frozenset()
+    )
 
     logger.info("Loaded %s entities", df_kb.shape[0])
     logger.info("Layers are set to %s", layers)
@@ -81,12 +102,7 @@ def _embed_corpus_single_source(
     else:
         _chunk0, pmid_col, text_col = _first_chunk
         logger.info("Using columns: %r, %r", pmid_col, text_col)
-
-        def _chunk_stream():
-            yield _chunk0, pmid_col, text_col
-            yield from chunk_iter
-
-        chunk_iter = _chunk_stream()
+        chunk_iter = prepend_first(_first_chunk, chunk_iter)
 
     if training.max_input_buffers is not None:
         logger.info(
@@ -224,6 +240,7 @@ def _embed_corpus_single_source(
                         random_seed=training.negative_seed,
                         negative_random_state=negative_sampler,
                         on_encoder_batch=on_encoder_batch,
+                        symmetric_labels=symmetric_labels,
                     )
 
                 if rows_data:

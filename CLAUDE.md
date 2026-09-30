@@ -14,8 +14,13 @@ FastAPI server expose inference.
 | Clustering | `pelinker/clustering/` | Fit pipeline, grid metrics, transforms |
 | Hyperparam search | `pelinker/search/` | Model/dim selection, scale curve, grid solver |
 | Linker training | `pelinker/linker/` | Cluster training, distillation, KB lemma |
+| KB | `pelinker/kb/` | Ground-truth spans + scoring, KB-out catalog and id bridge, class views (`classes.py`) |
+| Screener | `pelinker/screener/` | Negative / manifold-OOV screening |
+| Evaluation | `pelinker/eval/` | Gold harness, reference baselines, canonical KB view, LLM provider seam |
+| Reports | `pelinker/reports/` | Report schemas, paths, summaries |
+| Store | `pelinker/store/` | Packaged model resources |
 | CLIs | `pelinker/cli/` | `pelinker-fit`, `pelinker-serves`, etc. |
-| Scripts | `run/` | Preprocessing, analysis — see @run/README.md |
+| Scripts | `run/` | Preprocessing, analysis, `run/eval/` gold pipeline — see @run/README.md |
 
 ## Environment (uv only)
 
@@ -26,7 +31,10 @@ This project uses **uv** for all Python environment management. Do not use Poetr
 # First-time / refresh env
 uv sync --extra dev          # CI + local dev (pytest, pre-commit, en_core_web_lg)
 uv sync --extra docs         # mkdocs build
+uv sync --extra eval         # gold pipeline: LLM provider SDKs (run/eval/*)
 uv sync --extra gpu          # optional CuPy
+# extras are exclusive: name them together (--extra dev --extra eval) or the omitted
+# ones are uninstalled
 
 # Run code
 uv run python run/script.py
@@ -54,6 +62,20 @@ Pre-commit runs Ruff check + format (see `.pre-commit-config.yaml`). Ruff config
 - Tests marked `heavy` skip when spaCy `en_core_web_lg` or HF weights are absent.
 - The `dev` extra pins `en_core_web_lg` so CI runs tokenization tests without a separate
   `spacy download`.
+
+## Gold evaluation
+
+`run/eval/` is the human-verified gold pipeline; `docs/user_guide/evaluation.md` is the
+guide. Two invariants:
+
+- Every step consumes the **pairs** KB (`data/derived/properties.synthesis.2.pairs.csv`,
+  built by `run/preprocessing/derive_inverse_pairs.py`). A KB without `is_canonical` is
+  refused, not tolerated — a fallback would change what the gold means.
+- Ids are compared in canonical space on both sides (`pelinker.eval.kb.canonical_id_map`),
+  so a converse-member answer scores as the relation it names.
+
+Measured numbers belong in the measurement writeup, not in this repo: point
+`--report-dir` outside the working tree.
 
 ## Gotchas
 

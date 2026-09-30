@@ -17,11 +17,16 @@ Systems:
 - ``linker`` — a fitted PELinker artifact (both regimes), with the KB-out → KB-in id
   bridge applied so entity accuracy is comparable
 
+Ids are scored in **canonical space**: gold carries the canonical member of each converse
+pair, so every system's answer is folded the same way before comparison. The KB therefore
+has to be the pairs KB (``run/preprocessing/derive_inverse_pairs.py``). Direction is not
+scored here — the baselines assign an id and nothing else.
+
 Usage:
 
     uv run python run/eval/run_baselines.py \
         --gold <workdir>/gold/gold.verified.json \
-        --kb-csv-path data/derived/properties.synthesis.2.csv \
+        --kb-csv-path data/derived/properties.synthesis.2.pairs.csv \
         --report-dir <workdir>/eval-runs/<run-name> \
         --systems lexical,encoder \
         --model-path <models>/pelinker.pubmedbert.1
@@ -42,6 +47,7 @@ from pelinker.eval.baselines import (
     LexicalLemmaBaseline,
     LlmLinkerBaseline,
 )
+from pelinker.eval.kb import canonical_id_map
 from pelinker.eval.llm import DEFAULT_MODEL, DEFAULT_PROVIDER, PROVIDERS
 from pelinker.eval.harness import (
     evaluate_end_to_end,
@@ -134,6 +140,14 @@ def main(
     n_spans = sum(len(d.spans) for d in docs)
     logger.info("Gold: %d docs, %d spans", len(docs), n_spans)
     kb = pd.read_csv(kb_csv_path)
+    try:
+        # Gold is annotated in canonical space. The baselines choose from the whole KB,
+        # which still holds both members of each converse pair, so their ids are folded
+        # onto the canonical member before comparison — otherwise a correct "regulated by"
+        # link scores as an error and the baselines measure the vocabulary's redundancy.
+        canonical = canonical_id_map(kb, kb_csv_path=kb_csv_path)
+    except ValueError as err:
+        raise click.ClickException(str(err)) from err
 
     runs = []
 
@@ -144,14 +158,26 @@ def main(
     if "lexical" in wanted:
         runs.append(
             evaluate_end_to_end(
-                lexical.predict, docs, system="lexical", match_mode=match_mode
+                lexical.predict,
+                docs,
+                system="lexical",
+                match_mode=match_mode,
+                canonicalize=canonical,
             )
         )
-        runs.append(evaluate_linking_only(lexical.link, docs, system="lexical"))
+        runs.append(
+            evaluate_linking_only(
+                lexical.link, docs, system="lexical", canonicalize=canonical
+            )
+        )
 
     if "encoder" in wanted:
         enc = EncoderKnnBaseline(kb, model_name=encoder_model)
-        runs.append(evaluate_linking_only(enc.link, docs, system="encoder_knn"))
+        runs.append(
+            evaluate_linking_only(
+                enc.link, docs, system="encoder_knn", canonicalize=canonical
+            )
+        )
 
         # End-to-end: lexical spans, encoder ids — isolates the id decision.
         def encoder_predict(texts: list[str]) -> list[dict]:
@@ -170,7 +196,11 @@ def main(
 
         runs.append(
             evaluate_end_to_end(
-                encoder_predict, docs, system="encoder_knn", match_mode=match_mode
+                encoder_predict,
+                docs,
+                system="encoder_knn",
+                match_mode=match_mode,
+                canonicalize=canonical,
             )
         )
 
@@ -181,7 +211,10 @@ def main(
         )
         runs.append(
             evaluate_linking_only(
-                llm.link, docs, system=f"llm:{llm_provider}:{llm_model}"
+                llm.link,
+                docs,
+                system=f"llm:{llm_provider}:{llm_model}",
+                canonicalize=canonical,
             )
         )
 
@@ -212,19 +245,19 @@ def main(
                 system="pelinker",
                 match_mode=match_mode,
                 predicted_id_to_kb_in=bridge,
+                canonicalize=canonical,
             )
         )
 
-        link_fn = _linker_link_fn(linker, thr)
-        if bridge:
-
-            def bridged(text: str, a: int, b: int) -> str | None:
-                minted = link_fn(text, a, b)
-                return None if minted is None else bridge.get(minted)
-
-            runs.append(evaluate_linking_only(bridged, docs, system="pelinker"))
-        else:
-            runs.append(evaluate_linking_only(link_fn, docs, system="pelinker"))
+        runs.append(
+            evaluate_linking_only(
+                _linker_link_fn(linker, thr),
+                docs,
+                system="pelinker",
+                predicted_id_to_kb_in=bridge,
+                canonicalize=canonical,
+            )
+        )
 
     out = Path(report_dir)
     out.mkdir(parents=True, exist_ok=True)
