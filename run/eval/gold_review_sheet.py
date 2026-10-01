@@ -3,9 +3,17 @@
 ``export`` flattens one gold ``*.json`` (the ``annotate_llm.py`` output) into a review
 TSV — one row per candidate span with a marked context window and empty ``verdict`` /
 ``fix_entity_id`` / ``fix_direction`` columns — for spreadsheet review. With ``--other``
-(a second annotator's file), each row also shows the other annotator's call, spans only
-the second annotator proposed are appended as ``origin=other`` rows, and the command
-prints Cohen's κ.
+(a second annotator's file), each row also shows the other annotator's call
+(``other_entity_id``, ``other_label``, ``other_direction``), spans only the second
+annotator proposed are appended as ``origin=other`` rows, and the command prints Cohen's
+κ.
+
+Agreement is read in the reference inventory's tiers 0 and 1
+(:mod:`pelinker.eval.reference`): ids are compared after folding converse members onto
+their canonical member and, with ``--equivalences``, along the KB-implied identities.
+Two annotators who call one mention by two names of the same relation therefore agree.
+``agrees_direction`` is filled only where the relation agrees, and a symmetric relation
+agrees in any direction. κ is reported raw and folded.
 
 The second annotator may cover fewer documents than the first (a slice, or documents it
 could not answer), so two things follow: rows on documents it never saw read
@@ -24,7 +32,7 @@ Usage:
 
     uv run python run/eval/gold_review_sheet.py export \
         --gold gold.llm-a.json --other gold.llm-b.json --kb-csv-path <kb> \
-        --output review.tsv
+        --equivalences data/curated/equivalences.csv --output review.tsv
     uv run python run/eval/gold_review_sheet.py import \
         --gold gold.llm-a.json --sheet review.tsv --other gold.llm-b.json \
         --verified-by <name> --output gold.verified.json
@@ -40,6 +48,7 @@ import click
 import pandas as pd
 from sklearn.metrics import cohen_kappa_score
 from pelinker.core.paths import ExpandedPath
+from pelinker.eval.reference import fold_map, folded_symmetric_ids, load_equivalences
 
 logger = logging.getLogger(__name__)
 
@@ -109,7 +118,46 @@ def align_hits(
     return pairs
 
 
-def kappa_report(docs_a: list[dict], docs_b: list[dict]) -> dict:
+def load_fold(
+    kb: pd.DataFrame, equivalences_path: str | None
+) -> tuple[dict[str, str], frozenset[str]]:
+    """The T̂ tier 0+1 fold of ``kb`` and the folded ids of its symmetric relations."""
+    equivalences = (
+        None
+        if equivalences_path is None
+        else load_equivalences(equivalences_path, kb=kb)
+    )
+    fold = fold_map(kb, equivalences)
+    return fold, folded_symmetric_ids(kb, fold)
+
+
+def ids_agree(id_a: object, id_b: object, fold: dict[str, str]) -> bool:
+    a, b = str(id_a), str(id_b)
+    return fold.get(a, a) == fold.get(b, b)
+
+
+def directions_agree(
+    hit: dict, other: dict, fold: dict[str, str], symmetric: frozenset[str]
+) -> bool | None:
+    """Direction agreement on a span both annotators linked to the same relation.
+
+    ``None`` where it is not defined: the relations differ (a direction comparison
+    between two relations says nothing), or a side gave no direction. A symmetric
+    relation has no orientation, so any two directions agree.
+    """
+    if not ids_agree(hit["entity_id"], other["entity_id"], fold):
+        return None
+    relation = fold.get(str(hit["entity_id"]), str(hit["entity_id"]))
+    if relation in symmetric:
+        return True
+    if not hit.get("direction") or not other.get("direction"):
+        return None
+    return str(hit["direction"]) == str(other["direction"])
+
+
+def kappa_report(
+    docs_a: list[dict], docs_b: list[dict], *, fold: dict[str, str] | None = None
+) -> dict:
     """Cohen's κ on entity id and direction over span-aligned pairs.
 
     Computed over the documents **both** annotators covered; ``n_docs_shared`` reports how
@@ -119,6 +167,10 @@ def kappa_report(docs_a: list[dict], docs_b: list[dict]) -> dict:
     missed it — in both directions, so an annotator that hallucinates spans and one that
     misses them are penalized alike. Direction κ is computed over pairs where both sides
     matched and gave a direction.
+
+    With ``fold`` (the T̂ tier 0+1 map), ``kappa_entity_id_folded`` is added: the same κ
+    after both sides' ids are folded, so naming one relation two ways is not a
+    disagreement.
     """
     pairs = align_hits(docs_a, docs_b, restrict_to_shared=True)
     ids_a = [("∅" if h is None else str(h["entity_id"])) for h, _ in pairs]
@@ -132,6 +184,13 @@ def kappa_report(docs_a: list[dict], docs_b: list[dict]) -> dict:
     }
     if len(set(ids_a) | set(ids_b)) > 1 and pairs:
         report["kappa_entity_id"] = float(cohen_kappa_score(ids_a, ids_b))
+    if fold is not None and pairs:
+        folded_a = [fold.get(i, i) for i in ids_a]
+        folded_b = [fold.get(i, i) for i in ids_b]
+        if len(set(folded_a) | set(folded_b)) > 1:
+            report["kappa_entity_id_folded"] = float(
+                cohen_kappa_score(folded_a, folded_b)
+            )
     directed = [
         (str(h.get("direction")), str(o.get("direction")))
         for h, o in pairs
@@ -158,11 +217,29 @@ def main() -> None:
     help="Second annotator's gold over the same docs (adds agreement columns + κ).",
 )
 @click.option("--kb-csv-path", required=True, type=ExpandedPath(exists=True))
+@click.option(
+    "--equivalences",
+    default=None,
+    type=ExpandedPath(exists=True),
+    help="KB-implied identities (T̂ tier 1) folded before agreement is read.",
+)
 @click.option("--output", required=True, type=ExpandedPath())
-def export_cmd(gold: str, other: str | None, kb_csv_path: str, output: str) -> None:
+def export_cmd(
+    gold: str,
+    other: str | None,
+    kb_csv_path: str,
+    equivalences: str | None,
+    output: str,
+) -> None:
+    if Path(output).exists():
+        # A sheet on disk may hold hours of verdicts; a re-export must go to a new file.
+        raise click.ClickException(
+            f"{output} exists; export to a new path rather than overwrite a review sheet"
+        )
     docs = load_gold(gold)
     kb = pd.read_csv(kb_csv_path)
     label_of = dict(zip(kb["entity_id"].astype(str), kb["label"].astype(str)))
+    fold, symmetric = load_fold(kb, equivalences)
 
     text_of = {doc["doc_id"]: doc["text"] for doc in docs}
 
@@ -207,27 +284,36 @@ def export_cmd(gold: str, other: str | None, kb_csv_path: str, output: str) -> N
                     assert match is not None
                     row = _row(b_doc_of[id(match)], match, origin="other")
                     row["other_entity_id"] = ""
+                    row["other_label"] = ""
                     row["other_direction"] = ""
                     row["agrees"] = ""
+                    row["agrees_direction"] = ""
                 else:
                     row = _row(doc["doc_id"], hit, origin="gold")
                     if doc["doc_id"] not in shared:
                         # The second annotator never saw this document; an empty
                         # comparison here means "not covered", not "disagreed".
                         row["other_entity_id"] = "not-covered"
+                        row["other_label"] = "not-covered"
                         row["other_direction"] = "not-covered"
                         row["agrees"] = "not-covered"
+                        row["agrees_direction"] = "not-covered"
+                    elif match is None:
+                        row["other_entity_id"] = ""
+                        row["other_label"] = ""
+                        row["other_direction"] = ""
+                        row["agrees"] = ""
+                        row["agrees_direction"] = ""
                     else:
-                        row["other_entity_id"] = (
-                            "" if match is None else match["entity_id"]
+                        row["other_entity_id"] = match["entity_id"]
+                        row["other_label"] = label_of.get(str(match["entity_id"]), "")
+                        row["other_direction"] = match.get("direction") or ""
+                        row["agrees"] = str(
+                            ids_agree(hit["entity_id"], match["entity_id"], fold)
                         )
-                        row["other_direction"] = (
-                            "" if match is None else (match.get("direction") or "")
-                        )
-                        row["agrees"] = (
-                            ""
-                            if match is None
-                            else str(match["entity_id"] == hit["entity_id"])
+                        same_direction = directions_agree(hit, match, fold, symmetric)
+                        row["agrees_direction"] = (
+                            "" if same_direction is None else str(same_direction)
                         )
                 rows.append(row)
 
@@ -244,7 +330,7 @@ def export_cmd(gold: str, other: str | None, kb_csv_path: str, output: str) -> N
         sum(1 for r in rows if r["origin"] == "other"),
     )
     if other is not None:
-        report = kappa_report(docs, load_gold(other))
+        report = kappa_report(docs, load_gold(other), fold=fold)
         logger.info("Agreement: %s", json.dumps(report, indent=1))
 
 
@@ -391,8 +477,22 @@ def import_cmd(
 @main.command("agreement")
 @click.option("--gold", required=True, type=ExpandedPath(exists=True))
 @click.option("--other", required=True, type=ExpandedPath(exists=True))
-def agreement_cmd(gold: str, other: str) -> None:
-    report = kappa_report(load_gold(gold), load_gold(other))
+@click.option(
+    "--kb-csv-path",
+    default=None,
+    type=ExpandedPath(exists=True),
+    help="Pairs KB; adds the κ folded in T̂ tier 0 (and tier 1 with --equivalences).",
+)
+@click.option("--equivalences", default=None, type=ExpandedPath(exists=True))
+def agreement_cmd(
+    gold: str, other: str, kb_csv_path: str | None, equivalences: str | None
+) -> None:
+    if equivalences is not None and kb_csv_path is None:
+        raise click.ClickException("--equivalences needs --kb-csv-path")
+    fold = None
+    if kb_csv_path is not None:
+        fold, _ = load_fold(pd.read_csv(kb_csv_path), equivalences)
+    report = kappa_report(load_gold(gold), load_gold(other), fold=fold)
     click.echo(json.dumps(report, indent=1))
 
 

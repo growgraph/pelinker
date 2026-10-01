@@ -304,3 +304,147 @@ def test_import_writes_a_correction_summary_split_by_surface_type(
         "anchored": {"accept": 1, "fix": 0, "reject": 0},
         "paraphrase": {"accept": 0, "fix": 0, "reject": 1},
     }
+
+
+# ------------------------------------------------------- agreement in T̂ tier 0+1
+
+
+@pytest.fixture
+def pairs_kb_csv(tmp_path: Path) -> str:
+    """A converse pair, a symmetric relation, and its minted converse (tier-1 identity)."""
+    path = tmp_path / "pairs.csv"
+    pd.DataFrame(
+        {
+            "entity_id": ["PEL.1", "PEL.1i", "PEL.2", "PEL.2c"],
+            "label": ["regulates", "regulated by", "binds to", "bound by"],
+            "is_symmetric": [False, False, True, True],
+            "is_canonical": [True, False, True, True],
+            "canonical_entity_id": ["PEL.1", "PEL.1", "PEL.2", "PEL.2c"],
+        }
+    ).to_csv(path, index=False)
+    return str(path)
+
+
+@pytest.fixture
+def equivalences_csv(tmp_path: Path) -> str:
+    path = tmp_path / "equivalences.csv"
+    pd.DataFrame(
+        {
+            "entity_id": ["PEL.2c"],
+            "equivalent_to": ["PEL.2"],
+            "tier": ["kb_implied"],
+            "note": ["minted converse of a symmetric verb"],
+        }
+    ).to_csv(path, index=False)
+    return str(path)
+
+
+def _export_folded(
+    tmp_path: Path, kb_csv: str, equivalences: str | None, gold: str, other: str
+) -> pd.DataFrame:
+    out = tmp_path / f"review.{'folded' if equivalences else 'raw'}.tsv"
+    args = ["export", "--gold", gold, "--other", other, "--kb-csv-path", kb_csv]
+    if equivalences is not None:
+        args += ["--equivalences", equivalences]
+    result = CliRunner().invoke(grs.main, [*args, "--output", str(out)])
+    assert result.exit_code == 0, result.output
+    return pd.read_csv(out, sep="\t", dtype=str).fillna("")
+
+
+def test_export_shows_the_other_annotators_label(
+    tmp_path: Path, pairs_kb_csv: str
+) -> None:
+    gold = _write(tmp_path / "a.json", [_doc(1, TEXT_A, [_hit(5, 12, "PEL.1")])])
+    other = _write(tmp_path / "b.json", [_doc(1, TEXT_A, [_hit(5, 12, "PEL.2")])])
+
+    row = _export_folded(tmp_path, pairs_kb_csv, None, gold, other).iloc[0]
+
+    assert row["other_label"] == "binds to"
+    assert row["agrees"] == "False"
+    # Direction is not compared across two different relations.
+    assert row["agrees_direction"] == ""
+
+
+def test_a_converse_member_and_its_canonical_member_agree(
+    tmp_path: Path, pairs_kb_csv: str
+) -> None:
+    """Tier 0: "regulated by" and "regulates" are one relation."""
+    gold = _write(
+        tmp_path / "a.json", [_doc(1, TEXT_A, [_hit(5, 12, "PEL.1", "inverse")])]
+    )
+    other = _write(
+        tmp_path / "b.json", [_doc(1, TEXT_A, [_hit(5, 12, "PEL.1i", "forward")])]
+    )
+
+    row = _export_folded(tmp_path, pairs_kb_csv, None, gold, other).iloc[0]
+
+    assert row["agrees"] == "True"
+    assert row["agrees_direction"] == "False"
+
+
+def test_kb_implied_identities_agree_only_when_supplied(
+    tmp_path: Path, pairs_kb_csv: str, equivalences_csv: str
+) -> None:
+    """Tier 1: "bound by" ≡ "binds to" once the equivalences file says so."""
+    gold = _write(
+        tmp_path / "a.json", [_doc(1, TEXT_A, [_hit(5, 12, "PEL.2", "symmetric")])]
+    )
+    other = _write(
+        tmp_path / "b.json", [_doc(1, TEXT_A, [_hit(5, 12, "PEL.2c", "forward")])]
+    )
+
+    without = _export_folded(tmp_path, pairs_kb_csv, None, gold, other).iloc[0]
+    folded = _export_folded(tmp_path, pairs_kb_csv, equivalences_csv, gold, other)
+
+    assert without["agrees"] == "False"
+    assert folded.iloc[0]["agrees"] == "True"
+    # A symmetric relation has no orientation to disagree on.
+    assert folded.iloc[0]["agrees_direction"] == "True"
+
+
+def test_folded_kappa_counts_two_names_of_one_relation_as_agreement() -> None:
+    docs_a = [_doc(1, TEXT_A, [_hit(5, 12, "PEL.1"), _hit(22, 30, "PEL.2")])]
+    docs_b = [_doc(1, TEXT_A, [_hit(5, 12, "PEL.1i"), _hit(22, 30, "PEL.2")])]
+    fold = {"PEL.1": "PEL.1", "PEL.1i": "PEL.1", "PEL.2": "PEL.2"}
+
+    report = grs.kappa_report(docs_a, docs_b, fold=fold)
+
+    assert report["kappa_entity_id"] < 1.0
+    assert report["kappa_entity_id_folded"] == pytest.approx(1.0)
+
+
+def test_agreement_command_refuses_equivalences_without_a_kb(
+    tmp_path: Path, equivalences_csv: str
+) -> None:
+    docs = _write(tmp_path / "a.json", [_doc(1, TEXT_A, [_hit(5, 12, "PEL.1")])])
+
+    result = CliRunner().invoke(
+        grs.main,
+        [
+            "agreement",
+            "--gold",
+            docs,
+            "--other",
+            docs,
+            "--equivalences",
+            equivalences_csv,
+        ],
+    )
+
+    assert result.exit_code != 0
+    assert "--kb-csv-path" in result.output
+
+
+def test_export_never_overwrites_a_review_sheet(tmp_path: Path, kb_csv: str) -> None:
+    """A filled sheet holds the curator's verdicts; a re-export must not replace it."""
+    gold = _write(tmp_path / "a.json", [_doc(1, TEXT_A, [_hit(5, 12, "PEL.1")])])
+    out = tmp_path / "review.tsv"
+    out.write_text("filled verdicts", encoding="utf-8")
+
+    result = CliRunner().invoke(
+        grs.main,
+        ["export", "--gold", gold, "--kb-csv-path", kb_csv, "--output", str(out)],
+    )
+
+    assert result.exit_code != 0
+    assert out.read_text(encoding="utf-8") == "filled verdicts"

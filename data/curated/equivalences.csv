@@ -1,0 +1,3 @@
+entity_id,equivalent_to,tier,note
+PEL.000040,PEL.000002,kb_implied,"'associated with' was minted as the converse of 'associates', which the KB marks symmetric"
+PEL.000041,PEL.000003,kb_implied,"'bound by' was minted as the converse of 'binds to', which the KB marks symmetric"

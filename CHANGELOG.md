@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- A scoring-only reference inventory (`pelinker/eval/reference.py`). `fold_map` folds
+  each KB id onto its class representative: converse members onto their canonical member
+  (tier 0), then along the KB-implied identities of an equivalences file (tier 1,
+  `load_equivalences`). The file is validated against the KB: unknown tiers, self-maps,
+  ids with two targets, unknown ids and cycles are refused. Training never reads it.
+- `data/curated/equivalences.csv`: the KB-implied identities, i.e. converses minted for
+  verbs the KB later marks symmetric.
+- `run/eval/gold_review_sheet.py` reads agreement in the folded space:
+  - `export` adds `other_label` and `agrees_direction`; `agrees` compares folded ids;
+  - `agrees_direction` is filled only where the relation agrees, and a symmetric relation
+    agrees in any direction;
+  - `--equivalences` on `export` and `agreement` (the latter also takes `--kb-csv-path`);
+  - `kappa_report(…, fold=)` adds `kappa_entity_id_folded` beside the raw κ;
+  - `export` refuses to overwrite an existing sheet, which may hold verdicts.
 - **Class views** (`pelinker/kb/classes.py`) decide what counts as one class of the KB,
   without editing the KB. Each is a projection of the pairs KB's own declarations:
   - `raw`: the matched label;

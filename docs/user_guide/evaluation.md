@@ -231,11 +231,14 @@ its own run. Try `--limit 3` first and read `usage` in the cached responses unde
 
 ```bash
 uv run python run/eval/gold_review_sheet.py agreement \
-  --gold <workdir>/gold/gold.llm-a.json --other <workdir>/gold/gold.llm-b.json
+  --gold <workdir>/gold/gold.llm-a.json --other <workdir>/gold/gold.llm-b.json \
+  --kb-csv-path data/derived/properties.synthesis.2.pairs.csv \
+  --equivalences data/curated/equivalences.csv
 
 uv run python run/eval/gold_review_sheet.py export \
   --gold <workdir>/gold/gold.llm-a.json --other <workdir>/gold/gold.llm-b.json \
   --kb-csv-path data/derived/properties.synthesis.2.pairs.csv \
+  --equivalences data/curated/equivalences.csv \
   --output <workdir>/gold/review.tsv
 ```
 
@@ -244,11 +247,21 @@ covered — `n_docs_shared` says how many. A span only one annotator marked ente
 entity-id κ as an explicit `∅` on the other side, in both directions, so missing a mention
 and inventing one are penalized alike.
 
+With `--kb-csv-path`, κ is also reported **folded** (`kappa_entity_id_folded`). Ids are
+compared in the reference inventory's tiers 0 and 1: converse members fold onto their
+canonical member, and `--equivalences` adds the identities the KB implies without
+declaring (`data/curated/equivalences.csv`). Two annotators who name one relation two ways
+then agree. The raw κ stays beside it.
+
 The review TSV has one row per candidate span with a marked context window. Rows carry an
 `origin`: `gold` from the first annotator, `other` for spans only the second proposed —
 without those, verified gold could never exceed the first annotator's recall. On documents
 the second annotator never saw, the comparison columns read `not-covered` rather than
-looking like a disagreement.
+looking like a disagreement. Each row shows the other annotator's `other_entity_id`,
+`other_label` and `other_direction`. `agrees` compares the two ids in the folded space.
+`agrees_direction` is filled only where the relation agrees (a symmetric relation agrees in
+any direction), so an `agrees=True`, `agrees_direction=False` row is a pure direction
+dispute.
 
 Fill in `verdict` (`accept` / `reject` / `fix`) on **every** row, with `fix_entity_id` and
 `fix_direction` where the verdict is `fix`; anything else is an error, so nothing is kept
