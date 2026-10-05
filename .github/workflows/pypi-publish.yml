@@ -19,14 +19,10 @@ jobs:
         steps:
         -   uses: actions/checkout@v5
 
-        -   name: Set up Python
-            uses: actions/setup-python@v5
-            with:
-                python-version: '3.10'
         -   name: Install uv
             uses: astral-sh/setup-uv@v7
             with:
-                version: "0.10.12"
+                version: "0.12.21"
         -   name: Build and publish
             run: |
                 uv build

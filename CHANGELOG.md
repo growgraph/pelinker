@@ -177,6 +177,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Requires Python 3.11+** (was 3.10.6+): patched `keras` releases, pulled in by
+  ParametricUMAP, no longer support 3.10.
+- `uv.lock` is excluded from the TOML formatting hooks; CI installs with `uv sync --locked`.
+
 - Corpus embedding spends less CPU time between encoder passes: spaCy runs batched via
   `nlp.pipe` without NER, lemma matching uses a per-holder index, and word→subword span
   mapping uses binary search. Output is unchanged.

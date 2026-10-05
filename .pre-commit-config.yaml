@@ -29,8 +29,10 @@ repos:
     hooks:
     -   id: pretty-format-toml
         args: [--autofix]
+        exclude: ^uv\.lock$
 -   repo: https://github.com/pappasam/toml-sort
     rev: v0.24.3
     hooks:
     -   id: toml-sort
         args: [-ia]
+        exclude: ^uv\.lock$

@@ -10,7 +10,7 @@ on:
     workflow_dispatch:
 
 permissions:
-    contents: write
+    contents: read
     pages: write
     id-token: write
 
@@ -23,17 +23,13 @@ jobs:
             with:
                 fetch-depth: 0
 
-        -   name: Set up Python
-            uses: actions/setup-python@v5
-            with:
-                python-version: '3.10'
         -   name: Install uv
             uses: astral-sh/setup-uv@v7
             with:
-                version: "0.10.12"
+                version: "0.12.21"
         -   name: Install dependencies
             run: |
-                uv sync --extra docs
+                uv sync --locked --extra docs
         -   name: Build site
             run: |
                 uv run mkdocs build --site-dir _site

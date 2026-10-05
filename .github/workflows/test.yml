@@ -14,14 +14,14 @@ jobs:
         -   name: Install uv
             uses: astral-sh/setup-uv@v7
             with:
-                version: "0.10.12"
+                version: "0.12.21"
                 enable-cache: true
 
         # The dev extra pins en_core_web_lg, so the tests covering tokenization, span
         # mapping and the HF embedding path actually run here. They skip themselves when
         # the model is absent, which is how a removed transformers API once reached main.
         -   name: Install dependencies (including dev)
-            run: uv sync --extra dev
+            run: uv sync --locked --extra dev
 
         -   name: Cache Hugging Face weights
             uses: actions/cache@v4

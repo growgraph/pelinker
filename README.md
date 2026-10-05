@@ -3,7 +3,7 @@
 **Property Entity Linker** — links relation mentions in scientific text to the properties
 of a knowledge base, using BERT-like encoders.
 
-![Python](https://img.shields.io/badge/python-3.10.6%2B-blue.svg)
+![Python](https://img.shields.io/badge/python-3.11%2B-blue.svg)
 [![License](https://img.shields.io/badge/license-BSD--3--Clause-blue?style=flat-square)](LICENSE)
 [![pre-commit](https://github.com/growgraph/pelinker/actions/workflows/pre-commit.yml/badge.svg)](https://github.com/growgraph/pelinker/actions/workflows/pre-commit.yml)
 [![Docs](https://img.shields.io/badge/docs-growgraph.github.io-blue)](https://growgraph.github.io/pelinker/)
