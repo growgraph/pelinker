@@ -1526,7 +1526,8 @@ class Linker:
             import spacy
 
             logger.info("Loading spaCy model %r for predict()", self.nlp_model_name)
-            self._nlp = spacy.load(self.nlp_model_name)
+            # Entities are never read; NER is a large share of spaCy time.
+            self._nlp = spacy.load(self.nlp_model_name, exclude=["ner"])
         return self._nlp
 
     @staticmethod

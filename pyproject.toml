@@ -64,8 +64,15 @@ eval = [
   "google-genai>=1.0",
   "openai>=1.60"
 ]
-gpu = [
-  "cupy-cuda13x[ctk]>=14.2.0"
+# GPU extras are mutually exclusive; pick the one matching the "CUDA Version" that
+# `nvidia-smi` reports (the driver's ceiling — an installed toolkit is not used).
+gpu-cu12 = [
+  "cupy-cuda12x[ctk]>=14.2.0",
+  "torch>=2.13.0"
+]
+gpu-cu13 = [
+  "cupy-cuda13x[ctk]>=14.2.0",
+  "torch>=2.13.0"
 ]
 preprocess = [
   # KB regeneration only (run/preprocessing/extract_properties_*.py); the linker never
@@ -106,3 +113,13 @@ ignore = ["E722"]
 select = ["E4", "E7", "E9", "F"]
 
 [tool.uv]
+conflicts = [[{extra = "gpu-cu12"}, {extra = "gpu-cu13"}]]
+
+[[tool.uv.index]]
+explicit = true
+name = "pytorch-cu126"
+url = "https://download.pytorch.org/whl/cu126"
+
+[tool.uv.sources]
+# PyPI's Linux torch is built against CUDA 13; CUDA 12 drivers need the cu126 build.
+torch = [{extra = "gpu-cu12", index = "pytorch-cu126"}]

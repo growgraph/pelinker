@@ -39,6 +39,7 @@ from pelinker.text.predicates import PredicateMatcher, PredicateSpec
 from pelinker.text.tokenize import (
     text_to_tokens,
     token_list_with_window,
+    tokens_from_doc,
 )
 
 logger = logging.getLogger(__name__)
@@ -296,7 +297,7 @@ def texts_to_vrep(
 
     # spaCy once per encoder chunk (reused for every word_modes pass)
     stokens_per_chunk: list[list[SimplifiedToken]] = [
-        text_to_tokens(nlp=nlp, text=chunk) for chunk in chunk_mapper.chunks
+        tokens_from_doc(doc) for doc in nlp.pipe(chunk_mapper.chunks)
     ]
 
     # ichunk -> itext, ichunk local

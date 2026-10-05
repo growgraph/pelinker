@@ -1,3 +1,4 @@
+import bisect
 import re
 
 from string import punctuation, whitespace
@@ -30,20 +31,25 @@ def map_spans_to_spans_basic(
         Dict ``(wa, wb) -> [token_index, ...]`` in ascending token order.
     """
 
-    map_ix_jx: dict[tuple[int, int], list[int]] = {}
-    n_tok = len(token_boundaries)
+    spans = [(int(ta), int(tb)) for ta, tb in token_boundaries]
+    nonempty = [(j, ta, tb) for j, (ta, tb) in enumerate(spans) if tb > ta]
+    idx = [j for j, _, _ in nonempty]
+    starts = [ta for _, ta, _ in nonempty]
+    ends = [tb for _, _, tb in nonempty]
+    ordered = all(a <= b for a, b in zip(starts, starts[1:])) and all(
+        a <= b for a, b in zip(ends, ends[1:])
+    )
 
+    map_ix_jx: dict[tuple[int, int], list[int]] = {}
     for ix_word in words_boundaries:
         wa, wb = ix_word
-        hits: list[int] = []
-        for j in range(n_tok):
-            ta = int(token_boundaries[j][0])
-            tb = int(token_boundaries[j][1])
-            if tb <= ta:
-                continue
-            if ta < wb and tb > wa:
-                hits.append(j)
-        map_ix_jx[ix_word] = hits
+        if ordered:
+            # tokens overlapping [wa, wb) are the contiguous run with end > wa, start < wb
+            lo = bisect.bisect_right(ends, wa)
+            hi = bisect.bisect_left(starts, wb, lo=lo)
+            map_ix_jx[ix_word] = idx[lo:hi]
+        else:
+            map_ix_jx[ix_word] = [j for j, ta, tb in nonempty if ta < wb and tb > wa]
 
     return map_ix_jx
 

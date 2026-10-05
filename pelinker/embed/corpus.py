@@ -75,7 +75,8 @@ def _embed_corpus_single_source(
         model.to("cuda")
         spacy.require_gpu()
 
-    nlp = spacy.load(training.nlp_model)
+    # Entities are never read; NER is a large share of spaCy time.
+    nlp = spacy.load(training.nlp_model, exclude=["ner"])
     layers = str2layers(source.layers_spec)
 
     df_kb = pd.read_csv(training.kb_csv_path)

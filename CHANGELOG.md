@@ -177,8 +177,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- The `gpu` extra installs `cupy-cuda13x[ctk]`, matching the CUDA 13 runtime torch ships
-  with; `cupy-cuda12x` failed to import beside it.
+- Corpus embedding spends less CPU time between encoder passes: spaCy runs batched via
+  `nlp.pipe` without NER, lemma matching uses a per-holder index, and word→subword span
+  mapping uses binary search. Output is unchanged.
+
+- The `gpu` extra is split into `gpu-cu13` (PyPI torch + `cupy-cuda13x[ctk]`) and
+  `gpu-cu12` (torch from the PyTorch `cu126` index + `cupy-cuda12x[ctk]`); they are
+  mutually exclusive. Pick by the CUDA version `nvidia-smi` reports.
 
 - **`pelinker-fit` and the selection CLIs default to `class_view=reldir`** and therefore
   need the pairs KB (`properties.synthesis.2.pairs.csv`): as `kb_path` for the fit, or as
@@ -313,7 +318,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
-- `install-cuda121.sh`: GPU setup is `uv sync --extra gpu`.
+- `install-cuda121.sh`: GPU setup is `uv sync --extra gpu-cu13` or `--extra gpu-cu12`.
 - `mypy` from the `dev` extra and the unused `.pylintrc` — neither was wired into
   pre-commit or CI.
 - `pip` and a duplicate `cupy-cuda12x` from the runtime dependencies. `cupy` is not

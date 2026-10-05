@@ -32,7 +32,8 @@ This project uses **uv** for all Python environment management. Do not use Poetr
 uv sync --extra dev          # CI + local dev (pytest, pre-commit, en_core_web_lg)
 uv sync --extra docs         # mkdocs build
 uv sync --extra eval         # gold pipeline: LLM provider SDKs (run/eval/*)
-uv sync --extra gpu          # optional CuPy
+uv sync --extra gpu-cu13     # CUDA torch + CuPy; driver CUDA 13.x (nvidia-smi)
+uv sync --extra gpu-cu12     # same for a CUDA 12.x driver; exclusive with gpu-cu13
 # extras are exclusive: name them together (--extra dev --extra eval) or the omitted
 # ones are uninstalled
 

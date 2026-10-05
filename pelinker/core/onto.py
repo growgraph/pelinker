@@ -1,4 +1,5 @@
 import dataclasses
+import functools
 from enum import Enum
 from dataclass_wizard import JSONWizard
 import torch
@@ -82,16 +83,24 @@ class ExpressionHolder(BaseDataclass):
     ) -> list[tuple[Expression, torch.Tensor]]:
         return list(self.iter_on_lemmas(tokens))
 
+    @functools.cached_property
+    def _lemma_index(self) -> dict[str, list[int]]:
+        """Joined lemma string -> expression indices, ascending.
+
+        Built on first lookup, so ``expressions`` must not change afterwards.
+        """
+        index: dict[str, list[int]] = {}
+        for i, expression in enumerate(self.expressions):
+            key = " ".join(token.lemma for token in expression.tokens)
+            index.setdefault(key, []).append(i)
+        return index
+
     def iter_on_lemmas(
         self, tokens: list[SimplifiedToken]
     ) -> Iterator[tuple[Expression, torch.Tensor]]:
         tokens_lemmatized = " ".join(e.lemma for e in tokens)
-        for expression, embedding in zip(self.expressions, self.tt):
-            if (
-                " ".join(token.lemma for token in expression.tokens)
-                == tokens_lemmatized
-            ):
-                yield expression, embedding
+        for i in self._lemma_index.get(tokens_lemmatized, ()):
+            yield self.expressions[i], self.tt[i]
 
 
 @dataclasses.dataclass

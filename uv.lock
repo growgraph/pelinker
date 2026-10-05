@@ -1,3 +1,9 @@
+conflicts = [
+  [
+    {extra = "gpu-cu12", package = "pelinker"},
+    {extra = "gpu-cu13", package = "pelinker"}
+  ]
+]
 requires-python = ">=3.10.6"
 resolution-markers = [
   "python_full_version < '3.11'",
@@ -70,8 +76,8 @@ version = "4.9.3"
 
 [[package]]
 dependencies = [
-  {marker = "python_full_version < '3.11'", name = "exceptiongroup"},
-  {marker = "python_full_version < '3.13'", name = "typing-extensions"},
+  {marker = "python_full_version < '3.11' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "exceptiongroup"},
+  {marker = "python_full_version < '3.13' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "typing-extensions"},
   {name = "idna"}
 ]
 name = "anyio"
@@ -176,8 +182,8 @@ css = [
 
 [[package]]
 dependencies = [
-  {marker = "python_full_version < '3.11'", name = "numpy", source = {registry = "https://pypi.org/simple"}, version = "2.2.6"},
-  {marker = "python_full_version >= '3.11'", name = "numpy", source = {registry = "https://pypi.org/simple"}, version = "2.4.6"}
+  {marker = "python_full_version < '3.11' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "numpy", source = {registry = "https://pypi.org/simple"}, version = "2.2.6"},
+  {marker = "python_full_version >= '3.11' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "numpy", source = {registry = "https://pypi.org/simple"}, version = "2.4.6"}
 ]
 name = "blis"
 sdist = {hash = "sha256:034d4560ff3cc43e8aa37e188451b0440e3261d989bb8a42ceee865607715ecd", size = 2644873, upload-time = "2025-11-17T12:28:30.511Z", url = "https://files.pythonhosted.org/packages/d0/d0/d8cc8c9a4488a787e7fa430f6055e5bd1ddb22c340a751d9e901b82e2efe/blis-1.3.3.tar.gz"}
@@ -241,7 +247,7 @@ wheels = [
 
 [[package]]
 dependencies = [
-  {marker = "implementation_name != 'PyPy'", name = "pycparser"}
+  {marker = "implementation_name != 'PyPy' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "pycparser"}
 ]
 name = "cffi"
 sdist = {hash = "sha256:dd31f52ea1086513bb9df30f8fcee9b8918323ae067a3d5b78bc826a000712be", size = 530807, upload-time = "2026-08-03T21:21:18.939Z", url = "https://files.pythonhosted.org/packages/9e/ef/008a1939e372c06329a3fce4279c02f328488f3526744906eeec3da7ad5f/cffi-2.1.1.tar.gz"}
@@ -447,7 +453,7 @@ wheels = [
 
 [[package]]
 dependencies = [
-  {marker = "sys_platform == 'win32'", name = "colorama"}
+  {marker = "sys_platform == 'win32' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "colorama"}
 ]
 name = "click"
 sdist = {hash = "sha256:9a6cea6e60b17ebe0a44c5cc636d94f09bd66142c1cd7d8b4cd731c4917a15f6", size = 338000, upload-time = "2026-06-24T17:45:15.148Z", url = "https://files.pythonhosted.org/packages/76/d4/81420972a676e8ffea40450d8c8c92943e7218a78fe9b64359836cc9876b/click-8.4.2.tar.gz"}
@@ -459,7 +465,7 @@ wheels = [
 
 [[package]]
 dependencies = [
-  {marker = "python_full_version < '3.11'", name = "typing-extensions"}
+  {marker = "python_full_version < '3.11' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "typing-extensions"}
 ]
 name = "cloudpathlib"
 sdist = {hash = "sha256:c521a984e77b47e656fe78e20a7e3e260e0ab45fc69e33ac01094227c979e34a", size = 53600, upload-time = "2026-04-30T00:54:43.265Z", url = "https://files.pythonhosted.org/packages/06/19/58bc6b5d7d0f81c7209b05445af477e147c486552f96665a5912211839b9/cloudpathlib-0.24.0.tar.gz"}
@@ -489,7 +495,7 @@ wheels = [
 
 [[package]]
 dependencies = [
-  {marker = "python_full_version < '3.11'", name = "typing-extensions"}
+  {marker = "python_full_version < '3.11' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "typing-extensions"}
 ]
 name = "confection"
 sdist = {hash = "sha256:f0f6810d567ff73993fe74d218ca5e1ffb6a44fb03f391257fc5d033546cbfaa", size = 54895, upload-time = "2026-03-24T18:45:24.331Z", url = "https://files.pythonhosted.org/packages/ca/65/efd0fe8a936fc8ca2978cb7b82581fb20d901c6039e746a808f746b7647b/confection-1.3.3.tar.gz"}
@@ -501,7 +507,7 @@ wheels = [
 
 [[package]]
 dependencies = [
-  {name = "numpy", source = {registry = "https://pypi.org/simple"}, version = "2.2.6"}
+  {marker = "python_full_version < '3.11' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "numpy", source = {registry = "https://pypi.org/simple"}, version = "2.2.6"}
 ]
 name = "contourpy"
 resolution-markers = [
@@ -571,7 +577,7 @@ wheels = [
 
 [[package]]
 dependencies = [
-  {name = "numpy", source = {registry = "https://pypi.org/simple"}, version = "2.4.6"}
+  {marker = "python_full_version >= '3.11' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "numpy", source = {registry = "https://pypi.org/simple"}, version = "2.4.6"}
 ]
 name = "contourpy"
 resolution-markers = [
@@ -667,8 +673,8 @@ wheels = [
 
 [[package]]
 dependencies = [
-  {marker = "platform_python_implementation != 'PyPy'", name = "cffi"},
-  {marker = "python_full_version < '3.11'", name = "typing-extensions"}
+  {marker = "platform_python_implementation != 'PyPy' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "cffi"},
+  {marker = "python_full_version < '3.11' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "typing-extensions"}
 ]
 name = "cryptography"
 sdist = {hash = "sha256:5dd9bda1c12b4162f6ff568eeb5e0ff956c28d14406e875cfe8a63a2d414ff20", size = 880381, upload-time = "2026-08-25T19:45:45.499Z", url = "https://files.pythonhosted.org/packages/bb/ad/5d6702db60b1e40b41ef513b6967ff5848f307d50f8449baf1634f5908f1/cryptography-50.0.1.tar.gz"}
@@ -724,19 +730,67 @@ wheels = [
 
 [[package]]
 dependencies = [
-  {name = "cuda-pathfinder"}
+  {marker = "(python_full_version < '3.11' and sys_platform == 'emscripten' and extra == 'extra-8-pelinker-gpu-cu12') or (python_full_version < '3.11' and sys_platform == 'win32' and extra == 'extra-8-pelinker-gpu-cu12') or (sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-8-pelinker-gpu-cu12') or (sys_platform == 'emscripten' and extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13') or (sys_platform == 'win32' and extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "cuda-pathfinder"}
 ]
 name = "cuda-bindings"
+resolution-markers = [
+  "python_full_version < '3.11'",
+  "python_full_version == '3.11.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+  "python_full_version == '3.12.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+  "python_full_version == '3.13.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+  "python_full_version >= '3.14' and sys_platform != 'emscripten' and sys_platform != 'win32'"
+]
+source = {registry = "https://pypi.org/simple"}
+version = "12.9.9"
+wheels = [
+  {hash = "sha256:074f9d7bd14fa80c596bfcdbac7a131636abe333a3b40da769979d6f87be39f3", size = 7384497, upload-time = "2026-09-23T03:20:43.532Z", url = "https://files.pythonhosted.org/packages/3a/38/9bbc80b2e3d61f0004c6fb4dc5b8950f2fa2048d15547766aa4a37d57ed7/cuda_bindings-12.9.9-cp311-cp311-win_amd64.whl"},
+  {hash = "sha256:1c91d66b9467c21190e531bd1bc09893c6384542189cf880ab15213a16266063", size = 7083806, upload-time = "2026-09-23T03:20:38.077Z", url = "https://files.pythonhosted.org/packages/17/d3/9f5b9b2411d089e81fbcdb20195693c919a8c6fb4f6168a3fdaf2dffe351/cuda_bindings-12.9.9-cp311-cp311-manylinux_2_24_aarch64.manylinux_2_28_aarch64.whl"},
+  {hash = "sha256:5fd8ab78c4ddd9a909fb4f1fa9a914d5e83e223b77320df63ddfe3c46e559337", size = 7607428, upload-time = "2026-09-23T03:20:40.329Z", url = "https://files.pythonhosted.org/packages/4e/34/f04a14693b6f6ad395124288dff45b2441742598b188bead9054c32c56b3/cuda_bindings-12.9.9-cp311-cp311-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl"},
+  {hash = "sha256:607c13eb76c244cacfb955675f8bea2c5b942be9ef4affd41d5a7368d211b260", size = 6938003, upload-time = "2026-09-23T03:21:08.005Z", url = "https://files.pythonhosted.org/packages/bd/4c/0fc57c8015acb6f07711fa82e5dfe84c0ca6642cbd0f47747fe28da39936/cuda_bindings-12.9.9-cp314-cp314t-manylinux_2_24_aarch64.manylinux_2_28_aarch64.whl"},
+  {hash = "sha256:71e84bcdf477a989c31994023f353d6cbbb6d5cba58deab9bc5e7d961d8b832d", size = 7601181, upload-time = "2026-09-23T03:20:33.745Z", url = "https://files.pythonhosted.org/packages/e1/84/f4c28c65ccd80fca8b6e66788ff221115777c06b68920bb31198e361224f/cuda_bindings-12.9.9-cp310-cp310-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl"},
+  {hash = "sha256:7647dab9d264d117952528f2403810debb04ba74f756575eba3b72f66d20311f", size = 7005534, upload-time = "2026-09-23T03:21:00.634Z", url = "https://files.pythonhosted.org/packages/a6/a4/368a3ee347a72f52f8f486014e9a6fa04b90f5ddec991b926a53fbbf1993/cuda_bindings-12.9.9-cp314-cp314-manylinux_2_24_aarch64.manylinux_2_28_aarch64.whl"},
+  {hash = "sha256:88c41afe5be41acb17e57977dd534e335f86d0c96d284d71457168525f6327c0", size = 7063842, upload-time = "2026-09-23T03:20:45.94Z", url = "https://files.pythonhosted.org/packages/15/d5/572ced1aecc8c8f3e617c3af58d3b1ed5378ed71531c607c960a3e48b516/cuda_bindings-12.9.9-cp312-cp312-manylinux_2_24_aarch64.manylinux_2_28_aarch64.whl"},
+  {hash = "sha256:94e4f9bd6b9b21aad545e0d441707094e4ff88ab420d62b85fcdc8b6da1e039f", size = 7440112, upload-time = "2026-09-23T03:21:02.947Z", url = "https://files.pythonhosted.org/packages/e3/95/182a020efbe1bade0de1f5ec0d3e4101cb6deba7216b219f07ce08fa6146/cuda_bindings-12.9.9-cp314-cp314-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl"},
+  {hash = "sha256:af8cb9540c9a3d04df7f52584326279a10ef017021ae8246642a2339dc94e98b", size = 7690278, upload-time = "2026-09-23T03:21:05.411Z", url = "https://files.pythonhosted.org/packages/01/33/1f107543ffc3a3a25a47e460d0ceaef6769c070ac3316fec6aff5a7d76e2/cuda_bindings-12.9.9-cp314-cp314-win_amd64.whl"},
+  {hash = "sha256:b4cc44252c7835d63876df352564b1a39e0091bc67cee7a9a271286b2771348f", size = 7362170, upload-time = "2026-09-23T03:21:10.548Z", url = "https://files.pythonhosted.org/packages/ab/53/fee25c85263bbe3d17bafcc5feaa894245863460f8443138b1dcc246fff3/cuda_bindings-12.9.9-cp314-cp314t-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl"},
+  {hash = "sha256:c578d2ad525f844b663236b280d72446521e44ee115d2bacba320f79eba2a936", size = 7600761, upload-time = "2026-09-23T03:20:50.982Z", url = "https://files.pythonhosted.org/packages/92/42/52df0f62daa28e9fe19d70d778fa73bddfd3f42966b1dc97443b2344576e/cuda_bindings-12.9.9-cp312-cp312-win_amd64.whl"},
+  {hash = "sha256:d399447bf5d929d6f59ec4e2c7b26d11ef21e8be5e88995e41c705db1a7c1363", size = 7398149, upload-time = "2026-09-23T03:20:55.718Z", url = "https://files.pythonhosted.org/packages/ef/c8/0d7703abc9df0871965f9b6eafd881a261f156a168beca9050052ca3e4ab/cuda_bindings-12.9.9-cp313-cp313-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl"},
+  {hash = "sha256:d8d535cba3a3374e7069e875061bfaca48f044db988fa6497928478ab00a797f", size = 7546324, upload-time = "2026-09-23T03:20:58.13Z", url = "https://files.pythonhosted.org/packages/92/71/2a0778d244f9b122e537de88e5d6192a8619af4015a67fc60aa9955c6582/cuda_bindings-12.9.9-cp313-cp313-win_amd64.whl"},
+  {hash = "sha256:e570b6ed83fe8d2ed45c2e9951cea6120ee490df258ed5a2b1ebfb2bf35541e9", size = 8469680, upload-time = "2026-09-23T03:21:13.373Z", url = "https://files.pythonhosted.org/packages/ab/5c/cbba6f1f3c53299845a2e927ef47ccaa7533a8b165a47e7b0328177f2c66/cuda_bindings-12.9.9-cp314-cp314t-win_amd64.whl"},
+  {hash = "sha256:ed5d6cadb36313cdc8a43fc8c8818ff54e5369449b96e21f53de556c606c4d1f", size = 7096115, upload-time = "2026-09-23T03:20:31.048Z", url = "https://files.pythonhosted.org/packages/2d/20/65c41e170e9ffb124152b31693ea00fb28371fb6325efae6a05c8498f23a/cuda_bindings-12.9.9-cp310-cp310-manylinux_2_24_aarch64.manylinux_2_28_aarch64.whl"},
+  {hash = "sha256:f74777eb8e83ff076b8759a9ea65521ec5fa2b46d59d15ab93d9155d4a9f0f19", size = 7352037, upload-time = "2026-09-23T03:20:35.925Z", url = "https://files.pythonhosted.org/packages/c0/11/ff8814a0825129073905565864fd9ef169dca6391034b79a09e84020d5b9/cuda_bindings-12.9.9-cp310-cp310-win_amd64.whl"},
+  {hash = "sha256:fb842851be2ed9e80fce988dd68c8ea27a506a71e0e29d228b35cbd0a333dac2", size = 7627343, upload-time = "2026-09-23T03:20:48.555Z", url = "https://files.pythonhosted.org/packages/96/e3/62c521e36276008c5e53798e7751ca33e16a16d05f517426c2ffb4356e47/cuda_bindings-12.9.9-cp312-cp312-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl"},
+  {hash = "sha256:fc8a97efcb14e48664fc15479b621002ba4e0a6fba34e617a70b07f4bd638390", size = 6927391, upload-time = "2026-09-23T03:20:53.352Z", url = "https://files.pythonhosted.org/packages/f3/53/5feb797383018479eb678e6415294b6bc850fce0912994ca8b37cee432a6/cuda_bindings-12.9.9-cp313-cp313-manylinux_2_24_aarch64.manylinux_2_28_aarch64.whl"}
+]
+
+[[package]]
+dependencies = [
+  {marker = "(python_full_version < '3.11' and sys_platform == 'emscripten' and extra != 'extra-8-pelinker-gpu-cu12') or (python_full_version < '3.11' and sys_platform == 'win32' and extra != 'extra-8-pelinker-gpu-cu12') or (sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-8-pelinker-gpu-cu13') or (sys_platform != 'emscripten' and sys_platform != 'win32' and extra != 'extra-8-pelinker-gpu-cu12') or (sys_platform == 'emscripten' and extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13') or (sys_platform == 'win32' and extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "cuda-pathfinder"}
+]
+name = "cuda-bindings"
+resolution-markers = [
+  "python_full_version < '3.11'",
+  "python_full_version == '3.11.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+  "python_full_version == '3.12.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+  "python_full_version == '3.13.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+  "python_full_version >= '3.14' and sys_platform != 'emscripten' and sys_platform != 'win32'"
+]
 source = {registry = "https://pypi.org/simple"}
 version = "13.3.1"
 wheels = [
   {hash = "sha256:04436a9364059c84b8f9636f359eccda1cf814341f5b670c71d80d2f79dbc708", size = 6674166, upload-time = "2026-05-29T23:11:45.478Z", url = "https://files.pythonhosted.org/packages/95/7a/c5e3c34a409b148f5c0f5a4ea374158f95d488862c1dffedf9aa5c639df9/cuda_bindings-13.3.1-cp311-cp311-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl"},
   {hash = "sha256:120fcc53d57903df529c3486962c56528cba5b7d6c57c99537320ed9922c8b86", size = 6073403, upload-time = "2026-05-29T23:11:36.22Z", url = "https://files.pythonhosted.org/packages/a9/21/8464d133752951c154feafb3b65c297e7d80f301183d220bec4c830f1441/cuda_bindings-13.3.1-cp310-cp310-manylinux_2_24_aarch64.manylinux_2_28_aarch64.whl"},
+  {hash = "sha256:18c8c167c8907b8f02531ca810534315c458dabef31f7965095619bf647b9202", size = 5830027, upload-time = "2026-05-29T23:12:01.205Z", url = "https://files.pythonhosted.org/packages/0c/2f/6a0dd496550c6fafbf6aeb1bf40242eeabb2fd138a43892aabb4be8224c2/cuda_bindings-13.3.1-cp313-cp313-win_amd64.whl"},
   {hash = "sha256:1ab2f74ed65bfef4163ba07a8db16f1085e0729291db12a2423aff84ee8278b8", size = 6013639, upload-time = "2026-05-29T23:12:03.509Z", url = "https://files.pythonhosted.org/packages/b1/81/bff68ce829999c1e4209c761bbf903b1c06ec570416ddb25020864ad5907/cuda_bindings-13.3.1-cp314-cp314-manylinux_2_24_aarch64.manylinux_2_28_aarch64.whl"},
   {hash = "sha256:2732904099e0a4d4db774a5fc6d91ee95fae065b4d2ecabb4968c5fe2406c9d7", size = 6476660, upload-time = "2026-05-29T23:11:59.188Z", url = "https://files.pythonhosted.org/packages/34/c2/ef9b6a63f7dc432712a462c816662e662e00d38caa9b861c8c2588195d03/cuda_bindings-13.3.1-cp313-cp313-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl"},
   {hash = "sha256:36febb7c1079d68a981dbbd8d5a67235b399802b82075c9388624719607e52b9", size = 6358584, upload-time = "2026-05-29T23:12:12.767Z", url = "https://files.pythonhosted.org/packages/12/20/e79b4bfe98f075195afb6343d41c498f9dbd2d161d7021d4d28bceb83581/cuda_bindings-13.3.1-cp314-cp314t-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl"},
+  {hash = "sha256:507b0e19e7f934c5e30f30f0244ad70a75812619a7d3a0d742543caae1bd50f1", size = 5664286, upload-time = "2026-05-29T23:11:47.719Z", url = "https://files.pythonhosted.org/packages/93/f7/0e35987a21914f84068061dcf4b61466ccbce1c62ddc9727596d5ed0c26f/cuda_bindings-13.3.1-cp311-cp311-win_amd64.whl"},
+  {hash = "sha256:61120b5e4f4a63f67efd7e7396914cb9ef871bb1f0021e990fb70277be240a4d", size = 6740329, upload-time = "2026-05-29T23:12:15.153Z", url = "https://files.pythonhosted.org/packages/27/2a/b59bcac016ab9985d6b48a5d05b0d698461a159ca03ee11c4abd54da2ac4/cuda_bindings-13.3.1-cp314-cp314t-win_amd64.whl"},
+  {hash = "sha256:8de12ef60bf40756852cb62bbb40460609269f6ece522903d1cc93d73a3ececb", size = 5961055, upload-time = "2026-05-29T23:12:07.971Z", url = "https://files.pythonhosted.org/packages/48/45/2734be44dbc80ac082ec23a86b41c8294992dcb90033645ed1bc50aafe4c/cuda_bindings-13.3.1-cp314-cp314-win_amd64.whl"},
   {hash = "sha256:9851b0caa8bfd3bc6fa054eaf57bea7c8e9c3a62db2d2621224677f49f3c53d0", size = 6675244, upload-time = "2026-05-29T23:11:38.664Z", url = "https://files.pythonhosted.org/packages/a8/1f/5ef51f5fbaa5d4d3201bb3d7555af028ec1aa4416275ccbf73c9e34e3d2d/cuda_bindings-13.3.1-cp310-cp310-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl"},
   {hash = "sha256:9efb21c1ee64981e184b9e0ba5eb3179e5ba3d4b51665a6cb52b8ef3d01a7cbf", size = 5920504, upload-time = "2026-05-29T23:11:56.883Z", url = "https://files.pythonhosted.org/packages/cc/6e/2394f8163360f8391f8f1b7e72d300a82724edb81a7b7084c799fbd4c91f/cuda_bindings-13.3.1-cp313-cp313-manylinux_2_24_aarch64.manylinux_2_28_aarch64.whl"},
+  {hash = "sha256:b134dd8c5c66ae4c4ad814f7aee88fd215353c077010cbc47e3b55ed35ec9eff", size = 5875099, upload-time = "2026-05-29T23:11:54.635Z", url = "https://files.pythonhosted.org/packages/7c/95/872a0392122f1fb43fcb06869790ef3171f37beee9f7db8f441739113570/cuda_bindings-13.3.1-cp312-cp312-win_amd64.whl"},
+  {hash = "sha256:c0c4b1a995098c46695c24257a342dc97d6e6d3f3050b944c9f43bd26d734051", size = 5625597, upload-time = "2026-05-29T23:11:40.808Z", url = "https://files.pythonhosted.org/packages/fc/64/bb17e4d168569ef7be05c44474fe3dc19278d60a69ba228e45a431c86444/cuda_bindings-13.3.1-cp310-cp310-win_amd64.whl"},
   {hash = "sha256:c3c772dfff49681541d59630c90f858e173ac926b9c593a2b7123f2a1043cc76", size = 5809771, upload-time = "2026-05-29T23:12:10.422Z", url = "https://files.pythonhosted.org/packages/52/b8/83b1f563925b290f2d11a01a77a84013ba56052fe3653a5bef3ccfbb43d6/cuda_bindings-13.3.1-cp314-cp314t-manylinux_2_24_aarch64.manylinux_2_28_aarch64.whl"},
   {hash = "sha256:c5879712accf6e14bb01aa5e67440eb84998b8d104b509cc7a6dc0b8f656a474", size = 6053539, upload-time = "2026-05-29T23:11:43.19Z", url = "https://files.pythonhosted.org/packages/51/6b/457ca12dad3ee9bfcc9a545cfd6b64b359ba49de40f776f6e028e678f262/cuda_bindings-13.3.1-cp311-cp311-manylinux_2_24_aarch64.manylinux_2_28_aarch64.whl"},
   {hash = "sha256:c7855c4868aabc0cfae28abbe83d56734bdfbd08f08fc234ac1912a12858bf49", size = 6025351, upload-time = "2026-05-29T23:11:49.685Z", url = "https://files.pythonhosted.org/packages/ce/67/5e7dba1ba576dd73da5dee894ca076ca5e959450dfff66d6d510a255d1f7/cuda_bindings-13.3.1-cp312-cp312-manylinux_2_24_aarch64.manylinux_2_28_aarch64.whl"},
@@ -754,6 +808,117 @@ wheels = [
 
 [[package]]
 name = "cuda-toolkit"
+resolution-markers = [
+  "python_full_version < '3.11'",
+  "python_full_version == '3.11.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+  "python_full_version == '3.12.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+  "python_full_version == '3.13.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+  "python_full_version >= '3.14' and sys_platform != 'emscripten' and sys_platform != 'win32'"
+]
+source = {registry = "https://pypi.org/simple"}
+version = "12.6.3"
+wheels = [
+  {hash = "sha256:79d8605baeb6c2f695761e0efb54bc62dbc3c9e32eb0742df7669c07befaa8f7", size = 2288, upload-time = "2025-08-13T02:03:05.283Z", url = "https://files.pythonhosted.org/packages/ad/88/2dbc37975fffb874418b14380418a1b99cb36f2101fd1d08c54e06ee8c95/cuda_toolkit-12.6.3-py2.py3-none-any.whl"}
+]
+
+[package.optional-dependencies]
+cublas = [
+  {marker = "(python_full_version < '3.11' and sys_platform == 'win32' and extra == 'extra-8-pelinker-gpu-cu12') or (python_full_version >= '3.11' and extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13') or (sys_platform == 'linux' and extra == 'extra-8-pelinker-gpu-cu12') or (sys_platform != 'win32' and extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "nvidia-cublas-cu12", source = {registry = "https://pypi.org/simple"}, version = "12.6.4.1"}
+]
+cudart = [
+  {marker = "(python_full_version < '3.11' and sys_platform == 'win32' and extra == 'extra-8-pelinker-gpu-cu12') or (python_full_version >= '3.11' and extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13') or (sys_platform == 'linux' and extra == 'extra-8-pelinker-gpu-cu12') or (sys_platform != 'win32' and extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "nvidia-cuda-runtime-cu12", source = {registry = "https://pypi.org/simple"}, version = "12.6.77"}
+]
+cufft = [
+  {marker = "(python_full_version < '3.11' and sys_platform == 'win32' and extra == 'extra-8-pelinker-gpu-cu12') or (python_full_version >= '3.11' and extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13') or (sys_platform == 'linux' and extra == 'extra-8-pelinker-gpu-cu12') or (sys_platform != 'win32' and extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "nvidia-cufft-cu12", source = {registry = "https://pypi.org/simple"}, version = "11.3.0.4"}
+]
+cufile = [
+  {marker = "(sys_platform == 'linux' and extra == 'extra-8-pelinker-gpu-cu12') or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "nvidia-cufile-cu12"}
+]
+cupti = [
+  {marker = "(python_full_version < '3.11' and sys_platform == 'win32' and extra == 'extra-8-pelinker-gpu-cu12') or (python_full_version >= '3.11' and extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13') or (sys_platform == 'linux' and extra == 'extra-8-pelinker-gpu-cu12') or (sys_platform != 'win32' and extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "nvidia-cuda-cupti-cu12"}
+]
+curand = [
+  {marker = "(python_full_version < '3.11' and sys_platform == 'win32' and extra == 'extra-8-pelinker-gpu-cu12') or (python_full_version >= '3.11' and extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13') or (sys_platform == 'linux' and extra == 'extra-8-pelinker-gpu-cu12') or (sys_platform != 'win32' and extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "nvidia-curand-cu12", source = {registry = "https://pypi.org/simple"}, version = "10.3.7.77"}
+]
+cusolver = [
+  {marker = "(python_full_version < '3.11' and sys_platform == 'win32' and extra == 'extra-8-pelinker-gpu-cu12') or (python_full_version >= '3.11' and extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13') or (sys_platform == 'linux' and extra == 'extra-8-pelinker-gpu-cu12') or (sys_platform != 'win32' and extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "nvidia-cusolver-cu12", source = {registry = "https://pypi.org/simple"}, version = "11.7.1.2"}
+]
+cusparse = [
+  {marker = "(python_full_version < '3.11' and sys_platform == 'win32' and extra == 'extra-8-pelinker-gpu-cu12') or (python_full_version >= '3.11' and extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13') or (sys_platform == 'linux' and extra == 'extra-8-pelinker-gpu-cu12') or (sys_platform != 'win32' and extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "nvidia-cusparse-cu12", source = {registry = "https://pypi.org/simple"}, version = "12.5.4.2"}
+]
+nvjitlink = [
+  {marker = "(python_full_version < '3.11' and sys_platform == 'win32' and extra == 'extra-8-pelinker-gpu-cu12') or (python_full_version >= '3.11' and extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13') or (sys_platform == 'linux' and extra == 'extra-8-pelinker-gpu-cu12') or (sys_platform != 'win32' and extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "nvidia-nvjitlink-cu12", source = {registry = "https://pypi.org/simple"}, version = "12.6.85"}
+]
+nvrtc = [
+  {marker = "(python_full_version < '3.11' and sys_platform == 'win32' and extra == 'extra-8-pelinker-gpu-cu12') or (python_full_version >= '3.11' and extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13') or (sys_platform == 'linux' and extra == 'extra-8-pelinker-gpu-cu12') or (sys_platform != 'win32' and extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "nvidia-cuda-nvrtc-cu12", source = {registry = "https://pypi.org/simple"}, version = "12.6.85"}
+]
+nvtx = [
+  {marker = "(python_full_version < '3.11' and sys_platform == 'win32' and extra == 'extra-8-pelinker-gpu-cu12') or (python_full_version >= '3.11' and extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13') or (sys_platform == 'linux' and extra == 'extra-8-pelinker-gpu-cu12') or (sys_platform != 'win32' and extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "nvidia-nvtx-cu12"}
+]
+
+[[package]]
+name = "cuda-toolkit"
+resolution-markers = [
+  "python_full_version == '3.11.*' and sys_platform == 'emscripten'",
+  "python_full_version == '3.11.*' and sys_platform == 'win32'",
+  "python_full_version == '3.12.*' and sys_platform == 'emscripten'",
+  "python_full_version == '3.12.*' and sys_platform == 'win32'",
+  "python_full_version == '3.13.*' and sys_platform == 'emscripten'",
+  "python_full_version == '3.13.*' and sys_platform == 'win32'",
+  "python_full_version >= '3.14' and sys_platform == 'emscripten'",
+  "python_full_version >= '3.14' and sys_platform == 'win32'"
+]
+source = {registry = "https://pypi.org/simple"}
+version = "12.9.2.0"
+wheels = [
+  {hash = "sha256:b54b8f2fd4200090b44843d48fc5411198e8b3e47a3db56e2518ab588c0ef1e0", size = 2431, upload-time = "2026-04-14T00:40:05.972Z", url = "https://files.pythonhosted.org/packages/51/7e/f61db087382a2114a93abc0b38f7872f86f2c7c36839da7f9403c9044b47/cuda_toolkit-12.9.2.0-py2.py3-none-any.whl"}
+]
+
+[package.optional-dependencies]
+cublas = [
+  {marker = "python_full_version >= '3.11' and platform_machine == 'AMD64' and sys_platform == 'win32'", name = "nvidia-cublas-cu12", source = {registry = "https://pypi.org/simple"}, version = "12.9.2.10"}
+]
+cudart = [
+  {marker = "python_full_version >= '3.11' and platform_machine == 'AMD64' and sys_platform == 'win32'", name = "nvidia-cuda-runtime-cu12", source = {registry = "https://pypi.org/simple"}, version = "12.9.79"}
+]
+cufft = [
+  {marker = "python_full_version >= '3.11' and platform_machine == 'AMD64' and sys_platform == 'win32'", name = "nvidia-cufft-cu12", source = {registry = "https://pypi.org/simple"}, version = "11.4.1.4"},
+  {marker = "python_full_version >= '3.11' and platform_machine == 'AMD64' and sys_platform == 'win32'", name = "nvidia-nvjitlink-cu12", source = {registry = "https://pypi.org/simple"}, version = "12.9.86"}
+]
+curand = [
+  {marker = "python_full_version >= '3.11' and platform_machine == 'AMD64' and sys_platform == 'win32'", name = "nvidia-curand-cu12", source = {registry = "https://pypi.org/simple"}, version = "10.3.10.19"}
+]
+cusolver = [
+  {marker = "python_full_version >= '3.11' and platform_machine == 'AMD64' and sys_platform == 'win32'", name = "nvidia-cublas-cu12", source = {registry = "https://pypi.org/simple"}, version = "12.9.2.10"},
+  {marker = "python_full_version >= '3.11' and platform_machine == 'AMD64' and sys_platform == 'win32'", name = "nvidia-cusolver-cu12", source = {registry = "https://pypi.org/simple"}, version = "11.7.5.82"},
+  {marker = "python_full_version >= '3.11' and platform_machine == 'AMD64' and sys_platform == 'win32'", name = "nvidia-cusparse-cu12", source = {registry = "https://pypi.org/simple"}, version = "12.5.10.65"},
+  {marker = "python_full_version >= '3.11' and platform_machine == 'AMD64' and sys_platform == 'win32'", name = "nvidia-nvjitlink-cu12", source = {registry = "https://pypi.org/simple"}, version = "12.9.86"}
+]
+cusparse = [
+  {marker = "python_full_version >= '3.11' and platform_machine == 'AMD64' and sys_platform == 'win32'", name = "nvidia-cusparse-cu12", source = {registry = "https://pypi.org/simple"}, version = "12.5.10.65"},
+  {marker = "python_full_version >= '3.11' and platform_machine == 'AMD64' and sys_platform == 'win32'", name = "nvidia-nvjitlink-cu12", source = {registry = "https://pypi.org/simple"}, version = "12.9.86"}
+]
+nvrtc = [
+  {marker = "python_full_version >= '3.11' and platform_machine == 'AMD64' and sys_platform == 'win32'", name = "nvidia-cuda-nvrtc-cu12", source = {registry = "https://pypi.org/simple"}, version = "12.9.86"}
+]
+
+[[package]]
+name = "cuda-toolkit"
+resolution-markers = [
+  "python_full_version < '3.11'",
+  "python_full_version == '3.11.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+  "python_full_version == '3.11.*' and sys_platform == 'emscripten'",
+  "python_full_version == '3.11.*' and sys_platform == 'win32'",
+  "python_full_version == '3.12.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+  "python_full_version == '3.12.*' and sys_platform == 'emscripten'",
+  "python_full_version == '3.12.*' and sys_platform == 'win32'",
+  "python_full_version == '3.13.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+  "python_full_version == '3.13.*' and sys_platform == 'emscripten'",
+  "python_full_version == '3.13.*' and sys_platform == 'win32'",
+  "python_full_version >= '3.14' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+  "python_full_version >= '3.14' and sys_platform == 'emscripten'",
+  "python_full_version >= '3.14' and sys_platform == 'win32'"
+]
 source = {registry = "https://pypi.org/simple"}
 version = "13.0.3.0"
 wheels = [
@@ -762,49 +927,85 @@ wheels = [
 
 [package.optional-dependencies]
 cublas = [
-  {marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32')", name = "nvidia-cublas"},
-  {marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32')", name = "nvidia-cuda-nvrtc"}
+  {marker = "(python_full_version < '3.11' and platform_machine == 'AMD64' and sys_platform == 'win32' and extra != 'extra-8-pelinker-gpu-cu12') or (python_full_version >= '3.11' and platform_machine == 'AMD64' and sys_platform == 'win32' and extra == 'extra-8-pelinker-gpu-cu13') or (python_full_version < '3.11' and sys_platform == 'win32' and extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13') or (platform_machine == 'aarch64' and sys_platform == 'linux' and extra != 'extra-8-pelinker-gpu-cu12') or (platform_machine == 'x86_64' and sys_platform == 'linux' and extra != 'extra-8-pelinker-gpu-cu12') or (platform_machine != 'AMD64' and sys_platform == 'win32' and extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13') or (sys_platform == 'linux' and extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "nvidia-cublas"},
+  {marker = "(python_full_version < '3.11' and platform_machine == 'AMD64' and sys_platform == 'win32' and extra != 'extra-8-pelinker-gpu-cu12') or (python_full_version >= '3.11' and platform_machine == 'AMD64' and sys_platform == 'win32' and extra == 'extra-8-pelinker-gpu-cu13') or (python_full_version < '3.11' and sys_platform == 'win32' and extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13') or (platform_machine == 'aarch64' and sys_platform == 'linux' and extra != 'extra-8-pelinker-gpu-cu12') or (platform_machine == 'x86_64' and sys_platform == 'linux' and extra != 'extra-8-pelinker-gpu-cu12') or (platform_machine != 'AMD64' and sys_platform == 'win32' and extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13') or (sys_platform == 'linux' and extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "nvidia-cuda-nvrtc"}
 ]
 cudart = [
-  {marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32')", name = "nvidia-cuda-runtime"}
+  {marker = "(python_full_version < '3.11' and platform_machine == 'AMD64' and sys_platform == 'win32' and extra != 'extra-8-pelinker-gpu-cu12') or (python_full_version >= '3.11' and platform_machine == 'AMD64' and sys_platform == 'win32' and extra == 'extra-8-pelinker-gpu-cu13') or (python_full_version < '3.11' and sys_platform == 'win32' and extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13') or (platform_machine == 'aarch64' and sys_platform == 'linux' and extra != 'extra-8-pelinker-gpu-cu12') or (platform_machine == 'x86_64' and sys_platform == 'linux' and extra != 'extra-8-pelinker-gpu-cu12') or (platform_machine != 'AMD64' and sys_platform == 'win32' and extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13') or (sys_platform == 'linux' and extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "nvidia-cuda-runtime"}
 ]
 cufft = [
-  {marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32')", name = "nvidia-cufft"},
-  {marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32')", name = "nvidia-nvjitlink"}
+  {marker = "(python_full_version < '3.11' and platform_machine == 'AMD64' and sys_platform == 'win32' and extra != 'extra-8-pelinker-gpu-cu12') or (python_full_version >= '3.11' and platform_machine == 'AMD64' and sys_platform == 'win32' and extra == 'extra-8-pelinker-gpu-cu13') or (python_full_version < '3.11' and sys_platform == 'win32' and extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13') or (platform_machine == 'aarch64' and sys_platform == 'linux' and extra != 'extra-8-pelinker-gpu-cu12') or (platform_machine == 'x86_64' and sys_platform == 'linux' and extra != 'extra-8-pelinker-gpu-cu12') or (platform_machine != 'AMD64' and sys_platform == 'win32' and extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13') or (sys_platform == 'linux' and extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "nvidia-cufft"},
+  {marker = "(python_full_version < '3.11' and platform_machine == 'AMD64' and sys_platform == 'win32' and extra != 'extra-8-pelinker-gpu-cu12') or (python_full_version >= '3.11' and platform_machine == 'AMD64' and sys_platform == 'win32' and extra == 'extra-8-pelinker-gpu-cu13') or (python_full_version < '3.11' and sys_platform == 'win32' and extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13') or (platform_machine == 'aarch64' and sys_platform == 'linux' and extra != 'extra-8-pelinker-gpu-cu12') or (platform_machine == 'x86_64' and sys_platform == 'linux' and extra != 'extra-8-pelinker-gpu-cu12') or (platform_machine != 'AMD64' and sys_platform == 'win32' and extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13') or (sys_platform == 'linux' and extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "nvidia-nvjitlink"}
 ]
 cufile = [
-  {marker = "platform_machine == 'aarch64' or platform_machine == 'x86_64'", name = "nvidia-cufile"}
+  {marker = "(platform_machine != 'aarch64' and platform_machine != 'x86_64' and extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13') or (platform_machine == 'aarch64' and sys_platform == 'linux' and extra != 'extra-8-pelinker-gpu-cu12') or (platform_machine == 'x86_64' and sys_platform == 'linux' and extra != 'extra-8-pelinker-gpu-cu12') or (platform_machine == 'aarch64' and extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13') or (platform_machine == 'x86_64' and extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13') or (sys_platform != 'linux' and extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "nvidia-cufile"}
 ]
 cupti = [
-  {marker = "platform_machine == 'aarch64' or platform_machine == 'x86_64'", name = "nvidia-cuda-cupti"}
+  {marker = "(python_full_version < '3.11' and platform_machine == 'AMD64' and sys_platform == 'win32' and extra != 'extra-8-pelinker-gpu-cu12') or (platform_machine == 'aarch64' and sys_platform == 'linux' and extra != 'extra-8-pelinker-gpu-cu12') or (platform_machine == 'x86_64' and sys_platform == 'linux' and extra != 'extra-8-pelinker-gpu-cu12') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13') or (sys_platform == 'linux' and extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13') or (sys_platform == 'win32' and extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "nvidia-cuda-cupti"}
 ]
 curand = [
-  {marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32')", name = "nvidia-curand"}
+  {marker = "(python_full_version < '3.11' and platform_machine == 'AMD64' and sys_platform == 'win32' and extra != 'extra-8-pelinker-gpu-cu12') or (python_full_version >= '3.11' and platform_machine == 'AMD64' and sys_platform == 'win32' and extra == 'extra-8-pelinker-gpu-cu13') or (python_full_version < '3.11' and sys_platform == 'win32' and extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13') or (platform_machine == 'aarch64' and sys_platform == 'linux' and extra != 'extra-8-pelinker-gpu-cu12') or (platform_machine == 'x86_64' and sys_platform == 'linux' and extra != 'extra-8-pelinker-gpu-cu12') or (platform_machine != 'AMD64' and sys_platform == 'win32' and extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13') or (sys_platform == 'linux' and extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "nvidia-curand"}
 ]
 cusolver = [
-  {marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32')", name = "nvidia-cublas"},
-  {marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32')", name = "nvidia-cusolver"},
-  {marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32')", name = "nvidia-cusparse"},
-  {marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32')", name = "nvidia-nvjitlink"}
+  {marker = "(python_full_version < '3.11' and platform_machine == 'AMD64' and sys_platform == 'win32' and extra != 'extra-8-pelinker-gpu-cu12') or (python_full_version >= '3.11' and platform_machine == 'AMD64' and sys_platform == 'win32' and extra == 'extra-8-pelinker-gpu-cu13') or (python_full_version < '3.11' and sys_platform == 'win32' and extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13') or (platform_machine == 'aarch64' and sys_platform == 'linux' and extra != 'extra-8-pelinker-gpu-cu12') or (platform_machine == 'x86_64' and sys_platform == 'linux' and extra != 'extra-8-pelinker-gpu-cu12') or (platform_machine != 'AMD64' and sys_platform == 'win32' and extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13') or (sys_platform == 'linux' and extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "nvidia-cublas"},
+  {marker = "(python_full_version < '3.11' and platform_machine == 'AMD64' and sys_platform == 'win32' and extra != 'extra-8-pelinker-gpu-cu12') or (python_full_version >= '3.11' and platform_machine == 'AMD64' and sys_platform == 'win32' and extra == 'extra-8-pelinker-gpu-cu13') or (python_full_version < '3.11' and sys_platform == 'win32' and extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13') or (platform_machine == 'aarch64' and sys_platform == 'linux' and extra != 'extra-8-pelinker-gpu-cu12') or (platform_machine == 'x86_64' and sys_platform == 'linux' and extra != 'extra-8-pelinker-gpu-cu12') or (platform_machine != 'AMD64' and sys_platform == 'win32' and extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13') or (sys_platform == 'linux' and extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "nvidia-cusolver"},
+  {marker = "(python_full_version < '3.11' and platform_machine == 'AMD64' and sys_platform == 'win32' and extra != 'extra-8-pelinker-gpu-cu12') or (python_full_version >= '3.11' and platform_machine == 'AMD64' and sys_platform == 'win32' and extra == 'extra-8-pelinker-gpu-cu13') or (python_full_version < '3.11' and sys_platform == 'win32' and extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13') or (platform_machine == 'aarch64' and sys_platform == 'linux' and extra != 'extra-8-pelinker-gpu-cu12') or (platform_machine == 'x86_64' and sys_platform == 'linux' and extra != 'extra-8-pelinker-gpu-cu12') or (platform_machine != 'AMD64' and sys_platform == 'win32' and extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13') or (sys_platform == 'linux' and extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "nvidia-cusparse"},
+  {marker = "(python_full_version < '3.11' and platform_machine == 'AMD64' and sys_platform == 'win32' and extra != 'extra-8-pelinker-gpu-cu12') or (python_full_version >= '3.11' and platform_machine == 'AMD64' and sys_platform == 'win32' and extra == 'extra-8-pelinker-gpu-cu13') or (python_full_version < '3.11' and sys_platform == 'win32' and extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13') or (platform_machine == 'aarch64' and sys_platform == 'linux' and extra != 'extra-8-pelinker-gpu-cu12') or (platform_machine == 'x86_64' and sys_platform == 'linux' and extra != 'extra-8-pelinker-gpu-cu12') or (platform_machine != 'AMD64' and sys_platform == 'win32' and extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13') or (sys_platform == 'linux' and extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "nvidia-nvjitlink"}
 ]
 cusparse = [
-  {marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32')", name = "nvidia-cusparse"},
-  {marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32')", name = "nvidia-nvjitlink"}
+  {marker = "(python_full_version < '3.11' and platform_machine == 'AMD64' and sys_platform == 'win32' and extra != 'extra-8-pelinker-gpu-cu12') or (python_full_version >= '3.11' and platform_machine == 'AMD64' and sys_platform == 'win32' and extra == 'extra-8-pelinker-gpu-cu13') or (python_full_version < '3.11' and sys_platform == 'win32' and extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13') or (platform_machine == 'aarch64' and sys_platform == 'linux' and extra != 'extra-8-pelinker-gpu-cu12') or (platform_machine == 'x86_64' and sys_platform == 'linux' and extra != 'extra-8-pelinker-gpu-cu12') or (platform_machine != 'AMD64' and sys_platform == 'win32' and extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13') or (sys_platform == 'linux' and extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "nvidia-cusparse"},
+  {marker = "(python_full_version < '3.11' and platform_machine == 'AMD64' and sys_platform == 'win32' and extra != 'extra-8-pelinker-gpu-cu12') or (python_full_version >= '3.11' and platform_machine == 'AMD64' and sys_platform == 'win32' and extra == 'extra-8-pelinker-gpu-cu13') or (python_full_version < '3.11' and sys_platform == 'win32' and extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13') or (platform_machine == 'aarch64' and sys_platform == 'linux' and extra != 'extra-8-pelinker-gpu-cu12') or (platform_machine == 'x86_64' and sys_platform == 'linux' and extra != 'extra-8-pelinker-gpu-cu12') or (platform_machine != 'AMD64' and sys_platform == 'win32' and extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13') or (sys_platform == 'linux' and extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "nvidia-nvjitlink"}
 ]
 nvjitlink = [
-  {marker = "platform_machine == 'aarch64' or platform_machine == 'x86_64'", name = "nvidia-nvjitlink"}
+  {marker = "(python_full_version < '3.11' and platform_machine == 'AMD64' and sys_platform == 'win32' and extra != 'extra-8-pelinker-gpu-cu12') or (platform_machine == 'aarch64' and sys_platform == 'linux' and extra != 'extra-8-pelinker-gpu-cu12') or (platform_machine == 'x86_64' and sys_platform == 'linux' and extra != 'extra-8-pelinker-gpu-cu12') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13') or (sys_platform == 'linux' and extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13') or (sys_platform == 'win32' and extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "nvidia-nvjitlink"}
 ]
 nvrtc = [
-  {marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32')", name = "nvidia-cuda-nvrtc"}
+  {marker = "(python_full_version < '3.11' and platform_machine == 'AMD64' and sys_platform == 'win32' and extra != 'extra-8-pelinker-gpu-cu12') or (python_full_version >= '3.11' and platform_machine == 'AMD64' and sys_platform == 'win32' and extra == 'extra-8-pelinker-gpu-cu13') or (python_full_version < '3.11' and sys_platform == 'win32' and extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13') or (platform_machine == 'aarch64' and sys_platform == 'linux' and extra != 'extra-8-pelinker-gpu-cu12') or (platform_machine == 'x86_64' and sys_platform == 'linux' and extra != 'extra-8-pelinker-gpu-cu12') or (platform_machine != 'AMD64' and sys_platform == 'win32' and extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13') or (sys_platform == 'linux' and extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "nvidia-cuda-nvrtc"}
 ]
 nvtx = [
-  {marker = "platform_machine == 'aarch64' or platform_machine == 'x86_64'", name = "nvidia-nvtx"}
+  {marker = "(python_full_version < '3.11' and platform_machine == 'AMD64' and sys_platform == 'win32' and extra != 'extra-8-pelinker-gpu-cu12') or (platform_machine == 'aarch64' and sys_platform == 'linux' and extra != 'extra-8-pelinker-gpu-cu12') or (platform_machine == 'x86_64' and sys_platform == 'linux' and extra != 'extra-8-pelinker-gpu-cu12') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13') or (sys_platform == 'linux' and extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13') or (sys_platform == 'win32' and extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "nvidia-nvtx"}
 ]
 
 [[package]]
 dependencies = [
-  {marker = "python_full_version < '3.11'", name = "numpy", source = {registry = "https://pypi.org/simple"}, version = "2.2.6"},
-  {marker = "python_full_version >= '3.11'", name = "numpy", source = {registry = "https://pypi.org/simple"}, version = "2.4.6"},
+  {marker = "(python_full_version < '3.11' and extra == 'extra-8-pelinker-gpu-cu12') or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "numpy", source = {registry = "https://pypi.org/simple"}, version = "2.2.6"},
+  {marker = "(python_full_version >= '3.11' and extra == 'extra-8-pelinker-gpu-cu12') or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "numpy", source = {registry = "https://pypi.org/simple"}, version = "2.4.6"},
+  {name = "cuda-pathfinder"}
+]
+name = "cupy-cuda12x"
+source = {registry = "https://pypi.org/simple"}
+version = "14.2.0"
+wheels = [
+  {hash = "sha256:0d3205b1ac1093b6019530ba3b7f7080e2283820f452f0c543a3560d58e0b9bf", size = 135287243, upload-time = "2026-08-20T02:39:38.206Z", url = "https://files.pythonhosted.org/packages/9e/3a/2935f23741f80a0ea4dc381c58d2178d8b5c4b5a1047c9ecdfff493cefa5/cupy_cuda12x-14.2.0-cp310-cp310-manylinux2014_x86_64.whl"},
+  {hash = "sha256:1c775069f0af34662a8d4ae90848e29afcaf4ba63762d556ff22b6011683e571", size = 148189237, upload-time = "2026-08-20T02:39:47.011Z", url = "https://files.pythonhosted.org/packages/00/98/ac56fb7a285e264a0f29ea71d64b5c2eacd23c1f4ed9b4a8f99b16db3881/cupy_cuda12x-14.2.0-cp311-cp311-manylinux2014_aarch64.whl"},
+  {hash = "sha256:2d0c77202f5ac5920a420888b28200a11d03d24352b7585d3cb1a84f67fbc96c", size = 98879478, upload-time = "2026-08-20T02:39:42.49Z", url = "https://files.pythonhosted.org/packages/a9/87/069030499747ffad2fc7104788533917e320072470e5b49610c043753cc9/cupy_cuda12x-14.2.0-cp310-cp310-win_amd64.whl"},
+  {hash = "sha256:5f08fc1d651d2446c1d18ad94f1a710224fab36d46634d4aa356423926964591", size = 99344061, upload-time = "2026-08-20T02:40:37.459Z", url = "https://files.pythonhosted.org/packages/0a/98/4d3215440b7a0d8661295050653760b57f32c933f1ef1c81841b7329209e/cupy_cuda12x-14.2.0-cp314-cp314-win_amd64.whl"},
+  {hash = "sha256:5fe2366cc5c61a7ee4a527ce1e8951cb89092d0fb0b5830623cf114d1942c585", size = 136632369, upload-time = "2026-08-20T02:39:51.562Z", url = "https://files.pythonhosted.org/packages/d3/49/a83b7664151a7bdfb5d7ca7f29cef4eb5574a4cb8e1f9dfbae7fea372e4f/cupy_cuda12x-14.2.0-cp311-cp311-manylinux2014_x86_64.whl"},
+  {hash = "sha256:8cbbd48c9cfd6b78d0a833ebbafda3e1b057c38d6acc3c6e54de0735a7364e27", size = 135455541, upload-time = "2026-08-20T02:40:46.804Z", url = "https://files.pythonhosted.org/packages/5a/c9/73227968a5b01ac31eaf1d5c58b4318e4b83654ed6dac3c310c7b2075c36/cupy_cuda12x-14.2.0-cp314-cp314t-manylinux2014_x86_64.whl"},
+  {hash = "sha256:9dd33f9cfc7aefbd935879bf50e95db539721a0702bdb05be3c74bd46a85ba29", size = 147438535, upload-time = "2026-08-20T02:40:42.11Z", url = "https://files.pythonhosted.org/packages/3a/e9/8ed4adeb8c64f188b9ea6fba3be62fb7999584308bdf7ec6c5e17f77b99c/cupy_cuda12x-14.2.0-cp314-cp314t-manylinux2014_aarch64.whl"},
+  {hash = "sha256:b74340aa7271f0f081f77e2e5107bac75af19b86df29213db7ada90e14428efe", size = 147490427, upload-time = "2026-08-20T02:40:00.196Z", url = "https://files.pythonhosted.org/packages/d3/8c/5fe3f6719c2d4560c79c62ef6d9b7d6c34d145879ddc0c1a41f8153ad0a6/cupy_cuda12x-14.2.0-cp312-cp312-manylinux2014_aarch64.whl"},
+  {hash = "sha256:c9571d3b5f2e65758137e210f7fb3c3b34767f0af6b6ca04035a244b6141ee12", size = 98780018, upload-time = "2026-08-20T02:40:09.465Z", url = "https://files.pythonhosted.org/packages/e9/18/ddea819204701024bef7fa748730702245d803847c841b737723b94fd091/cupy_cuda12x-14.2.0-cp312-cp312-win_amd64.whl"},
+  {hash = "sha256:cfe673f73599ee0b9c2c9de5c0bb2395d98c9238c24deafa2ddcc69cacbd6af6", size = 147070561, upload-time = "2026-08-20T02:40:14.556Z", url = "https://files.pythonhosted.org/packages/7a/4f/dce7be227a845943d14baef3b58be49c74a465e5d9251f38840b5b1fd89a/cupy_cuda12x-14.2.0-cp313-cp313-manylinux2014_aarch64.whl"},
+  {hash = "sha256:d14b651ed835079f8a5e273936e02eda690be7d30f2658e5f48f328322fd9d7b", size = 100242434, upload-time = "2026-08-20T02:40:51.04Z", url = "https://files.pythonhosted.org/packages/2e/3d/26127dd01e08ed645a70b4084ef6dde93e6a75b0a84fddc3ac6b11b05bf7/cupy_cuda12x-14.2.0-cp314-cp314t-win_amd64.whl"},
+  {hash = "sha256:db802e4b9a85ed84fd3e84790586c06e808ee45e0214cd4e80734c09fcf93073", size = 135091580, upload-time = "2026-08-20T02:40:33.351Z", url = "https://files.pythonhosted.org/packages/04/5e/e6134253265fefc0a35356adcebc4e3ffa81f6c9a2a74f8f9e2de32b3018/cupy_cuda12x-14.2.0-cp314-cp314-manylinux2014_x86_64.whl"},
+  {hash = "sha256:dcea9f2b1887ac631a9275a61577e09d1eea26bf5f95491501c3b7528cebc592", size = 98760068, upload-time = "2026-08-20T02:40:23.43Z", url = "https://files.pythonhosted.org/packages/29/94/2dfb330afc6756ab9a8d16e955c0458e82e769930eab01e6c491e411363d/cupy_cuda12x-14.2.0-cp313-cp313-win_amd64.whl"},
+  {hash = "sha256:eceffbf02a5833c8ba1c94615da07c374284db76a60f8c8b217b0d9d2667162a", size = 98876640, upload-time = "2026-08-20T02:39:55.735Z", url = "https://files.pythonhosted.org/packages/a0/d0/a3f4c7b7c4d642c7c8cf8ae6128ccd70cb05592f35b89d76281456e3de00/cupy_cuda12x-14.2.0-cp311-cp311-win_amd64.whl"},
+  {hash = "sha256:ed317136439af4780f217eda0b82f25180084eb16c44854e1bc9e055f96fd429", size = 146942115, upload-time = "2026-08-20T02:40:28.484Z", url = "https://files.pythonhosted.org/packages/7e/d3/f6639af54f5872d1ef0c523601c7fe76d28783e71a3e8533e096c9ca1d43/cupy_cuda12x-14.2.0-cp314-cp314-manylinux2014_aarch64.whl"},
+  {hash = "sha256:efc1da23505e88d9834a3ddd3c00352c34e58e301f512d9dd593cc4bfbbdf7dc", size = 135714387, upload-time = "2026-08-20T02:40:19.077Z", url = "https://files.pythonhosted.org/packages/c9/02/520f7b9f92114b4df7d88aa77c36db0d556caf76a362537687e3a2e42833/cupy_cuda12x-14.2.0-cp313-cp313-manylinux2014_x86_64.whl"},
+  {hash = "sha256:f22a4408f47b6baa791de395efec8dce8fe1d03f92b50867af6d7d25e6fb0272", size = 146929480, upload-time = "2026-08-20T02:39:33.341Z", url = "https://files.pythonhosted.org/packages/41/07/7a7d5066d8e3463c771da4e0538b10fc98827c312056e7c2bca3b10d4f9f/cupy_cuda12x-14.2.0-cp310-cp310-manylinux2014_aarch64.whl"},
+  {hash = "sha256:f82141761f2c81905d49387464ae29438887956d99063381c93a1d5d1b7d32e8", size = 136111459, upload-time = "2026-08-20T02:40:04.909Z", url = "https://files.pythonhosted.org/packages/7c/5b/65124de2dbaf2e85109f611a41947e39acd6dd938751c04b4c4d7bf6fc82/cupy_cuda12x-14.2.0-cp312-cp312-manylinux2014_x86_64.whl"}
+]
+
+[package.optional-dependencies]
+ctk = [
+  {extra = ["cublas", "cudart", "cufft", "curand", "cusolver", "cusparse", "nvrtc"], marker = "(python_full_version < '3.11' and sys_platform == 'emscripten' and extra == 'extra-8-pelinker-gpu-cu12') or (python_full_version < '3.11' and sys_platform == 'win32' and extra == 'extra-8-pelinker-gpu-cu12') or (sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-8-pelinker-gpu-cu12') or (sys_platform == 'emscripten' and extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13') or (sys_platform == 'win32' and extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "cuda-toolkit", source = {registry = "https://pypi.org/simple"}, version = "12.6.3"},
+  {extra = ["cublas", "cudart", "cufft", "curand", "cusolver", "cusparse", "nvrtc"], marker = "(python_full_version >= '3.11' and sys_platform == 'emscripten' and extra == 'extra-8-pelinker-gpu-cu12') or (python_full_version >= '3.11' and sys_platform == 'win32' and extra == 'extra-8-pelinker-gpu-cu12') or (sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13') or (sys_platform == 'emscripten' and extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13') or (sys_platform == 'win32' and extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "cuda-toolkit", source = {registry = "https://pypi.org/simple"}, version = "12.9.2.0"}
+]
+
+[[package]]
+dependencies = [
+  {marker = "(python_full_version < '3.11' and extra == 'extra-8-pelinker-gpu-cu13') or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "numpy", source = {registry = "https://pypi.org/simple"}, version = "2.2.6"},
+  {marker = "(python_full_version >= '3.11' and extra == 'extra-8-pelinker-gpu-cu13') or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "numpy", source = {registry = "https://pypi.org/simple"}, version = "2.4.6"},
   {name = "cuda-pathfinder"}
 ]
 name = "cupy-cuda13x"
@@ -838,7 +1039,7 @@ wheels = [
 
 [package.optional-dependencies]
 ctk = [
-  {extra = ["cublas", "cudart", "cufft", "curand", "cusolver", "cusparse", "nvrtc"], name = "cuda-toolkit"}
+  {extra = ["cublas", "cudart", "cufft", "curand", "cusolver", "cusparse", "nvrtc"], marker = "extra == 'extra-8-pelinker-gpu-cu13'", name = "cuda-toolkit", source = {registry = "https://pypi.org/simple"}, version = "13.0.3.0"}
 ]
 
 [[package]]
@@ -916,7 +1117,7 @@ wheels = [
 
 [[package]]
 dependencies = [
-  {marker = "python_full_version < '3.13'", name = "typing-extensions"}
+  {marker = "python_full_version < '3.13' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "typing-extensions"}
 ]
 name = "dataclass-wizard"
 sdist = {hash = "sha256:d458e6a97585377337f1633e5738ee1c051e84ca7726276ecde78d6534e485b5", size = 449143, upload-time = "2026-07-03T03:21:14.302Z", url = "https://files.pythonhosted.org/packages/b1/9d/465deff762411b97cc37fdd475402484724f695af042fa89ff221f725172/dataclass_wizard-1.0.0.tar.gz"}
@@ -1010,7 +1211,7 @@ wheels = [
 
 [[package]]
 dependencies = [
-  {name = "typing-extensions"}
+  {marker = "python_full_version < '3.11' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "typing-extensions"}
 ]
 name = "exceptiongroup"
 sdist = {hash = "sha256:8b412432c6055b0b7d14c310000ae93352ed6754f70fa8f7c34141f91c4e3219", size = 30371, upload-time = "2025-11-21T23:01:54.787Z", url = "https://files.pythonhosted.org/packages/50/79/66800aadf48771f6b62f7eb014e352e5d06856655206165d775e675a02c9/exceptiongroup-1.3.1.tar.gz"}
@@ -1314,8 +1515,8 @@ wheels = [
 
 [[package]]
 dependencies = [
-  {marker = "python_full_version < '3.11'", name = "numpy", source = {registry = "https://pypi.org/simple"}, version = "2.2.6"},
-  {marker = "python_full_version >= '3.11'", name = "numpy", source = {registry = "https://pypi.org/simple"}, version = "2.4.6"}
+  {marker = "python_full_version < '3.11' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "numpy", source = {registry = "https://pypi.org/simple"}, version = "2.2.6"},
+  {marker = "python_full_version >= '3.11' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "numpy", source = {registry = "https://pypi.org/simple"}, version = "2.4.6"}
 ]
 name = "h5py"
 sdist = {hash = "sha256:2372116b2e0d5d3e5e705b7f663f7c8d96fa79a4052d250484ef91d24d6a08f4", size = 424323, upload-time = "2025-06-06T14:06:15.01Z", url = "https://files.pythonhosted.org/packages/5d/57/dfb3c5c3f1bf5f5ef2e59a22dec4ff1f3d7408b55bfcefcfb0ea69ef21c6/h5py-3.14.0.tar.gz"}
@@ -1346,13 +1547,13 @@ wheels = [
 
 [[package]]
 dependencies = [
-  {marker = "python_full_version < '3.11'", name = "numpy", source = {registry = "https://pypi.org/simple"}, version = "2.2.6"},
-  {marker = "python_full_version < '3.11'", name = "scikit-learn", source = {registry = "https://pypi.org/simple"}, version = "1.7.2"},
-  {marker = "python_full_version < '3.11'", name = "scipy", source = {registry = "https://pypi.org/simple"}, version = "1.15.3"},
-  {marker = "python_full_version == '3.11.*'", name = "scipy", source = {registry = "https://pypi.org/simple"}, version = "1.17.1"},
-  {marker = "python_full_version >= '3.11'", name = "numpy", source = {registry = "https://pypi.org/simple"}, version = "2.4.6"},
-  {marker = "python_full_version >= '3.11'", name = "scikit-learn", source = {registry = "https://pypi.org/simple"}, version = "1.9.0"},
-  {marker = "python_full_version >= '3.12'", name = "scipy", source = {registry = "https://pypi.org/simple"}, version = "1.18.0"},
+  {marker = "python_full_version < '3.11' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "numpy", source = {registry = "https://pypi.org/simple"}, version = "2.2.6"},
+  {marker = "python_full_version < '3.11' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "scikit-learn", source = {registry = "https://pypi.org/simple"}, version = "1.7.2"},
+  {marker = "python_full_version < '3.11' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "scipy", source = {registry = "https://pypi.org/simple"}, version = "1.15.3"},
+  {marker = "python_full_version == '3.11.*' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "scipy", source = {registry = "https://pypi.org/simple"}, version = "1.17.1"},
+  {marker = "python_full_version >= '3.11' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "numpy", source = {registry = "https://pypi.org/simple"}, version = "2.4.6"},
+  {marker = "python_full_version >= '3.11' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "scikit-learn", source = {registry = "https://pypi.org/simple"}, version = "1.9.0"},
+  {marker = "python_full_version >= '3.12' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "scipy", source = {registry = "https://pypi.org/simple"}, version = "1.18.0"},
   {name = "joblib"}
 ]
 name = "hdbscan"
@@ -1417,8 +1618,8 @@ wheels = [
 
 [[package]]
 dependencies = [
-  {name = "h11"},
-  {name = "truststore"}
+  {marker = "python_full_version < '3.11' or sys_platform != 'emscripten' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "h11"},
+  {marker = "python_full_version < '3.11' or sys_platform != 'emscripten' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "truststore"}
 ]
 name = "httpcore2"
 sdist = {hash = "sha256:2adc8be4fb285fbcd6d894298db3b52c177e74b6674eda3a76bd36be3292a3db", size = 67740, upload-time = "2026-09-14T14:18:04.717Z", url = "https://files.pythonhosted.org/packages/15/8c/e925b1c92018abb3a1863ce1549d76d2381e334d21d65d4ac8f65dabd78a/httpcore2-2.13.0.tar.gz"}
@@ -1445,11 +1646,11 @@ wheels = [
 
 [[package]]
 dependencies = [
-  {marker = "python_full_version < '3.13'", name = "typing-extensions"},
-  {marker = "python_full_version >= '3.12' and sys_platform == 'emscripten'", name = "httpx2-jsfetch"},
-  {marker = "sys_platform != 'emscripten'", name = "anyio"},
-  {marker = "sys_platform != 'emscripten'", name = "httpcore2"},
-  {marker = "sys_platform != 'emscripten'", name = "truststore"},
+  {marker = "(python_full_version >= '3.12' and sys_platform == 'emscripten') or (python_full_version < '3.12' and extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13') or (sys_platform != 'emscripten' and extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "httpx2-jsfetch"},
+  {marker = "python_full_version < '3.13' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "typing-extensions"},
+  {marker = "sys_platform != 'emscripten' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "anyio"},
+  {marker = "sys_platform != 'emscripten' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "httpcore2"},
+  {marker = "sys_platform != 'emscripten' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "truststore"},
   {name = "idna"}
 ]
 name = "httpx2"
@@ -1471,7 +1672,7 @@ wheels = [
 
 [[package]]
 dependencies = [
-  {marker = "platform_machine == 'AMD64' or platform_machine == 'aarch64' or platform_machine == 'amd64' or platform_machine == 'arm64' or platform_machine == 'x86_64'", name = "hf-xet"},
+  {marker = "platform_machine == 'AMD64' or platform_machine == 'aarch64' or platform_machine == 'amd64' or platform_machine == 'arm64' or platform_machine == 'x86_64' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "hf-xet"},
   {name = "click"},
   {name = "filelock"},
   {name = "fsspec"},
@@ -1532,9 +1733,9 @@ wheels = [
 
 [[package]]
 dependencies = [
-  {marker = "python_full_version < '3.11'", name = "ipython", source = {registry = "https://pypi.org/simple"}, version = "8.39.0"},
-  {marker = "python_full_version >= '3.11'", name = "ipython", source = {registry = "https://pypi.org/simple"}, version = "9.16.1"},
-  {marker = "sys_platform == 'darwin'", name = "appnope"},
+  {marker = "python_full_version < '3.11' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "ipython", source = {registry = "https://pypi.org/simple"}, version = "8.39.0"},
+  {marker = "python_full_version >= '3.11' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "ipython", source = {registry = "https://pypi.org/simple"}, version = "9.16.1"},
+  {marker = "sys_platform == 'darwin' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "appnope"},
   {name = "comm"},
   {name = "debugpy"},
   {name = "jupyter-client"},
@@ -1557,17 +1758,17 @@ wheels = [
 
 [[package]]
 dependencies = [
-  {marker = "sys_platform != 'emscripten' and sys_platform != 'win32'", name = "pexpect"},
-  {marker = "sys_platform == 'win32'", name = "colorama"},
-  {name = "decorator"},
-  {name = "exceptiongroup"},
-  {name = "jedi"},
-  {name = "matplotlib-inline"},
-  {name = "prompt-toolkit"},
-  {name = "pygments"},
-  {name = "stack-data"},
-  {name = "traitlets"},
-  {name = "typing-extensions"}
+  {marker = "(python_full_version < '3.11' and sys_platform != 'emscripten' and sys_platform != 'win32') or (python_full_version >= '3.11' and extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13') or (sys_platform == 'emscripten' and extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13') or (sys_platform == 'win32' and extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "pexpect"},
+  {marker = "(python_full_version < '3.11' and sys_platform == 'win32') or (python_full_version >= '3.11' and extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13') or (sys_platform != 'win32' and extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "colorama"},
+  {marker = "python_full_version < '3.11' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "decorator"},
+  {marker = "python_full_version < '3.11' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "exceptiongroup"},
+  {marker = "python_full_version < '3.11' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "jedi"},
+  {marker = "python_full_version < '3.11' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "matplotlib-inline"},
+  {marker = "python_full_version < '3.11' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "prompt-toolkit"},
+  {marker = "python_full_version < '3.11' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "pygments"},
+  {marker = "python_full_version < '3.11' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "stack-data"},
+  {marker = "python_full_version < '3.11' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "traitlets"},
+  {marker = "python_full_version < '3.11' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "typing-extensions"}
 ]
 name = "ipython"
 resolution-markers = [
@@ -1582,17 +1783,17 @@ wheels = [
 
 [[package]]
 dependencies = [
-  {marker = "python_full_version < '3.12'", name = "typing-extensions"},
-  {marker = "sys_platform != 'cygwin' and sys_platform != 'emscripten'", name = "psutil"},
-  {marker = "sys_platform != 'emscripten' and sys_platform != 'win32'", name = "pexpect"},
-  {marker = "sys_platform == 'win32'", name = "colorama"},
-  {name = "ipython-pygments-lexers"},
-  {name = "jedi"},
-  {name = "matplotlib-inline"},
-  {name = "prompt-toolkit"},
-  {name = "pygments"},
-  {name = "stack-data"},
-  {name = "traitlets"}
+  {marker = "(python_full_version >= '3.11' and sys_platform != 'cygwin' and sys_platform != 'emscripten') or (python_full_version < '3.11' and extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13') or (sys_platform == 'cygwin' and extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13') or (sys_platform == 'emscripten' and extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "psutil"},
+  {marker = "(python_full_version >= '3.11' and sys_platform != 'emscripten' and sys_platform != 'win32') or (python_full_version < '3.11' and extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13') or (sys_platform == 'emscripten' and extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13') or (sys_platform == 'win32' and extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "pexpect"},
+  {marker = "(python_full_version >= '3.11' and sys_platform == 'win32') or (python_full_version < '3.11' and extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13') or (sys_platform != 'win32' and extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "colorama"},
+  {marker = "python_full_version == '3.11.*' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "typing-extensions"},
+  {marker = "python_full_version >= '3.11' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "ipython-pygments-lexers"},
+  {marker = "python_full_version >= '3.11' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "jedi"},
+  {marker = "python_full_version >= '3.11' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "matplotlib-inline"},
+  {marker = "python_full_version >= '3.11' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "prompt-toolkit"},
+  {marker = "python_full_version >= '3.11' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "pygments"},
+  {marker = "python_full_version >= '3.11' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "stack-data"},
+  {marker = "python_full_version >= '3.11' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "traitlets"}
 ]
 name = "ipython"
 resolution-markers = [
@@ -1618,7 +1819,7 @@ wheels = [
 
 [[package]]
 dependencies = [
-  {name = "pygments"}
+  {marker = "python_full_version >= '3.11' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "pygments"}
 ]
 name = "ipython-pygments-lexers"
 sdist = {hash = "sha256:09c0138009e56b6854f9535736f4171d855c8c08a563a0dcd8022f78355c7e81", size = 8393, upload-time = "2025-01-17T11:24:34.505Z", url = "https://files.pythonhosted.org/packages/ef/4c/5dd1d8af08107f88c7f741ead7a40854b8ac24ddf9ae850afbcf698aa552/ipython_pygments_lexers-1.1.1.tar.gz"}
@@ -1798,8 +1999,8 @@ wheels = [
 
 [[package]]
 dependencies = [
-  {marker = "python_full_version < '3.11'", name = "rpds-py", source = {registry = "https://pypi.org/simple"}, version = "0.30.0"},
-  {marker = "python_full_version >= '3.11'", name = "rpds-py", source = {registry = "https://pypi.org/simple"}, version = "2026.6.3"},
+  {marker = "python_full_version < '3.11' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "rpds-py", source = {registry = "https://pypi.org/simple"}, version = "0.30.0"},
+  {marker = "python_full_version >= '3.11' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "rpds-py", source = {registry = "https://pypi.org/simple"}, version = "2026.6.3"},
   {name = "attrs"},
   {name = "jsonschema-specifications"},
   {name = "referencing"}
@@ -1865,7 +2066,7 @@ wheels = [
 
 [[package]]
 dependencies = [
-  {marker = "python_full_version < '3.11'", name = "tomli"},
+  {marker = "python_full_version < '3.11' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "tomli"},
   {name = "markdown-it-py"},
   {name = "mdit-py-plugins"},
   {name = "nbformat"},
@@ -1882,14 +2083,14 @@ wheels = [
 
 [[package]]
 dependencies = [
-  {name = "absl-py"},
-  {name = "h5py"},
-  {name = "ml-dtypes"},
-  {name = "namex"},
-  {name = "numpy", source = {registry = "https://pypi.org/simple"}, version = "2.2.6"},
-  {name = "optree"},
-  {name = "packaging"},
-  {name = "rich"}
+  {marker = "python_full_version < '3.11' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "absl-py"},
+  {marker = "python_full_version < '3.11' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "h5py"},
+  {marker = "python_full_version < '3.11' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "ml-dtypes"},
+  {marker = "python_full_version < '3.11' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "namex"},
+  {marker = "python_full_version < '3.11' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "numpy", source = {registry = "https://pypi.org/simple"}, version = "2.2.6"},
+  {marker = "python_full_version < '3.11' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "optree"},
+  {marker = "python_full_version < '3.11' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "packaging"},
+  {marker = "python_full_version < '3.11' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "rich"}
 ]
 name = "keras"
 resolution-markers = [
@@ -1904,14 +2105,14 @@ wheels = [
 
 [[package]]
 dependencies = [
-  {name = "absl-py"},
-  {name = "h5py"},
-  {name = "ml-dtypes"},
-  {name = "namex"},
-  {name = "numpy", source = {registry = "https://pypi.org/simple"}, version = "2.4.6"},
-  {name = "optree"},
-  {name = "packaging"},
-  {name = "rich"}
+  {marker = "python_full_version >= '3.11' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "absl-py"},
+  {marker = "python_full_version >= '3.11' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "h5py"},
+  {marker = "python_full_version >= '3.11' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "ml-dtypes"},
+  {marker = "python_full_version >= '3.11' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "namex"},
+  {marker = "python_full_version >= '3.11' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "numpy", source = {registry = "https://pypi.org/simple"}, version = "2.4.6"},
+  {marker = "python_full_version >= '3.11' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "optree"},
+  {marker = "python_full_version >= '3.11' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "packaging"},
+  {marker = "python_full_version >= '3.11' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "rich"}
 ]
 name = "keras"
 resolution-markers = [
@@ -2234,15 +2435,15 @@ wheels = [
 
 [[package]]
 dependencies = [
-  {name = "contourpy", source = {registry = "https://pypi.org/simple"}, version = "1.3.2"},
-  {name = "cycler"},
-  {name = "fonttools"},
-  {name = "kiwisolver"},
-  {name = "numpy", source = {registry = "https://pypi.org/simple"}, version = "2.2.6"},
-  {name = "packaging"},
-  {name = "pillow"},
-  {name = "pyparsing"},
-  {name = "python-dateutil"}
+  {marker = "python_full_version < '3.11' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "contourpy", source = {registry = "https://pypi.org/simple"}, version = "1.3.2"},
+  {marker = "python_full_version < '3.11' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "cycler"},
+  {marker = "python_full_version < '3.11' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "fonttools"},
+  {marker = "python_full_version < '3.11' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "kiwisolver"},
+  {marker = "python_full_version < '3.11' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "numpy", source = {registry = "https://pypi.org/simple"}, version = "2.2.6"},
+  {marker = "python_full_version < '3.11' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "packaging"},
+  {marker = "python_full_version < '3.11' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "pillow"},
+  {marker = "python_full_version < '3.11' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "pyparsing"},
+  {marker = "python_full_version < '3.11' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "python-dateutil"}
 ]
 name = "matplotlib"
 resolution-markers = [
@@ -2310,15 +2511,15 @@ wheels = [
 
 [[package]]
 dependencies = [
-  {name = "contourpy", source = {registry = "https://pypi.org/simple"}, version = "1.3.3"},
-  {name = "cycler"},
-  {name = "fonttools"},
-  {name = "kiwisolver"},
-  {name = "numpy", source = {registry = "https://pypi.org/simple"}, version = "2.4.6"},
-  {name = "packaging"},
-  {name = "pillow"},
-  {name = "pyparsing"},
-  {name = "python-dateutil"}
+  {marker = "python_full_version >= '3.11' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "contourpy", source = {registry = "https://pypi.org/simple"}, version = "1.3.3"},
+  {marker = "python_full_version >= '3.11' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "cycler"},
+  {marker = "python_full_version >= '3.11' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "fonttools"},
+  {marker = "python_full_version >= '3.11' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "kiwisolver"},
+  {marker = "python_full_version >= '3.11' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "numpy", source = {registry = "https://pypi.org/simple"}, version = "2.4.6"},
+  {marker = "python_full_version >= '3.11' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "packaging"},
+  {marker = "python_full_version >= '3.11' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "pillow"},
+  {marker = "python_full_version >= '3.11' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "pyparsing"},
+  {marker = "python_full_version >= '3.11' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "python-dateutil"}
 ]
 name = "matplotlib"
 resolution-markers = [
@@ -2430,7 +2631,7 @@ wheels = [
 
 [[package]]
 dependencies = [
-  {marker = "python_full_version < '3.11'", name = "typing-extensions"}
+  {marker = "python_full_version < '3.11' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "typing-extensions"}
 ]
 name = "mistune"
 sdist = {hash = "sha256:58b5c96d6fcb61190dfe5fae498d2b2065f99cf61e9649418fd54cf1ada86dfe", size = 121426, upload-time = "2026-07-22T05:22:30.89Z", url = "https://files.pythonhosted.org/packages/7b/92/328a294a6de83bacb95bed01f04e0eaff4e3616ee359fc821a5dfc539b02/mistune-3.3.4.tar.gz"}
@@ -2442,7 +2643,7 @@ wheels = [
 
 [[package]]
 dependencies = [
-  {marker = "sys_platform == 'win32'", name = "colorama"},
+  {marker = "sys_platform == 'win32' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "colorama"},
   {name = "click"},
   {name = "ghp-import"},
   {name = "jinja2"},
@@ -2602,7 +2803,7 @@ python = [
 
 [[package]]
 dependencies = [
-  {marker = "python_full_version < '3.11'", name = "typing-extensions"},
+  {marker = "python_full_version < '3.11' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "typing-extensions"},
   {name = "griffelib"},
   {name = "mkdocs-autorefs"},
   {name = "mkdocstrings"}
@@ -2617,8 +2818,8 @@ wheels = [
 
 [[package]]
 dependencies = [
-  {marker = "python_full_version < '3.11'", name = "numpy", source = {registry = "https://pypi.org/simple"}, version = "2.2.6"},
-  {marker = "python_full_version >= '3.11'", name = "numpy", source = {registry = "https://pypi.org/simple"}, version = "2.4.6"}
+  {marker = "python_full_version < '3.11' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "numpy", source = {registry = "https://pypi.org/simple"}, version = "2.2.6"},
+  {marker = "python_full_version >= '3.11' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "numpy", source = {registry = "https://pypi.org/simple"}, version = "2.4.6"}
 ]
 name = "ml-dtypes"
 sdist = {hash = "sha256:8ab06a50fb9bf9666dd0fe5dfb4676fa2b0ac0f31ecff72a6c3af8e22c063453", size = 692314, upload-time = "2025-11-17T22:32:31.031Z", url = "https://files.pythonhosted.org/packages/0e/4a/c27b42ed9b1c7d13d9ba8b6905dece787d6259152f2309338aed29b2447b/ml_dtypes-0.5.4.tar.gz"}
@@ -2935,8 +3136,8 @@ wheels = [
 
 [[package]]
 dependencies = [
-  {marker = "python_full_version < '3.11'", name = "numpy", source = {registry = "https://pypi.org/simple"}, version = "2.2.6"},
-  {marker = "python_full_version >= '3.11'", name = "numpy", source = {registry = "https://pypi.org/simple"}, version = "2.4.6"},
+  {marker = "python_full_version < '3.11' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "numpy", source = {registry = "https://pypi.org/simple"}, version = "2.2.6"},
+  {marker = "python_full_version >= '3.11' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "numpy", source = {registry = "https://pypi.org/simple"}, version = "2.4.6"},
   {name = "llvmlite"}
 ]
 name = "numba"
@@ -3130,7 +3331,7 @@ wheels = [
 
 [[package]]
 dependencies = [
-  {name = "nvidia-cuda-nvrtc"}
+  {marker = "(python_full_version < '3.11' and sys_platform == 'emscripten' and extra != 'extra-8-pelinker-gpu-cu12') or (python_full_version < '3.11' and sys_platform == 'win32' and extra != 'extra-8-pelinker-gpu-cu12') or (python_full_version >= '3.11' and sys_platform == 'win32' and extra == 'extra-8-pelinker-gpu-cu13') or (sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-8-pelinker-gpu-cu13') or (sys_platform != 'emscripten' and sys_platform != 'win32' and extra != 'extra-8-pelinker-gpu-cu12') or (sys_platform == 'emscripten' and extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13') or (sys_platform == 'win32' and extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "nvidia-cuda-nvrtc"}
 ]
 name = "nvidia-cublas"
 source = {registry = "https://pypi.org/simple"}
@@ -3142,12 +3343,61 @@ wheels = [
 ]
 
 [[package]]
+name = "nvidia-cublas-cu12"
+resolution-markers = [
+  "python_full_version < '3.11'",
+  "python_full_version == '3.11.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+  "python_full_version == '3.12.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+  "python_full_version == '3.13.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+  "python_full_version >= '3.14' and sys_platform != 'emscripten' and sys_platform != 'win32'"
+]
+source = {registry = "https://pypi.org/simple"}
+version = "12.6.4.1"
+wheels = [
+  {hash = "sha256:08ed2686e9875d01b58e3cb379c6896df8e76c75e0d4a7f7dace3d7b6d9ef8eb", size = 393138322, upload-time = "2024-11-20T17:40:25.65Z", url = "https://files.pythonhosted.org/packages/af/eb/ff4b8c503fa1f1796679dce648854d58751982426e4e4b37d6fce49d259c/nvidia_cublas_cu12-12.6.4.1-py3-none-manylinux2014_x86_64.manylinux_2_17_x86_64.whl"},
+  {hash = "sha256:235f728d6e2a409eddf1df58d5b0921cf80cfa9e72b9f2775ccb7b4a87984668", size = 390794615, upload-time = "2024-11-20T17:39:52.715Z", url = "https://files.pythonhosted.org/packages/97/0d/f1f0cadbf69d5b9ef2e4f744c9466cb0a850741d08350736dfdb4aa89569/nvidia_cublas_cu12-12.6.4.1-py3-none-manylinux_2_27_aarch64.whl"},
+  {hash = "sha256:9e4fa264f4d8a4eb0cdbd34beadc029f453b3bafae02401e999cf3d5a5af75f8", size = 434535301, upload-time = "2024-11-20T17:50:41.681Z", url = "https://files.pythonhosted.org/packages/84/f7/985e9bdbe3e0ac9298fcc8cfa51a392862a46a0ffaccbbd56939b62a9c83/nvidia_cublas_cu12-12.6.4.1-py3-none-win_amd64.whl"}
+]
+
+[[package]]
+dependencies = [
+  {marker = "python_full_version >= '3.11' and sys_platform == 'win32'", name = "nvidia-cuda-nvrtc-cu12", source = {registry = "https://pypi.org/simple"}, version = "12.9.86"}
+]
+name = "nvidia-cublas-cu12"
+resolution-markers = [
+  "python_full_version == '3.11.*' and sys_platform == 'win32'",
+  "python_full_version == '3.12.*' and sys_platform == 'win32'",
+  "python_full_version == '3.13.*' and sys_platform == 'win32'",
+  "python_full_version >= '3.14' and sys_platform == 'win32'"
+]
+source = {registry = "https://pypi.org/simple"}
+version = "12.9.2.10"
+wheels = [
+  {hash = "sha256:5572131a59c3eebeeb1c4c8144f772d49372c20124916e072a0e3fc30df421d5", size = 575012079, upload-time = "2026-04-08T18:51:47.303Z", url = "https://files.pythonhosted.org/packages/f7/a2/c96163a0fff1839c0c9548bbdeae7b853b867009e33b9b9264adc238b1cf/nvidia_cublas_cu12-12.9.2.10-py3-none-manylinux_2_27_aarch64.whl"},
+  {hash = "sha256:623f43027d40d44ceadf0043f002bd25cf353e8f13ce90b9a87057019f560661", size = 553162896, upload-time = "2026-04-08T18:53:10.035Z", url = "https://files.pythonhosted.org/packages/20/e2/fc9a0e985249d873150276d5afb02e39a66817fedbf1a385724393e505ed/nvidia_cublas_cu12-12.9.2.10-py3-none-win_amd64.whl"},
+  {hash = "sha256:e4f53a8ca8c5d6e8c492d0d0a3d565ecb59a751b19cfdaa4f6da0ab2104c1702", size = 581240110, upload-time = "2026-04-08T18:52:31.532Z", url = "https://files.pythonhosted.org/packages/cb/c0/0a517bfe63ccd3b92eb254d264e28fca3c7cab75d07daea315250fb1bf73/nvidia_cublas_cu12-12.9.2.10-py3-none-manylinux_2_27_x86_64.whl"}
+]
+
+[[package]]
 name = "nvidia-cuda-cupti"
 source = {registry = "https://pypi.org/simple"}
 version = "13.0.85"
 wheels = [
   {hash = "sha256:4eb01c08e859bf924d222250d2e8f8b8ff6d3db4721288cf35d14252a4d933c8", size = 10715597, upload-time = "2025-09-04T08:26:51.312Z", url = "https://files.pythonhosted.org/packages/33/6d/737d164b4837a9bbd202f5ae3078975f0525a55730fe871d8ed4e3b952b0/nvidia_cuda_cupti-13.0.85-py3-none-manylinux_2_25_x86_64.whl"},
+  {hash = "sha256:683f58d301548deeefcb8f6fac1b8d907691b9d8b18eccab417f51e362102f00", size = 7736776, upload-time = "2025-09-04T08:38:08.38Z", url = "https://files.pythonhosted.org/packages/ad/df/b74b10025c1205695c5676373f2edd3e87a7202cc62ead0dfbc373b0f6ea/nvidia_cuda_cupti-13.0.85-py3-none-win_amd64.whl"},
   {hash = "sha256:796bd679890ee55fb14a94629b698b6db54bcfd833d391d5e94017dd9d7d3151", size = 10310827, upload-time = "2025-09-04T08:26:42.012Z", url = "https://files.pythonhosted.org/packages/2a/2a/80353b103fc20ce05ef51e928daed4b6015db4aaa9162ed0997090fe2250/nvidia_cuda_cupti-13.0.85-py3-none-manylinux_2_25_aarch64.whl"}
+]
+
+[[package]]
+name = "nvidia-cuda-cupti-cu12"
+source = {registry = "https://pypi.org/simple"}
+version = "12.6.80"
+wheels = [
+  {hash = "sha256:166ee35a3ff1587f2490364f90eeeb8da06cd867bd5b701bf7f9a02b78bc63fc", size = 8236764, upload-time = "2024-11-20T17:35:41.03Z", url = "https://files.pythonhosted.org/packages/e6/8b/2f6230cb715646c3a9425636e513227ce5c93c4d65823a734f4bb86d43c3/nvidia_cuda_cupti_cu12-12.6.80-py3-none-manylinux2014_aarch64.manylinux_2_17_aarch64.whl"},
+  {hash = "sha256:358b4a1d35370353d52e12f0a7d1769fc01ff74a191689d3870b2123156184c4", size = 8236756, upload-time = "2024-10-01T16:57:45.507Z", url = "https://files.pythonhosted.org/packages/25/0f/acb326ac8fd26e13c799e0b4f3b2751543e1834f04d62e729485872198d4/nvidia_cuda_cupti_cu12-12.6.80-py3-none-manylinux2014_aarch64.whl"},
+  {hash = "sha256:6768bad6cab4f19e8292125e5f1ac8aa7d1718704012a0e3272a6f61c4bce132", size = 8917980, upload-time = "2024-11-20T17:36:04.019Z", url = "https://files.pythonhosted.org/packages/49/60/7b6497946d74bcf1de852a21824d63baad12cd417db4195fc1bfe59db953/nvidia_cuda_cupti_cu12-12.6.80-py3-none-manylinux2014_x86_64.manylinux_2_17_x86_64.whl"},
+  {hash = "sha256:a3eff6cdfcc6a4c35db968a06fcadb061cbc7d6dde548609a941ff8701b98b73", size = 8917972, upload-time = "2024-10-01T16:58:06.036Z", url = "https://files.pythonhosted.org/packages/a5/24/120ee57b218d9952c379d1e026c4479c9ece9997a4fb46303611ee48f038/nvidia_cuda_cupti_cu12-12.6.80-py3-none-manylinux2014_x86_64.whl"},
+  {hash = "sha256:bbe6ae76e83ce5251b56e8c8e61a964f757175682bbad058b170b136266ab00a", size = 5724175, upload-time = "2024-10-01T17:09:47.955Z", url = "https://files.pythonhosted.org/packages/1c/81/7796f096afaf726796b1b648f3bc80cafc61fe7f77f44a483c89e6c5ef34/nvidia_cuda_cupti_cu12-12.6.80-py3-none-win_amd64.whl"}
 ]
 
 [[package]]
@@ -3161,6 +3411,39 @@ wheels = [
 ]
 
 [[package]]
+name = "nvidia-cuda-nvrtc-cu12"
+resolution-markers = [
+  "python_full_version < '3.11'",
+  "python_full_version == '3.11.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+  "python_full_version == '3.12.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+  "python_full_version == '3.13.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+  "python_full_version >= '3.14' and sys_platform != 'emscripten' and sys_platform != 'win32'"
+]
+source = {registry = "https://pypi.org/simple"}
+version = "12.6.85"
+wheels = [
+  {hash = "sha256:3f3134f50963882373063901657554f230bedf6039d30b09f6be55c64c993a37", size = 23162872, upload-time = "2024-11-20T17:37:42.967Z", url = "https://files.pythonhosted.org/packages/48/ab/476146f59ff5ef5bd6e62c187097d859ea78b5752d19c6c3f9be5f90dafc/nvidia_cuda_nvrtc_cu12-12.6.85-py3-none-manylinux2014_aarch64.manylinux_2_17_aarch64.whl"},
+  {hash = "sha256:800927308ccc5dd6246d3f61f7fcef2ed7ec4e59e199090d360d3293f78bd5a2", size = 23649944, upload-time = "2024-11-20T17:38:06.511Z", url = "https://files.pythonhosted.org/packages/f5/31/ffb400c5ae99daf09687aa6c42831c5d824f71c4851363ed2a4a1ac52bab/nvidia_cuda_nvrtc_cu12-12.6.85-py3-none-manylinux2010_x86_64.manylinux_2_12_x86_64.whl"},
+  {hash = "sha256:a419e2c95e75b88b602f8bb66f82a6c5651e8475a509841c958486b1b71510bf", size = 39026436, upload-time = "2024-11-20T17:49:13.633Z", url = "https://files.pythonhosted.org/packages/0c/f7/472414aee887d626373d0b2140a59ac4308e3eaed815060e5410fc83305a/nvidia_cuda_nvrtc_cu12-12.6.85-py3-none-win_amd64.whl"}
+]
+
+[[package]]
+name = "nvidia-cuda-nvrtc-cu12"
+resolution-markers = [
+  "python_full_version == '3.11.*' and sys_platform == 'win32'",
+  "python_full_version == '3.12.*' and sys_platform == 'win32'",
+  "python_full_version == '3.13.*' and sys_platform == 'win32'",
+  "python_full_version >= '3.14' and sys_platform == 'win32'"
+]
+source = {registry = "https://pypi.org/simple"}
+version = "12.9.86"
+wheels = [
+  {hash = "sha256:096d4de6bda726415dfaf3198d4f5c522b8e70139c97feef5cd2ca6d4cd9cead", size = 44528905, upload-time = "2025-06-05T20:02:29.754Z", url = "https://files.pythonhosted.org/packages/64/eb/c2295044b8f3b3b08860e2f6a912b702fc92568a167259df5dddb78f325e/nvidia_cuda_nvrtc_cu12-12.9.86-py3-none-manylinux2014_aarch64.manylinux_2_17_aarch64.whl"},
+  {hash = "sha256:210cf05005a447e29214e9ce50851e83fc5f4358df8b453155d5e1918094dcb4", size = 89568129, upload-time = "2025-06-05T20:02:41.973Z", url = "https://files.pythonhosted.org/packages/b8/85/e4af82cc9202023862090bfca4ea827d533329e925c758f0cde964cb54b7/nvidia_cuda_nvrtc_cu12-12.9.86-py3-none-manylinux2010_x86_64.manylinux_2_12_x86_64.whl"},
+  {hash = "sha256:72972ebdcf504d69462d3bcd67e7b81edd25d0fb85a2c46d3ea3517666636349", size = 76408187, upload-time = "2025-06-05T20:12:27.819Z", url = "https://files.pythonhosted.org/packages/52/de/823919be3b9d0ccbf1f784035423c5f18f4267fb0123558d58b813c6ec86/nvidia_cuda_nvrtc_cu12-12.9.86-py3-none-win_amd64.whl"}
+]
+
+[[package]]
 name = "nvidia-cuda-runtime"
 source = {registry = "https://pypi.org/simple"}
 version = "13.0.96"
@@ -3171,20 +3454,69 @@ wheels = [
 ]
 
 [[package]]
+name = "nvidia-cuda-runtime-cu12"
+resolution-markers = [
+  "python_full_version < '3.11'",
+  "python_full_version == '3.11.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+  "python_full_version == '3.12.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+  "python_full_version == '3.13.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+  "python_full_version >= '3.14' and sys_platform != 'emscripten' and sys_platform != 'win32'"
+]
+source = {registry = "https://pypi.org/simple"}
+version = "12.6.77"
+wheels = [
+  {hash = "sha256:6116fad3e049e04791c0256a9778c16237837c08b27ed8c8401e2e45de8d60cd", size = 908052, upload-time = "2024-11-20T17:35:19.905Z", url = "https://files.pythonhosted.org/packages/8f/ea/590b2ac00d772a8abd1c387a92b46486d2679ca6622fd25c18ff76265663/nvidia_cuda_runtime_cu12-12.6.77-py3-none-manylinux2014_aarch64.manylinux_2_17_aarch64.whl"},
+  {hash = "sha256:86c58044c824bf3c173c49a2dbc7a6c8b53cb4e4dca50068be0bf64e9dab3f7f", size = 891773, upload-time = "2024-10-01T17:09:26.362Z", url = "https://files.pythonhosted.org/packages/fa/76/4c80fa138333cc975743fd0687a745fccb30d167f906f13c1c7f9a85e5ea/nvidia_cuda_runtime_cu12-12.6.77-py3-none-win_amd64.whl"},
+  {hash = "sha256:a84d15d5e1da416dd4774cb42edf5e954a3e60cc945698dc1d5be02321c44dc8", size = 897678, upload-time = "2024-10-01T16:57:33.821Z", url = "https://files.pythonhosted.org/packages/f0/62/65c05e161eeddbafeca24dc461f47de550d9fa8a7e04eb213e32b55cfd99/nvidia_cuda_runtime_cu12-12.6.77-py3-none-manylinux2014_x86_64.whl"},
+  {hash = "sha256:ba3b56a4f896141e25e19ab287cd71e52a6a0f4b29d0d31609f60e3b4d5219b7", size = 897690, upload-time = "2024-11-20T17:35:30.697Z", url = "https://files.pythonhosted.org/packages/e1/23/e717c5ac26d26cf39a27fbc076240fad2e3b817e5889d671b67f4f9f49c5/nvidia_cuda_runtime_cu12-12.6.77-py3-none-manylinux2014_x86_64.manylinux_2_17_x86_64.whl"},
+  {hash = "sha256:d461264ecb429c84c8879a7153499ddc7b19b5f8d84c204307491989a365588e", size = 908040, upload-time = "2024-10-01T16:57:22.221Z", url = "https://files.pythonhosted.org/packages/b7/3d/159023799677126e20c8fd580cca09eeb28d5c5a624adc7f793b9aa8bbfa/nvidia_cuda_runtime_cu12-12.6.77-py3-none-manylinux2014_aarch64.whl"}
+]
+
+[[package]]
+name = "nvidia-cuda-runtime-cu12"
+resolution-markers = [
+  "python_full_version == '3.11.*' and sys_platform == 'win32'",
+  "python_full_version == '3.12.*' and sys_platform == 'win32'",
+  "python_full_version == '3.13.*' and sys_platform == 'win32'",
+  "python_full_version >= '3.14' and sys_platform == 'win32'"
+]
+source = {registry = "https://pypi.org/simple"}
+version = "12.9.79"
+wheels = [
+  {hash = "sha256:25bba2dfb01d48a9b59ca474a1ac43c6ebf7011f1b0b8cc44f54eb6ac48a96c3", size = 3493179, upload-time = "2025-06-05T20:00:53.735Z", url = "https://files.pythonhosted.org/packages/bc/46/a92db19b8309581092a3add7e6fceb4c301a3fd233969856a8cbf042cd3c/nvidia_cuda_runtime_cu12-12.9.79-py3-none-manylinux2014_x86_64.manylinux_2_17_x86_64.whl"},
+  {hash = "sha256:83469a846206f2a733db0c42e223589ab62fd2fabac4432d2f8802de4bded0a4", size = 3515012, upload-time = "2025-06-05T20:00:35.519Z", url = "https://files.pythonhosted.org/packages/bc/e0/0279bd94539fda525e0c8538db29b72a5a8495b0c12173113471d28bce78/nvidia_cuda_runtime_cu12-12.9.79-py3-none-manylinux2014_aarch64.manylinux_2_17_aarch64.whl"},
+  {hash = "sha256:8e018af8fa02363876860388bd10ccb89eb9ab8fb0aa749aaf58430a9f7c4891", size = 3591604, upload-time = "2025-06-05T20:11:17.036Z", url = "https://files.pythonhosted.org/packages/59/df/e7c3a360be4f7b93cee39271b792669baeb3846c58a4df6dfcf187a7ffab/nvidia_cuda_runtime_cu12-12.9.79-py3-none-win_amd64.whl"}
+]
+
+[[package]]
 dependencies = [
-  {name = "nvidia-cublas"}
+  {marker = "(python_full_version < '3.11' and sys_platform == 'emscripten' and extra == 'extra-8-pelinker-gpu-cu12') or (python_full_version < '3.11' and sys_platform == 'win32' and extra == 'extra-8-pelinker-gpu-cu12') or (sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-8-pelinker-gpu-cu12') or (sys_platform == 'emscripten' and extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13') or (sys_platform == 'win32' and extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "nvidia-cublas-cu12", source = {registry = "https://pypi.org/simple"}, version = "12.6.4.1"}
+]
+name = "nvidia-cudnn-cu12"
+source = {registry = "https://pypi.org/simple"}
+version = "9.10.2.21"
+wheels = [
+  {hash = "sha256:949452be657fa16687d0930933f032835951ef0892b37d2d53824d1a84dc97a8", size = 706758467, upload-time = "2025-06-06T21:54:08.597Z", url = "https://files.pythonhosted.org/packages/ba/51/e123d997aa098c61d029f76663dedbfb9bc8dcf8c60cbd6adbe42f76d049/nvidia_cudnn_cu12-9.10.2.21-py3-none-manylinux_2_27_x86_64.whl"},
+  {hash = "sha256:c6288de7d63e6cf62988f0923f96dc339cea362decb1bf5b3141883392a7d65e", size = 692992268, upload-time = "2025-06-06T21:55:18.114Z", url = "https://files.pythonhosted.org/packages/3d/90/0bd6e586701b3a890fd38aa71c387dab4883d619d6e5ad912ccbd05bfd67/nvidia_cudnn_cu12-9.10.2.21-py3-none-win_amd64.whl"},
+  {hash = "sha256:c9132cc3f8958447b4910a1720036d9eff5928cc3179b0a51fb6d167c6cc87d8", size = 705026878, upload-time = "2025-06-06T21:52:51.348Z", url = "https://files.pythonhosted.org/packages/fa/41/e79269ce215c857c935fd86bcfe91a451a584dfc27f1e068f568b9ad1ab7/nvidia_cudnn_cu12-9.10.2.21-py3-none-manylinux_2_27_aarch64.whl"}
+]
+
+[[package]]
+dependencies = [
+  {marker = "(python_full_version < '3.11' and sys_platform == 'emscripten' and extra != 'extra-8-pelinker-gpu-cu12') or (python_full_version < '3.11' and sys_platform == 'win32' and extra != 'extra-8-pelinker-gpu-cu12') or (sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-8-pelinker-gpu-cu13') or (sys_platform != 'emscripten' and sys_platform != 'win32' and extra != 'extra-8-pelinker-gpu-cu12') or (sys_platform == 'emscripten' and extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13') or (sys_platform == 'win32' and extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "nvidia-cublas"}
 ]
 name = "nvidia-cudnn-cu13"
 source = {registry = "https://pypi.org/simple"}
 version = "9.20.0.48"
 wheels = [
   {hash = "sha256:0c45dd8eeb50b603f07995b1b300c62ffe6a1980482b82b3bcf94a4ca9d49304", size = 366173588, upload-time = "2026-03-09T19:29:34.474Z", url = "https://files.pythonhosted.org/packages/6e/5e/edb9c0ae051602c3ccaffe424256463636d639e27d7f302dde9975ef9e7a/nvidia_cudnn_cu13-9.20.0.48-py3-none-manylinux_2_27_x86_64.whl"},
+  {hash = "sha256:af8139732b99c0118be65ea5aac97f0d46018f8c552889e49d2fb0c6261a4a24", size = 350712614, upload-time = "2026-03-09T19:31:11.398Z", url = "https://files.pythonhosted.org/packages/78/39/21507455b1bca8b5702a9e9fc6ce73735f216f558dac2c9ede58e4d456b8/nvidia_cudnn_cu13-9.20.0.48-py3-none-win_amd64.whl"},
   {hash = "sha256:e31454ae00094b0c55319d9d15b6fa2fc50a9e1c0f5c8c80fb75258234e731e1", size = 444574296, upload-time = "2026-03-09T19:28:27.751Z", url = "https://files.pythonhosted.org/packages/56/c5/83384d846b2fd17c44bd499b36c75a45ed4f095fbbb2252294e89cea5c5c/nvidia_cudnn_cu13-9.20.0.48-py3-none-manylinux_2_27_aarch64.whl"}
 ]
 
 [[package]]
 dependencies = [
-  {name = "nvidia-nvjitlink"}
+  {marker = "(python_full_version < '3.11' and sys_platform == 'emscripten' and extra != 'extra-8-pelinker-gpu-cu12') or (python_full_version < '3.11' and sys_platform == 'win32' and extra != 'extra-8-pelinker-gpu-cu12') or (python_full_version >= '3.11' and sys_platform == 'win32' and extra == 'extra-8-pelinker-gpu-cu13') or (sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-8-pelinker-gpu-cu13') or (sys_platform != 'emscripten' and sys_platform != 'win32' and extra != 'extra-8-pelinker-gpu-cu12') or (sys_platform == 'emscripten' and extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13') or (sys_platform == 'win32' and extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "nvidia-nvjitlink"}
 ]
 name = "nvidia-cufft"
 source = {registry = "https://pypi.org/simple"}
@@ -3196,12 +3528,62 @@ wheels = [
 ]
 
 [[package]]
+dependencies = [
+  {marker = "(python_full_version < '3.11' and sys_platform == 'emscripten' and extra == 'extra-8-pelinker-gpu-cu12') or (python_full_version < '3.11' and sys_platform == 'win32' and extra == 'extra-8-pelinker-gpu-cu12') or (sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-8-pelinker-gpu-cu12') or (sys_platform == 'emscripten' and extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13') or (sys_platform == 'win32' and extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "nvidia-nvjitlink-cu12", source = {registry = "https://pypi.org/simple"}, version = "12.6.85"}
+]
+name = "nvidia-cufft-cu12"
+resolution-markers = [
+  "python_full_version < '3.11'",
+  "python_full_version == '3.11.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+  "python_full_version == '3.12.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+  "python_full_version == '3.13.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+  "python_full_version >= '3.14' and sys_platform != 'emscripten' and sys_platform != 'win32'"
+]
+source = {registry = "https://pypi.org/simple"}
+version = "11.3.0.4"
+wheels = [
+  {hash = "sha256:6048ebddfb90d09d2707efb1fd78d4e3a77cb3ae4dc60e19aab6be0ece2ae464", size = 199356881, upload-time = "2024-10-01T17:13:01.861Z", url = "https://files.pythonhosted.org/packages/b4/38/36fd800cec8f6e89b7c1576edaaf8076e69ec631644cdbc1b5f2e2b5a9df/nvidia_cufft_cu12-11.3.0.4-py3-none-win_amd64.whl"},
+  {hash = "sha256:768160ac89f6f7b459bee747e8d175dbf53619cfe74b2a5636264163138013ca", size = 200221622, upload-time = "2024-10-01T17:03:58.79Z", url = "https://files.pythonhosted.org/packages/60/de/99ec247a07ea40c969d904fc14f3a356b3e2a704121675b75c366b694ee1/nvidia_cufft_cu12-11.3.0.4-py3-none-manylinux2014_x86_64.whl"},
+  {hash = "sha256:8510990de9f96c803a051822618d42bf6cb8f069ff3f48d93a8486efdacb48fb", size = 200164135, upload-time = "2024-10-01T17:03:24.212Z", url = "https://files.pythonhosted.org/packages/ce/f5/188566814b7339e893f8d210d3a5332352b1409815908dad6a363dcceac1/nvidia_cufft_cu12-11.3.0.4-py3-none-manylinux2014_aarch64.whl"},
+  {hash = "sha256:ccba62eb9cef5559abd5e0d54ceed2d9934030f51163df018532142a8ec533e5", size = 200221632, upload-time = "2024-11-20T17:41:32.357Z", url = "https://files.pythonhosted.org/packages/8f/16/73727675941ab8e6ffd86ca3a4b7b47065edcca7a997920b831f8147c99d/nvidia_cufft_cu12-11.3.0.4-py3-none-manylinux2014_x86_64.manylinux_2_17_x86_64.whl"},
+  {hash = "sha256:d16079550df460376455cba121db6564089176d9bac9e4f360493ca4741b22a6", size = 200164144, upload-time = "2024-11-20T17:40:58.288Z", url = "https://files.pythonhosted.org/packages/1f/37/c50d2b2f2c07e146776389e3080f4faf70bcc4fa6e19d65bb54ca174ebc3/nvidia_cufft_cu12-11.3.0.4-py3-none-manylinux2014_aarch64.manylinux_2_17_aarch64.whl"}
+]
+
+[[package]]
+dependencies = [
+  {marker = "python_full_version >= '3.11' and sys_platform == 'win32'", name = "nvidia-nvjitlink-cu12", source = {registry = "https://pypi.org/simple"}, version = "12.9.86"}
+]
+name = "nvidia-cufft-cu12"
+resolution-markers = [
+  "python_full_version == '3.11.*' and sys_platform == 'win32'",
+  "python_full_version == '3.12.*' and sys_platform == 'win32'",
+  "python_full_version == '3.13.*' and sys_platform == 'win32'",
+  "python_full_version >= '3.14' and sys_platform == 'win32'"
+]
+source = {registry = "https://pypi.org/simple"}
+version = "11.4.1.4"
+wheels = [
+  {hash = "sha256:1a28c9b12260a1aa7a8fd12f5ebd82d027963d635ba82ff39a1acfa7c4c0fbcf", size = 200822453, upload-time = "2025-06-05T20:05:27.889Z", url = "https://files.pythonhosted.org/packages/9b/2b/76445b0af890da61b501fde30650a1a4bd910607261b209cccb5235d3daa/nvidia_cufft_cu12-11.4.1.4-py3-none-manylinux2014_aarch64.manylinux_2_17_aarch64.whl"},
+  {hash = "sha256:8e5bfaac795e93f80611f807d42844e8e27e340e0cde270dcb6c65386d795b80", size = 200067309, upload-time = "2025-06-05T20:13:59.762Z", url = "https://files.pythonhosted.org/packages/20/ee/29955203338515b940bd4f60ffdbc073428f25ef9bfbce44c9a066aedc5c/nvidia_cufft_cu12-11.4.1.4-py3-none-win_amd64.whl"},
+  {hash = "sha256:c67884f2a7d276b4b80eb56a79322a95df592ae5e765cf1243693365ccab4e28", size = 200877592, upload-time = "2025-06-05T20:05:45.862Z", url = "https://files.pythonhosted.org/packages/95/f4/61e6996dd20481ee834f57a8e9dca28b1869366a135e0d42e2aa8493bdd4/nvidia_cufft_cu12-11.4.1.4-py3-none-manylinux2014_x86_64.manylinux_2_17_x86_64.whl"}
+]
+
+[[package]]
 name = "nvidia-cufile"
 source = {registry = "https://pypi.org/simple"}
 version = "1.15.1.6"
 wheels = [
   {hash = "sha256:08a3ecefae5a01c7f5117351c64f17c7c62efa5fffdbe24fc7d298da19cd0b44", size = 1223672, upload-time = "2025-09-04T08:32:22.779Z", url = "https://files.pythonhosted.org/packages/3f/70/4f193de89a48b71714e74602ee14d04e4019ad36a5a9f20c425776e72cd6/nvidia_cufile-1.15.1.6-py3-none-manylinux2014_x86_64.manylinux_2_17_x86_64.whl"},
   {hash = "sha256:bdc0deedc61f548bddf7733bdc216456c2fdb101d020e1ab4b88d232d5e2f6d1", size = 1136992, upload-time = "2025-09-04T08:32:14.119Z", url = "https://files.pythonhosted.org/packages/ab/73/cc4a14c9813a8a0d509417cf5f4bdaba76e924d58beb9864f5a7baceefbf/nvidia_cufile-1.15.1.6-py3-none-manylinux_2_27_aarch64.whl"}
+]
+
+[[package]]
+name = "nvidia-cufile-cu12"
+source = {registry = "https://pypi.org/simple"}
+version = "1.11.1.6"
+wheels = [
+  {hash = "sha256:8f57a0051dcf2543f6dc2b98a98cb2719c37d3cee1baba8965d57f3bbc90d4db", size = 1066155, upload-time = "2024-11-20T17:41:49.376Z", url = "https://files.pythonhosted.org/packages/17/bf/cc834147263b929229ce4aadd62869f0b195e98569d4c28b23edc72b85d9/nvidia_cufile_cu12-1.11.1.6-py3-none-manylinux_2_27_aarch64.whl"},
+  {hash = "sha256:cc23469d1c7e52ce6c1d55253273d32c565dd22068647f3aa59b3c6b005bf159", size = 1142103, upload-time = "2024-11-20T17:42:11.83Z", url = "https://files.pythonhosted.org/packages/b2/66/cc9876340ac68ae71b15c743ddb13f8b30d5244af344ec8322b449e35426/nvidia_cufile_cu12-1.11.1.6-py3-none-manylinux2014_x86_64.manylinux_2_17_x86_64.whl"}
 ]
 
 [[package]]
@@ -3215,10 +3597,45 @@ wheels = [
 ]
 
 [[package]]
+name = "nvidia-curand-cu12"
+resolution-markers = [
+  "python_full_version < '3.11'",
+  "python_full_version == '3.11.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+  "python_full_version == '3.12.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+  "python_full_version == '3.13.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+  "python_full_version >= '3.14' and sys_platform != 'emscripten' and sys_platform != 'win32'"
+]
+source = {registry = "https://pypi.org/simple"}
+version = "10.3.7.77"
+wheels = [
+  {hash = "sha256:6d6d935ffba0f3d439b7cd968192ff068fafd9018dbf1b85b37261b13cfc9905", size = 55783873, upload-time = "2024-10-01T17:13:30.377Z", url = "https://files.pythonhosted.org/packages/a9/a8/0cd0cec757bd4b4b4ef150fca62ec064db7d08a291dced835a0be7d2c147/nvidia_curand_cu12-10.3.7.77-py3-none-win_amd64.whl"},
+  {hash = "sha256:6e82df077060ea28e37f48a3ec442a8f47690c7499bff392a5938614b56c98d8", size = 56289881, upload-time = "2024-10-01T17:04:18.981Z", url = "https://files.pythonhosted.org/packages/42/ac/36543605358a355632f1a6faa3e2d5dfb91eab1e4bc7d552040e0383c335/nvidia_curand_cu12-10.3.7.77-py3-none-manylinux2014_aarch64.whl"},
+  {hash = "sha256:7b2ed8e95595c3591d984ea3603dd66fe6ce6812b886d59049988a712ed06b6e", size = 56289882, upload-time = "2024-11-20T17:42:25.222Z", url = "https://files.pythonhosted.org/packages/a6/02/5362a9396f23f7de1dd8a64369e87c85ffff8216fc8194ace0fa45ba27a5/nvidia_curand_cu12-10.3.7.77-py3-none-manylinux_2_27_aarch64.whl"},
+  {hash = "sha256:99f1a32f1ac2bd134897fc7a203f779303261268a65762a623bf30cc9fe79117", size = 56279000, upload-time = "2024-10-01T17:04:45.274Z", url = "https://files.pythonhosted.org/packages/4a/aa/2c7ff0b5ee02eaef890c0ce7d4f74bc30901871c5e45dee1ae6d0083cd80/nvidia_curand_cu12-10.3.7.77-py3-none-manylinux2014_x86_64.whl"},
+  {hash = "sha256:a42cd1344297f70b9e39a1e4f467a4e1c10f1da54ff7a85c12197f6c652c8bdf", size = 56279010, upload-time = "2024-11-20T17:42:50.958Z", url = "https://files.pythonhosted.org/packages/73/1b/44a01c4e70933637c93e6e1a8063d1e998b50213a6b65ac5a9169c47e98e/nvidia_curand_cu12-10.3.7.77-py3-none-manylinux2014_x86_64.manylinux_2_17_x86_64.whl"}
+]
+
+[[package]]
+name = "nvidia-curand-cu12"
+resolution-markers = [
+  "python_full_version == '3.11.*' and sys_platform == 'win32'",
+  "python_full_version == '3.12.*' and sys_platform == 'win32'",
+  "python_full_version == '3.13.*' and sys_platform == 'win32'",
+  "python_full_version >= '3.14' and sys_platform == 'win32'"
+]
+source = {registry = "https://pypi.org/simple"}
+version = "10.3.10.19"
+wheels = [
+  {hash = "sha256:49b274db4780d421bd2ccd362e1415c13887c53c214f0d4b761752b8f9f6aa1e", size = 68295626, upload-time = "2025-05-01T19:39:38.885Z", url = "https://files.pythonhosted.org/packages/31/44/193a0e171750ca9f8320626e8a1f2381e4077a65e69e2fb9708bd479e34a/nvidia_curand_cu12-10.3.10.19-py3-none-manylinux_2_27_x86_64.whl"},
+  {hash = "sha256:de663377feb1697e1d30ed587b07d5721fdd6d2015c738d7528a6002a6134d37", size = 68292066, upload-time = "2025-05-01T19:39:13.595Z", url = "https://files.pythonhosted.org/packages/14/1c/2a45afc614d99558d4a773fa740d8bb5471c8398eeed925fc0fcba020173/nvidia_curand_cu12-10.3.10.19-py3-none-manylinux_2_27_aarch64.whl"},
+  {hash = "sha256:e8129e6ac40dc123bd948e33d3e11b4aa617d87a583fa2f21b3210e90c743cde", size = 68774847, upload-time = "2025-05-01T19:48:52.93Z", url = "https://files.pythonhosted.org/packages/e5/98/1bd66fd09cbe1a5920cb36ba87029d511db7cca93979e635fd431ad3b6c0/nvidia_curand_cu12-10.3.10.19-py3-none-win_amd64.whl"}
+]
+
+[[package]]
 dependencies = [
-  {name = "nvidia-cublas"},
-  {name = "nvidia-cusparse"},
-  {name = "nvidia-nvjitlink"}
+  {marker = "(python_full_version < '3.11' and sys_platform == 'emscripten' and extra != 'extra-8-pelinker-gpu-cu12') or (python_full_version < '3.11' and sys_platform == 'win32' and extra != 'extra-8-pelinker-gpu-cu12') or (python_full_version >= '3.11' and sys_platform == 'win32' and extra == 'extra-8-pelinker-gpu-cu13') or (sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-8-pelinker-gpu-cu13') or (sys_platform != 'emscripten' and sys_platform != 'win32' and extra != 'extra-8-pelinker-gpu-cu12') or (sys_platform == 'emscripten' and extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13') or (sys_platform == 'win32' and extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "nvidia-cublas"},
+  {marker = "(python_full_version < '3.11' and sys_platform == 'emscripten' and extra != 'extra-8-pelinker-gpu-cu12') or (python_full_version < '3.11' and sys_platform == 'win32' and extra != 'extra-8-pelinker-gpu-cu12') or (python_full_version >= '3.11' and sys_platform == 'win32' and extra == 'extra-8-pelinker-gpu-cu13') or (sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-8-pelinker-gpu-cu13') or (sys_platform != 'emscripten' and sys_platform != 'win32' and extra != 'extra-8-pelinker-gpu-cu12') or (sys_platform == 'emscripten' and extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13') or (sys_platform == 'win32' and extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "nvidia-cusparse"},
+  {marker = "(python_full_version < '3.11' and sys_platform == 'emscripten' and extra != 'extra-8-pelinker-gpu-cu12') or (python_full_version < '3.11' and sys_platform == 'win32' and extra != 'extra-8-pelinker-gpu-cu12') or (python_full_version >= '3.11' and sys_platform == 'win32' and extra == 'extra-8-pelinker-gpu-cu13') or (sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-8-pelinker-gpu-cu13') or (sys_platform != 'emscripten' and sys_platform != 'win32' and extra != 'extra-8-pelinker-gpu-cu12') or (sys_platform == 'emscripten' and extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13') or (sys_platform == 'win32' and extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "nvidia-nvjitlink"}
 ]
 name = "nvidia-cusolver"
 source = {registry = "https://pypi.org/simple"}
@@ -3231,7 +3648,52 @@ wheels = [
 
 [[package]]
 dependencies = [
-  {name = "nvidia-nvjitlink"}
+  {marker = "(python_full_version < '3.11' and sys_platform == 'emscripten' and extra == 'extra-8-pelinker-gpu-cu12') or (python_full_version < '3.11' and sys_platform == 'win32' and extra == 'extra-8-pelinker-gpu-cu12') or (sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-8-pelinker-gpu-cu12') or (sys_platform == 'emscripten' and extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13') or (sys_platform == 'win32' and extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "nvidia-cublas-cu12", source = {registry = "https://pypi.org/simple"}, version = "12.6.4.1"},
+  {marker = "(python_full_version < '3.11' and sys_platform == 'emscripten' and extra == 'extra-8-pelinker-gpu-cu12') or (python_full_version < '3.11' and sys_platform == 'win32' and extra == 'extra-8-pelinker-gpu-cu12') or (sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-8-pelinker-gpu-cu12') or (sys_platform == 'emscripten' and extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13') or (sys_platform == 'win32' and extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "nvidia-cusparse-cu12", source = {registry = "https://pypi.org/simple"}, version = "12.5.4.2"},
+  {marker = "(python_full_version < '3.11' and sys_platform == 'emscripten' and extra == 'extra-8-pelinker-gpu-cu12') or (python_full_version < '3.11' and sys_platform == 'win32' and extra == 'extra-8-pelinker-gpu-cu12') or (sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-8-pelinker-gpu-cu12') or (sys_platform == 'emscripten' and extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13') or (sys_platform == 'win32' and extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "nvidia-nvjitlink-cu12", source = {registry = "https://pypi.org/simple"}, version = "12.6.85"}
+]
+name = "nvidia-cusolver-cu12"
+resolution-markers = [
+  "python_full_version < '3.11'",
+  "python_full_version == '3.11.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+  "python_full_version == '3.12.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+  "python_full_version == '3.13.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+  "python_full_version >= '3.14' and sys_platform != 'emscripten' and sys_platform != 'win32'"
+]
+source = {registry = "https://pypi.org/simple"}
+version = "11.7.1.2"
+wheels = [
+  {hash = "sha256:0ce237ef60acde1efc457335a2ddadfd7610b892d94efee7b776c64bb1cac9e0", size = 157833628, upload-time = "2024-10-01T17:05:05.591Z", url = "https://files.pythonhosted.org/packages/93/17/dbe1aa865e4fdc7b6d4d0dd308fdd5aaab60f939abfc0ea1954eac4fb113/nvidia_cusolver_cu12-11.7.1.2-py3-none-manylinux2014_aarch64.whl"},
+  {hash = "sha256:6813f9d8073f555444a8705f3ab0296d3e1cb37a16d694c5fc8b862a0d8706d7", size = 149287877, upload-time = "2024-10-01T17:13:49.804Z", url = "https://files.pythonhosted.org/packages/d4/53/fff50a0808df7113d77e3bbc7c2b7eaed6f57d5eb80fbe93ead2aea1e09a/nvidia_cusolver_cu12-11.7.1.2-py3-none-win_amd64.whl"},
+  {hash = "sha256:6cf28f17f64107a0c4d7802be5ff5537b2130bfc112f25d5a30df227058ca0e6", size = 158229780, upload-time = "2024-10-01T17:05:39.875Z", url = "https://files.pythonhosted.org/packages/9f/81/baba53585da791d043c10084cf9553e074548408e04ae884cfe9193bd484/nvidia_cusolver_cu12-11.7.1.2-py3-none-manylinux2014_x86_64.whl"},
+  {hash = "sha256:dbbe4fc38ec1289c7e5230e16248365e375c3673c9c8bac5796e2e20db07f56e", size = 157833630, upload-time = "2024-11-20T17:43:16.77Z", url = "https://files.pythonhosted.org/packages/7c/5f/07d0ba3b7f19be5a5ec32a8679fc9384cfd9fc6c869825e93be9f28d6690/nvidia_cusolver_cu12-11.7.1.2-py3-none-manylinux_2_27_aarch64.whl"},
+  {hash = "sha256:e9e49843a7707e42022babb9bcfa33c29857a93b88020c4e4434656a655b698c", size = 158229790, upload-time = "2024-11-20T17:43:43.211Z", url = "https://files.pythonhosted.org/packages/f0/6e/c2cf12c9ff8b872e92b4a5740701e51ff17689c4d726fca91875b07f655d/nvidia_cusolver_cu12-11.7.1.2-py3-none-manylinux2014_x86_64.manylinux_2_17_x86_64.whl"}
+]
+
+[[package]]
+dependencies = [
+  {marker = "python_full_version >= '3.11' and sys_platform == 'win32'", name = "nvidia-cublas-cu12", source = {registry = "https://pypi.org/simple"}, version = "12.9.2.10"},
+  {marker = "python_full_version >= '3.11' and sys_platform == 'win32'", name = "nvidia-cusparse-cu12", source = {registry = "https://pypi.org/simple"}, version = "12.5.10.65"},
+  {marker = "python_full_version >= '3.11' and sys_platform == 'win32'", name = "nvidia-nvjitlink-cu12", source = {registry = "https://pypi.org/simple"}, version = "12.9.86"}
+]
+name = "nvidia-cusolver-cu12"
+resolution-markers = [
+  "python_full_version == '3.11.*' and sys_platform == 'win32'",
+  "python_full_version == '3.12.*' and sys_platform == 'win32'",
+  "python_full_version == '3.13.*' and sys_platform == 'win32'",
+  "python_full_version >= '3.14' and sys_platform == 'win32'"
+]
+source = {registry = "https://pypi.org/simple"}
+version = "11.7.5.82"
+wheels = [
+  {hash = "sha256:15da72d1340d29b5b3cf3fd100e3cd53421dde36002eda6ed93811af63c40d88", size = 338117415, upload-time = "2025-06-05T20:07:16.809Z", url = "https://files.pythonhosted.org/packages/33/40/79b0c64d44d6c166c0964ec1d803d067f4a145cca23e23925fd351d0e642/nvidia_cusolver_cu12-11.7.5.82-py3-none-manylinux_2_27_x86_64.whl"},
+  {hash = "sha256:62efa83e4ace59a4c734d052bb72158e888aa7b770e1a5f601682f16fe5b4fd2", size = 337869834, upload-time = "2025-06-05T20:06:53.125Z", url = "https://files.pythonhosted.org/packages/03/99/686ff9bf3a82a531c62b1a5c614476e8dfa24a9d89067aeedf3592ee4538/nvidia_cusolver_cu12-11.7.5.82-py3-none-manylinux_2_27_aarch64.whl"},
+  {hash = "sha256:77666337237716783c6269a658dea310195cddbd80a5b2919b1ba8735cec8efd", size = 326215953, upload-time = "2025-06-05T20:14:41.76Z", url = "https://files.pythonhosted.org/packages/32/5d/feb7f86b809f89b14193beffebe24cf2e4bf7af08372ab8cdd34d19a65a0/nvidia_cusolver_cu12-11.7.5.82-py3-none-win_amd64.whl"}
+]
+
+[[package]]
+dependencies = [
+  {marker = "(python_full_version < '3.11' and sys_platform == 'emscripten' and extra != 'extra-8-pelinker-gpu-cu12') or (python_full_version < '3.11' and sys_platform == 'win32' and extra != 'extra-8-pelinker-gpu-cu12') or (python_full_version >= '3.11' and sys_platform == 'win32' and extra == 'extra-8-pelinker-gpu-cu13') or (sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-8-pelinker-gpu-cu13') or (sys_platform != 'emscripten' and sys_platform != 'win32' and extra != 'extra-8-pelinker-gpu-cu12') or (sys_platform == 'emscripten' and extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13') or (sys_platform == 'win32' and extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "nvidia-nvjitlink"}
 ]
 name = "nvidia-cusparse"
 source = {registry = "https://pypi.org/simple"}
@@ -3243,12 +3705,73 @@ wheels = [
 ]
 
 [[package]]
+dependencies = [
+  {marker = "(python_full_version < '3.11' and sys_platform == 'emscripten' and extra == 'extra-8-pelinker-gpu-cu12') or (python_full_version < '3.11' and sys_platform == 'win32' and extra == 'extra-8-pelinker-gpu-cu12') or (sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-8-pelinker-gpu-cu12') or (sys_platform == 'emscripten' and extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13') or (sys_platform == 'win32' and extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "nvidia-nvjitlink-cu12", source = {registry = "https://pypi.org/simple"}, version = "12.6.85"}
+]
+name = "nvidia-cusparse-cu12"
+resolution-markers = [
+  "python_full_version < '3.11'",
+  "python_full_version == '3.11.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+  "python_full_version == '3.12.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+  "python_full_version == '3.13.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+  "python_full_version >= '3.14' and sys_platform != 'emscripten' and sys_platform != 'win32'"
+]
+source = {registry = "https://pypi.org/simple"}
+version = "12.5.4.2"
+wheels = [
+  {hash = "sha256:23749a6571191a215cb74d1cdbff4a86e7b19f1200c071b3fcf844a5bea23a2f", size = 216561357, upload-time = "2024-10-01T17:06:29.861Z", url = "https://files.pythonhosted.org/packages/43/ac/64c4316ba163e8217a99680c7605f779accffc6a4bcd0c778c12948d3707/nvidia_cusparse_cu12-12.5.4.2-py3-none-manylinux2014_x86_64.whl"},
+  {hash = "sha256:4acb8c08855a26d737398cba8fb6f8f5045d93f82612b4cfd84645a2332ccf20", size = 213712630, upload-time = "2024-10-01T17:14:23.779Z", url = "https://files.pythonhosted.org/packages/45/ef/876ad8e4260e1128e6d4aac803d9d51baf3791ebdb4a9b8d9b8db032b4b0/nvidia_cusparse_cu12-12.5.4.2-py3-none-win_amd64.whl"},
+  {hash = "sha256:7556d9eca156e18184b94947ade0fba5bb47d69cec46bf8660fd2c71a4b48b73", size = 216561367, upload-time = "2024-11-20T17:44:54.824Z", url = "https://files.pythonhosted.org/packages/06/1e/b8b7c2f4099a37b96af5c9bb158632ea9e5d9d27d7391d7eb8fc45236674/nvidia_cusparse_cu12-12.5.4.2-py3-none-manylinux2014_x86_64.manylinux_2_17_x86_64.whl"},
+  {hash = "sha256:7aa32fa5470cf754f72d1116c7cbc300b4e638d3ae5304cfa4a638a5b87161b1", size = 216451135, upload-time = "2024-10-01T17:06:03.826Z", url = "https://files.pythonhosted.org/packages/d3/56/3af21e43014eb40134dea004e8d0f1ef19d9596a39e4d497d5a7de01669f/nvidia_cusparse_cu12-12.5.4.2-py3-none-manylinux2014_aarch64.whl"},
+  {hash = "sha256:d25b62fb18751758fe3c93a4a08eff08effedfe4edf1c6bb5afd0890fe88f887", size = 216451147, upload-time = "2024-11-20T17:44:18.055Z", url = "https://files.pythonhosted.org/packages/eb/eb/6681efd0aa7df96b4f8067b3ce7246833dd36830bb4cec8896182773db7d/nvidia_cusparse_cu12-12.5.4.2-py3-none-manylinux2014_aarch64.manylinux_2_17_aarch64.whl"}
+]
+
+[[package]]
+dependencies = [
+  {marker = "python_full_version >= '3.11' and sys_platform == 'win32'", name = "nvidia-nvjitlink-cu12", source = {registry = "https://pypi.org/simple"}, version = "12.9.86"}
+]
+name = "nvidia-cusparse-cu12"
+resolution-markers = [
+  "python_full_version == '3.11.*' and sys_platform == 'win32'",
+  "python_full_version == '3.12.*' and sys_platform == 'win32'",
+  "python_full_version == '3.13.*' and sys_platform == 'win32'",
+  "python_full_version >= '3.14' and sys_platform == 'win32'"
+]
+source = {registry = "https://pypi.org/simple"}
+version = "12.5.10.65"
+wheels = [
+  {hash = "sha256:221c73e7482dd93eda44e65ce567c031c07e2f93f6fa0ecd3ba876a195023e83", size = 366359408, upload-time = "2025-06-05T20:07:42.501Z", url = "https://files.pythonhosted.org/packages/5e/6f/8710fbd17cdd1d0fc3fea7d36d5b65ce1933611c31e1861da330206b253a/nvidia_cusparse_cu12-12.5.10.65-py3-none-manylinux2014_aarch64.manylinux_2_17_aarch64.whl"},
+  {hash = "sha256:73060ce019ac064a057267c585bf1fd5a353734151f87472ff02b2c5c9984e78", size = 366465088, upload-time = "2025-06-05T20:08:20.413Z", url = "https://files.pythonhosted.org/packages/12/46/b0fd4b04f86577921feb97d8e2cf028afe04f614d17fb5013de9282c9216/nvidia_cusparse_cu12-12.5.10.65-py3-none-manylinux2014_x86_64.manylinux_2_17_x86_64.whl"},
+  {hash = "sha256:9e487468a22a1eaf1fbd1d2035936a905feb79c4ce5c2f67626764ee4f90227c", size = 362504719, upload-time = "2025-06-05T20:15:17.947Z", url = "https://files.pythonhosted.org/packages/73/ef/063500c25670fbd1cbb0cd3eb7c8a061585b53adb4dd8bf3492bb49b0df3/nvidia_cusparse_cu12-12.5.10.65-py3-none-win_amd64.whl"}
+]
+
+[[package]]
+name = "nvidia-cusparselt-cu12"
+source = {registry = "https://pypi.org/simple"}
+version = "0.7.1"
+wheels = [
+  {hash = "sha256:8878dce784d0fac90131b6817b607e803c36e629ba34dc5b433471382196b6a5", size = 283835557, upload-time = "2025-02-26T00:16:54.265Z", url = "https://files.pythonhosted.org/packages/73/b9/598f6ff36faaece4b3c50d26f50e38661499ff34346f00e057760b35cc9d/nvidia_cusparselt_cu12-0.7.1-py3-none-manylinux2014_aarch64.whl"},
+  {hash = "sha256:f1bb701d6b930d5a7cea44c19ceb973311500847f81b634d802b7b539dc55623", size = 287193691, upload-time = "2025-02-26T00:15:44.104Z", url = "https://files.pythonhosted.org/packages/56/79/12978b96bd44274fe38b5dde5cfb660b1d114f70a65ef962bcbbed99b549/nvidia_cusparselt_cu12-0.7.1-py3-none-manylinux2014_x86_64.whl"},
+  {hash = "sha256:f67fbb5831940ec829c9117b7f33807db9f9678dc2a617fbe781cac17b4e1075", size = 271020911, upload-time = "2025-02-26T00:14:47.204Z", url = "https://files.pythonhosted.org/packages/2f/d8/a6b0d0d0c2435e9310f3e2bb0d9c9dd4c33daef86aa5f30b3681defd37ea/nvidia_cusparselt_cu12-0.7.1-py3-none-win_amd64.whl"}
+]
+
+[[package]]
 name = "nvidia-cusparselt-cu13"
 source = {registry = "https://pypi.org/simple"}
 version = "0.8.1"
 wheels = [
   {hash = "sha256:4dca476c50bf4780d46cd0bfbd82e2bc10a08e4fef7950917ce8d7578d22a23f", size = 221051344, upload-time = "2025-09-05T18:49:51.289Z", url = "https://files.pythonhosted.org/packages/46/e1/cdc1797eadf82d3a9a575a19b33fdc871a97edbec42c00b5b5e914f4aff4/nvidia_cusparselt_cu13-0.8.1-py3-none-manylinux2014_aarch64.whl"},
-  {hash = "sha256:786ce87568c303fadb5afcc7102d454cd3040d75f6f8626f5db460d1871f4dd0", size = 170148586, upload-time = "2025-09-05T18:50:50.248Z", url = "https://files.pythonhosted.org/packages/34/7d/2661f2fb3ac4302f3a246f5fc030213ac60c1fe0bce84f9783dbd831dbb7/nvidia_cusparselt_cu13-0.8.1-py3-none-manylinux2014_x86_64.whl"}
+  {hash = "sha256:786ce87568c303fadb5afcc7102d454cd3040d75f6f8626f5db460d1871f4dd0", size = 170148586, upload-time = "2025-09-05T18:50:50.248Z", url = "https://files.pythonhosted.org/packages/34/7d/2661f2fb3ac4302f3a246f5fc030213ac60c1fe0bce84f9783dbd831dbb7/nvidia_cusparselt_cu13-0.8.1-py3-none-manylinux2014_x86_64.whl"},
+  {hash = "sha256:dccbd362f91a7b9024d1f55ee9f548ac065027ff15d8c8b0db889ab3a8f31215", size = 156885108, upload-time = "2025-09-05T18:51:35.958Z", url = "https://files.pythonhosted.org/packages/31/83/f3647ce26916c94a6ca4ff1810623e2c405cff2dea6e78d29516b2514df9/nvidia_cusparselt_cu13-0.8.1-py3-none-win_amd64.whl"}
+]
+
+[[package]]
+name = "nvidia-nccl-cu12"
+source = {registry = "https://pypi.org/simple"}
+version = "2.29.3"
+wheels = [
+  {hash = "sha256:35ad42e7d5d722a83c36a3a478e281c20a5646383deaf1b9ed1a9ab7d61bed53", size = 289760316, upload-time = "2026-02-03T21:11:37.899Z", url = "https://files.pythonhosted.org/packages/31/5a/cac7d231f322b66caa16fd4b136ebc8e4b18b2805811c2d58dc47210cdea/nvidia_nccl_cu12-2.29.3-py3-none-manylinux_2_18_x86_64.whl"},
+  {hash = "sha256:6351b79dc7d2cc3d654ea1523616b9eeded71fe9c8da66b71eef9a5d1b2adad4", size = 289708535, upload-time = "2026-02-03T21:10:58.804Z", url = "https://files.pythonhosted.org/packages/28/cf/bcf8bb0c0030b1b9a345331f6281c37d2a8669758521eb93c382f6f87c8f/nvidia_nccl_cu12-2.29.3-py3-none-manylinux_2_18_aarch64.whl"}
 ]
 
 [[package]]
@@ -3271,6 +3794,48 @@ wheels = [
 ]
 
 [[package]]
+name = "nvidia-nvjitlink-cu12"
+resolution-markers = [
+  "python_full_version < '3.11'",
+  "python_full_version == '3.11.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+  "python_full_version == '3.12.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+  "python_full_version == '3.13.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+  "python_full_version >= '3.14' and sys_platform != 'emscripten' and sys_platform != 'win32'"
+]
+source = {registry = "https://pypi.org/simple"}
+version = "12.6.85"
+wheels = [
+  {hash = "sha256:cf4eaa7d4b6b543ffd69d6abfb11efdeb2db48270d94dfd3a452c24150829e41", size = 19270338, upload-time = "2024-11-20T17:46:29.758Z", url = "https://files.pythonhosted.org/packages/31/db/dc71113d441f208cdfe7ae10d4983884e13f464a6252450693365e166dcf/nvidia_nvjitlink_cu12-12.6.85-py3-none-manylinux2014_aarch64.manylinux_2_17_aarch64.whl"},
+  {hash = "sha256:e61120e52ed675747825cdd16febc6a0730537451d867ee58bee3853b1b13d1c", size = 161908572, upload-time = "2024-11-20T17:52:40.124Z", url = "https://files.pythonhosted.org/packages/89/76/93c1467b1387387440a4d25102d86b7794535449b689f8e2dc22c1c8ff7f/nvidia_nvjitlink_cu12-12.6.85-py3-none-win_amd64.whl"},
+  {hash = "sha256:eedc36df9e88b682efe4309aa16b5b4e78c2407eac59e8c10a6a47535164369a", size = 19744971, upload-time = "2024-11-20T17:46:53.366Z", url = "https://files.pythonhosted.org/packages/9d/d7/c5383e47c7e9bf1c99d5bd2a8c935af2b6d705ad831a7ec5c97db4d82f4f/nvidia_nvjitlink_cu12-12.6.85-py3-none-manylinux2010_x86_64.manylinux_2_12_x86_64.whl"}
+]
+
+[[package]]
+name = "nvidia-nvjitlink-cu12"
+resolution-markers = [
+  "python_full_version == '3.11.*' and sys_platform == 'win32'",
+  "python_full_version == '3.12.*' and sys_platform == 'win32'",
+  "python_full_version == '3.13.*' and sys_platform == 'win32'",
+  "python_full_version >= '3.14' and sys_platform == 'win32'"
+]
+source = {registry = "https://pypi.org/simple"}
+version = "12.9.86"
+wheels = [
+  {hash = "sha256:994a05ef08ef4b0b299829cde613a424382aff7efb08a7172c1fa616cc3af2ca", size = 39514880, upload-time = "2025-06-05T20:10:04.89Z", url = "https://files.pythonhosted.org/packages/97/bc/2dcba8e70cf3115b400fef54f213bcd6715a3195eba000f8330f11e40c45/nvidia_nvjitlink_cu12-12.9.86-py3-none-manylinux2014_aarch64.manylinux_2_17_aarch64.whl"},
+  {hash = "sha256:cc6fcec260ca843c10e34c936921a1c426b351753587fdd638e8cff7b16bb9db", size = 35584936, upload-time = "2025-06-05T20:16:08.525Z", url = "https://files.pythonhosted.org/packages/dd/7e/2eecb277d8a98184d881fb98a738363fd4f14577a4d2d7f8264266e82623/nvidia_nvjitlink_cu12-12.9.86-py3-none-win_amd64.whl"},
+  {hash = "sha256:e3f1171dbdc83c5932a45f0f4c99180a70de9bd2718c1ab77d14104f6d7147f9", size = 39748338, upload-time = "2025-06-05T20:10:25.613Z", url = "https://files.pythonhosted.org/packages/46/0c/c75bbfb967457a0b7670b8ad267bfc4fffdf341c074e0a80db06c24ccfd4/nvidia_nvjitlink_cu12-12.9.86-py3-none-manylinux2010_x86_64.manylinux_2_12_x86_64.whl"}
+]
+
+[[package]]
+name = "nvidia-nvshmem-cu12"
+source = {registry = "https://pypi.org/simple"}
+version = "3.4.5"
+wheels = [
+  {hash = "sha256:042f2500f24c021db8a06c5eec2539027d57460e1c1a762055a6554f72c369bd", size = 139103095, upload-time = "2025-09-06T00:32:31.266Z", url = "https://files.pythonhosted.org/packages/b5/09/6ea3ea725f82e1e76684f0708bbedd871fc96da89945adeba65c3835a64c/nvidia_nvshmem_cu12-3.4.5-py3-none-manylinux2014_x86_64.manylinux_2_17_x86_64.whl"},
+  {hash = "sha256:0b48363fc6964dede448029434c6abed6c5e37f823cb43c3bcde7ecfc0457e15", size = 138936938, upload-time = "2025-09-06T00:32:05.589Z", url = "https://files.pythonhosted.org/packages/1d/6a/03aa43cc9bd3ad91553a88b5f6fb25ed6a3752ae86ce2180221962bc2aa5/nvidia_nvshmem_cu12-3.4.5-py3-none-manylinux2014_aarch64.manylinux_2_17_aarch64.whl"}
+]
+
+[[package]]
 name = "nvidia-nvshmem-cu13"
 source = {registry = "https://pypi.org/simple"}
 version = "3.4.5"
@@ -3285,7 +3850,20 @@ source = {registry = "https://pypi.org/simple"}
 version = "13.0.85"
 wheels = [
   {hash = "sha256:4936d1d6780fbe68db454f5e72a42ff64d1fd6397df9f363ae786930fd5c1cd4", size = 148047, upload-time = "2025-09-04T08:29:01.761Z", url = "https://files.pythonhosted.org/packages/c2/f3/d86c845465a2723ad7e1e5c36dcd75ddb82898b3f53be47ebd429fb2fa5d/nvidia_nvtx-13.0.85-py3-none-manylinux1_x86_64.manylinux_2_5_x86_64.whl"},
-  {hash = "sha256:cb7780edb6b14107373c835bf8b72e7a178bac7367e23da7acb108f973f157a6", size = 148878, upload-time = "2025-09-04T08:28:53.627Z", url = "https://files.pythonhosted.org/packages/a8/64/3708a90d1ebe202ffdeb7185f878a3c84d15c2b2c31858da2ce0583e2def/nvidia_nvtx-13.0.85-py3-none-manylinux2014_aarch64.manylinux_2_17_aarch64.whl"}
+  {hash = "sha256:cb7780edb6b14107373c835bf8b72e7a178bac7367e23da7acb108f973f157a6", size = 148878, upload-time = "2025-09-04T08:28:53.627Z", url = "https://files.pythonhosted.org/packages/a8/64/3708a90d1ebe202ffdeb7185f878a3c84d15c2b2c31858da2ce0583e2def/nvidia_nvtx-13.0.85-py3-none-manylinux2014_aarch64.manylinux_2_17_aarch64.whl"},
+  {hash = "sha256:d66ea44254dd3c6eacc300047af6e1288d2269dd072b417e0adffbf479e18519", size = 137066, upload-time = "2025-09-04T08:39:25.649Z", url = "https://files.pythonhosted.org/packages/d2/50/0e2220f8620a177de994211186ffc5bfa9f2ce1e1282797f8f90096f9f88/nvidia_nvtx-13.0.85-py3-none-win_amd64.whl"}
+]
+
+[[package]]
+name = "nvidia-nvtx-cu12"
+source = {registry = "https://pypi.org/simple"}
+version = "12.6.77"
+wheels = [
+  {hash = "sha256:2fb11a4af04a5e6c84073e6404d26588a34afd35379f0855a99797897efa75c0", size = 56434, upload-time = "2024-10-01T17:11:13.124Z", url = "https://files.pythonhosted.org/packages/f7/cd/98a447919d4ed14d407ac82b14b0a0c9c1dbfe81099934b1fc3bfd1e6316/nvidia_nvtx_cu12-12.6.77-py3-none-win_amd64.whl"},
+  {hash = "sha256:6574241a3ec5fdc9334353ab8c479fe75841dbe8f4532a8fc97ce63503330ba1", size = 89265, upload-time = "2024-10-01T17:00:38.172Z", url = "https://files.pythonhosted.org/packages/9e/4e/0d0c945463719429b7bd21dece907ad0bde437a2ff12b9b12fee94722ab0/nvidia_nvtx_cu12-12.6.77-py3-none-manylinux2014_x86_64.whl"},
+  {hash = "sha256:adcaabb9d436c9761fca2b13959a2d237c5f9fd406c8e4b723c695409ff88059", size = 90539, upload-time = "2024-10-01T17:00:27.179Z", url = "https://files.pythonhosted.org/packages/2b/53/36e2fd6c7068997169b49ffc8c12d5af5e5ff209df6e1a2c4d373b3a638f/nvidia_nvtx_cu12-12.6.77-py3-none-manylinux2014_aarch64.whl"},
+  {hash = "sha256:b90bed3df379fa79afbd21be8e04a0314336b8ae16768b58f2d34cb1d04cd7d2", size = 89276, upload-time = "2024-11-20T17:38:27.621Z", url = "https://files.pythonhosted.org/packages/56/9a/fff8376f8e3d084cd1530e1ef7b879bb7d6d265620c95c1b322725c694f4/nvidia_nvtx_cu12-12.6.77-py3-none-manylinux2014_x86_64.manylinux_2_17_x86_64.whl"},
+  {hash = "sha256:f44f8d86bb7d5629988d61c8d3ae61dddb2015dee142740536bc7481b022fe4b", size = 90549, upload-time = "2024-11-20T17:38:17.387Z", url = "https://files.pythonhosted.org/packages/b9/93/80f8a520375af9d7ee44571a6544653a176e53c2b8ccce85b97b83c2491b/nvidia_nvtx_cu12-12.6.77-py3-none-manylinux2014_aarch64.manylinux_2_17_aarch64.whl"}
 ]
 
 [[package]]
@@ -3445,10 +4023,10 @@ wheels = [
 
 [[package]]
 dependencies = [
-  {name = "numpy", source = {registry = "https://pypi.org/simple"}, version = "2.2.6"},
-  {name = "python-dateutil"},
-  {name = "pytz"},
-  {name = "tzdata"}
+  {marker = "python_full_version < '3.11' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "numpy", source = {registry = "https://pypi.org/simple"}, version = "2.2.6"},
+  {marker = "python_full_version < '3.11' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "python-dateutil"},
+  {marker = "python_full_version < '3.11' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "pytz"},
+  {marker = "python_full_version < '3.11' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "tzdata"}
 ]
 name = "pandas"
 resolution-markers = [
@@ -3509,9 +4087,9 @@ wheels = [
 
 [[package]]
 dependencies = [
-  {marker = "sys_platform == 'emscripten' or sys_platform == 'win32'", name = "tzdata"},
-  {name = "numpy", source = {registry = "https://pypi.org/simple"}, version = "2.4.6"},
-  {name = "python-dateutil"}
+  {marker = "(python_full_version >= '3.11' and sys_platform == 'emscripten') or (python_full_version >= '3.11' and sys_platform == 'win32') or (sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13') or (sys_platform == 'emscripten' and extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13') or (sys_platform == 'win32' and extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "tzdata"},
+  {marker = "python_full_version >= '3.11' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "numpy", source = {registry = "https://pypi.org/simple"}, version = "2.4.6"},
+  {marker = "python_full_version >= '3.11' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "python-dateutil"}
 ]
 name = "pandas"
 resolution-markers = [
@@ -3605,12 +4183,14 @@ wheels = [
 [[package]]
 dependencies = [
   {extra = ["parametric-umap"], name = "umap-learn"},
-  {marker = "python_full_version < '3.11'", name = "matplotlib", source = {registry = "https://pypi.org/simple"}, version = "3.10.9"},
-  {marker = "python_full_version < '3.11'", name = "pandas", source = {registry = "https://pypi.org/simple"}, version = "2.3.3"},
-  {marker = "python_full_version < '3.11'", name = "scikit-learn", source = {registry = "https://pypi.org/simple"}, version = "1.7.2"},
-  {marker = "python_full_version >= '3.11'", name = "matplotlib", source = {registry = "https://pypi.org/simple"}, version = "3.11.1"},
-  {marker = "python_full_version >= '3.11'", name = "pandas", source = {registry = "https://pypi.org/simple"}, version = "3.0.5"},
-  {marker = "python_full_version >= '3.11'", name = "scikit-learn", source = {registry = "https://pypi.org/simple"}, version = "1.9.0"},
+  {marker = "extra == 'extra-8-pelinker-gpu-cu12'", name = "torch", source = {registry = "https://download.pytorch.org/whl/cu126"}, version = "2.13.0+cu126"},
+  {marker = "extra == 'extra-8-pelinker-gpu-cu13' or extra != 'extra-8-pelinker-gpu-cu12'", name = "torch", source = {registry = "https://pypi.org/simple"}, version = "2.13.0"},
+  {marker = "python_full_version < '3.11' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "matplotlib", source = {registry = "https://pypi.org/simple"}, version = "3.10.9"},
+  {marker = "python_full_version < '3.11' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "pandas", source = {registry = "https://pypi.org/simple"}, version = "2.3.3"},
+  {marker = "python_full_version < '3.11' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "scikit-learn", source = {registry = "https://pypi.org/simple"}, version = "1.7.2"},
+  {marker = "python_full_version >= '3.11' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "matplotlib", source = {registry = "https://pypi.org/simple"}, version = "3.11.1"},
+  {marker = "python_full_version >= '3.11' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "pandas", source = {registry = "https://pypi.org/simple"}, version = "3.0.5"},
+  {marker = "python_full_version >= '3.11' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "scikit-learn", source = {registry = "https://pypi.org/simple"}, version = "1.9.0"},
   {name = "click"},
   {name = "dataclass-wizard"},
   {name = "fastapi"},
@@ -3626,7 +4206,6 @@ dependencies = [
   {name = "sentence-transformers"},
   {name = "spacy"},
   {name = "tf-keras"},
-  {name = "torch"},
   {name = "transformers"},
   {name = "uvicorn"},
   {name = "wordfreq"}
@@ -3636,9 +4215,11 @@ source = {editable = "."}
 version = "0.2.0"
 
 [package.metadata]
-provides-extras = ["dev", "docs", "eval", "gpu", "preprocess"]
+provides-extras = ["dev", "docs", "eval", "gpu-cu12", "gpu-cu13", "preprocess"]
 requires-dist = [
-  {extras = ["ctk"], marker = "extra == 'gpu'", name = "cupy-cuda13x", specifier = ">=14.2.0"},
+  {conflict = {extra = "gpu-cu12", package = "pelinker"}, index = "https://download.pytorch.org/whl/cu126", marker = "extra == 'gpu-cu12'", name = "torch", specifier = ">=2.13.0"},
+  {extras = ["ctk"], marker = "extra == 'gpu-cu12'", name = "cupy-cuda12x", specifier = ">=14.2.0"},
+  {extras = ["ctk"], marker = "extra == 'gpu-cu13'", name = "cupy-cuda13x", specifier = ">=14.2.0"},
   {extras = ["parametric-umap"], name = "umap-learn", specifier = ">=0.5.11"},
   {extras = ["python"], marker = "extra == 'docs'", name = "mkdocstrings", specifier = ">=0.29.1"},
   {marker = "extra == 'dev'", name = "en-core-web-lg", url = "https://github.com/explosion/spacy-models/releases/download/en_core_web_lg-3.8.0/en_core_web_lg-3.8.0-py3-none-any.whl"},
@@ -3656,6 +4237,7 @@ requires-dist = [
   {marker = "extra == 'eval'", name = "anthropic", specifier = ">=0.40"},
   {marker = "extra == 'eval'", name = "google-genai", specifier = ">=1.0"},
   {marker = "extra == 'eval'", name = "openai", specifier = ">=1.60"},
+  {marker = "extra == 'gpu-cu13'", name = "torch", specifier = ">=2.13.0"},
   {marker = "extra == 'preprocess'", name = "rdflib", specifier = ">=7.0"},
   {name = "click", specifier = ">=8.1,<9"},
   {name = "dataclass-wizard", specifier = ">=0.35.1"},
@@ -3704,8 +4286,13 @@ eval = [
   {name = "google-genai"},
   {name = "openai"}
 ]
-gpu = [
-  {extra = ["ctk"], name = "cupy-cuda13x"}
+gpu-cu12 = [
+  {extra = ["ctk"], marker = "extra == 'extra-8-pelinker-gpu-cu12'", name = "cupy-cuda12x"},
+  {name = "torch", source = {registry = "https://download.pytorch.org/whl/cu126"}, version = "2.13.0+cu126"}
+]
+gpu-cu13 = [
+  {extra = ["ctk"], marker = "extra == 'extra-8-pelinker-gpu-cu13'", name = "cupy-cuda13x"},
+  {name = "torch", source = {registry = "https://pypi.org/simple"}, version = "2.13.0"}
 ]
 preprocess = [
   {name = "rdflib"}
@@ -3713,7 +4300,7 @@ preprocess = [
 
 [[package]]
 dependencies = [
-  {name = "ptyprocess"}
+  {marker = "(python_full_version < '3.11' and sys_platform == 'emscripten') or (python_full_version < '3.11' and sys_platform == 'win32') or (sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13') or (sys_platform == 'win32' and extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "ptyprocess"}
 ]
 name = "pexpect"
 sdist = {hash = "sha256:ee7d41123f3c9911050ea2c2dac107568dc43b2d3b0c7557a33212c398ead30f", size = 166450, upload-time = "2023-11-25T09:07:26.339Z", url = "https://files.pythonhosted.org/packages/42/92/cc564bf6381ff43ce1f4d06852fc19a2f11d180f23dc32d9588bee2f149d/pexpect-4.9.0.tar.gz"}
@@ -3938,7 +4525,7 @@ wheels = [
 
 [[package]]
 dependencies = [
-  {marker = "sys_platform == 'win32'", name = "colorama"},
+  {marker = "sys_platform == 'win32' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "colorama"},
   {name = "click"},
   {name = "ghp-import"},
   {name = "jinja2"},
@@ -4267,11 +4854,11 @@ wheels = [
 
 [[package]]
 dependencies = [
-  {marker = "python_full_version < '3.11'", name = "scikit-learn", source = {registry = "https://pypi.org/simple"}, version = "1.7.2"},
-  {marker = "python_full_version < '3.11'", name = "scipy", source = {registry = "https://pypi.org/simple"}, version = "1.15.3"},
-  {marker = "python_full_version == '3.11.*'", name = "scipy", source = {registry = "https://pypi.org/simple"}, version = "1.17.1"},
-  {marker = "python_full_version >= '3.11'", name = "scikit-learn", source = {registry = "https://pypi.org/simple"}, version = "1.9.0"},
-  {marker = "python_full_version >= '3.12'", name = "scipy", source = {registry = "https://pypi.org/simple"}, version = "1.18.0"},
+  {marker = "python_full_version < '3.11' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "scikit-learn", source = {registry = "https://pypi.org/simple"}, version = "1.7.2"},
+  {marker = "python_full_version < '3.11' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "scipy", source = {registry = "https://pypi.org/simple"}, version = "1.15.3"},
+  {marker = "python_full_version == '3.11.*' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "scipy", source = {registry = "https://pypi.org/simple"}, version = "1.17.1"},
+  {marker = "python_full_version >= '3.11' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "scikit-learn", source = {registry = "https://pypi.org/simple"}, version = "1.9.0"},
+  {marker = "python_full_version >= '3.12' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "scipy", source = {registry = "https://pypi.org/simple"}, version = "1.18.0"},
   {name = "joblib"},
   {name = "llvmlite"},
   {name = "numba"}
@@ -4304,9 +4891,9 @@ wheels = [
 
 [[package]]
 dependencies = [
-  {marker = "python_full_version < '3.11'", name = "exceptiongroup"},
-  {marker = "python_full_version < '3.11'", name = "tomli"},
-  {marker = "sys_platform == 'win32'", name = "colorama"},
+  {marker = "python_full_version < '3.11' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "exceptiongroup"},
+  {marker = "python_full_version < '3.11' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "tomli"},
+  {marker = "sys_platform == 'win32' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "colorama"},
   {name = "iniconfig"},
   {name = "packaging"},
   {name = "pluggy"},
@@ -4431,7 +5018,7 @@ wheels = [
 
 [[package]]
 dependencies = [
-  {marker = "implementation_name == 'pypy'", name = "cffi"}
+  {marker = "implementation_name == 'pypy' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "cffi"}
 ]
 name = "pyzmq"
 sdist = {hash = "sha256:ac0765e3d44455adb6ddbf4417dcce460fc40a05978c08efdf2948072f6db540", size = 281750, upload-time = "2025-09-08T23:10:18.157Z", url = "https://files.pythonhosted.org/packages/04/0b/3c9baedbdf613ecaa7aa07027780b8867f57b6293b6ee50de316c9f3222b/pyzmq-27.1.0.tar.gz"}
@@ -4504,7 +5091,7 @@ wheels = [
 
 [[package]]
 dependencies = [
-  {marker = "python_full_version < '3.11'", name = "isodate"},
+  {marker = "python_full_version < '3.11' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "isodate"},
   {name = "pyparsing"}
 ]
 name = "rdflib"
@@ -4517,9 +5104,9 @@ wheels = [
 
 [[package]]
 dependencies = [
-  {marker = "python_full_version < '3.11'", name = "rpds-py", source = {registry = "https://pypi.org/simple"}, version = "0.30.0"},
-  {marker = "python_full_version < '3.13'", name = "typing-extensions"},
-  {marker = "python_full_version >= '3.11'", name = "rpds-py", source = {registry = "https://pypi.org/simple"}, version = "2026.6.3"},
+  {marker = "python_full_version < '3.11' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "rpds-py", source = {registry = "https://pypi.org/simple"}, version = "0.30.0"},
+  {marker = "python_full_version < '3.13' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "typing-extensions"},
+  {marker = "python_full_version >= '3.11' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "rpds-py", source = {registry = "https://pypi.org/simple"}, version = "2026.6.3"},
   {name = "attrs"}
 ]
 name = "referencing"
@@ -4967,10 +5554,10 @@ wheels = [
 
 [[package]]
 dependencies = [
-  {name = "joblib"},
-  {name = "numpy", source = {registry = "https://pypi.org/simple"}, version = "2.2.6"},
-  {name = "scipy", source = {registry = "https://pypi.org/simple"}, version = "1.15.3"},
-  {name = "threadpoolctl"}
+  {marker = "python_full_version < '3.11' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "joblib"},
+  {marker = "python_full_version < '3.11' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "numpy", source = {registry = "https://pypi.org/simple"}, version = "2.2.6"},
+  {marker = "python_full_version < '3.11' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "scipy", source = {registry = "https://pypi.org/simple"}, version = "1.15.3"},
+  {marker = "python_full_version < '3.11' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "threadpoolctl"}
 ]
 name = "scikit-learn"
 resolution-markers = [
@@ -5014,12 +5601,12 @@ wheels = [
 
 [[package]]
 dependencies = [
-  {marker = "python_full_version < '3.12'", name = "scipy", source = {registry = "https://pypi.org/simple"}, version = "1.17.1"},
-  {marker = "python_full_version >= '3.12'", name = "scipy", source = {registry = "https://pypi.org/simple"}, version = "1.18.0"},
-  {name = "joblib"},
-  {name = "narwhals"},
-  {name = "numpy", source = {registry = "https://pypi.org/simple"}, version = "2.4.6"},
-  {name = "threadpoolctl"}
+  {marker = "python_full_version == '3.11.*' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "scipy", source = {registry = "https://pypi.org/simple"}, version = "1.17.1"},
+  {marker = "python_full_version >= '3.11' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "joblib"},
+  {marker = "python_full_version >= '3.11' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "narwhals"},
+  {marker = "python_full_version >= '3.11' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "numpy", source = {registry = "https://pypi.org/simple"}, version = "2.4.6"},
+  {marker = "python_full_version >= '3.11' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "threadpoolctl"},
+  {marker = "python_full_version >= '3.12' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "scipy", source = {registry = "https://pypi.org/simple"}, version = "1.18.0"}
 ]
 name = "scikit-learn"
 resolution-markers = [
@@ -5074,13 +5661,13 @@ wheels = [
 
 [[package]]
 dependencies = [
-  {marker = "python_full_version < '3.11'", name = "numpy", source = {registry = "https://pypi.org/simple"}, version = "2.2.6"},
-  {marker = "python_full_version < '3.11'", name = "scikit-learn", source = {registry = "https://pypi.org/simple"}, version = "1.7.2"},
-  {marker = "python_full_version < '3.11'", name = "scipy", source = {registry = "https://pypi.org/simple"}, version = "1.15.3"},
-  {marker = "python_full_version == '3.11.*'", name = "scipy", source = {registry = "https://pypi.org/simple"}, version = "1.17.1"},
-  {marker = "python_full_version >= '3.11'", name = "numpy", source = {registry = "https://pypi.org/simple"}, version = "2.4.6"},
-  {marker = "python_full_version >= '3.11'", name = "scikit-learn", source = {registry = "https://pypi.org/simple"}, version = "1.9.0"},
-  {marker = "python_full_version >= '3.12'", name = "scipy", source = {registry = "https://pypi.org/simple"}, version = "1.18.0"},
+  {marker = "python_full_version < '3.11' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "numpy", source = {registry = "https://pypi.org/simple"}, version = "2.2.6"},
+  {marker = "python_full_version < '3.11' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "scikit-learn", source = {registry = "https://pypi.org/simple"}, version = "1.7.2"},
+  {marker = "python_full_version < '3.11' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "scipy", source = {registry = "https://pypi.org/simple"}, version = "1.15.3"},
+  {marker = "python_full_version == '3.11.*' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "scipy", source = {registry = "https://pypi.org/simple"}, version = "1.17.1"},
+  {marker = "python_full_version >= '3.11' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "numpy", source = {registry = "https://pypi.org/simple"}, version = "2.4.6"},
+  {marker = "python_full_version >= '3.11' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "scikit-learn", source = {registry = "https://pypi.org/simple"}, version = "1.9.0"},
+  {marker = "python_full_version >= '3.12' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "scipy", source = {registry = "https://pypi.org/simple"}, version = "1.18.0"},
   {name = "joblib"},
   {name = "packaging"},
   {name = "pyaml"}
@@ -5095,7 +5682,7 @@ wheels = [
 
 [[package]]
 dependencies = [
-  {name = "numpy", source = {registry = "https://pypi.org/simple"}, version = "2.2.6"}
+  {marker = "python_full_version < '3.11' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "numpy", source = {registry = "https://pypi.org/simple"}, version = "2.2.6"}
 ]
 name = "scipy"
 resolution-markers = [
@@ -5154,7 +5741,7 @@ wheels = [
 
 [[package]]
 dependencies = [
-  {name = "numpy", source = {registry = "https://pypi.org/simple"}, version = "2.4.6"}
+  {marker = "python_full_version == '3.11.*' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "numpy", source = {registry = "https://pypi.org/simple"}, version = "2.4.6"}
 ]
 name = "scipy"
 resolution-markers = [
@@ -5230,7 +5817,7 @@ wheels = [
 
 [[package]]
 dependencies = [
-  {name = "numpy", source = {registry = "https://pypi.org/simple"}, version = "2.4.6"}
+  {marker = "python_full_version >= '3.12' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "numpy", source = {registry = "https://pypi.org/simple"}, version = "2.4.6"}
 ]
 name = "scipy"
 resolution-markers = [
@@ -5292,12 +5879,12 @@ wheels = [
 
 [[package]]
 dependencies = [
-  {marker = "python_full_version < '3.11'", name = "matplotlib", source = {registry = "https://pypi.org/simple"}, version = "3.10.9"},
-  {marker = "python_full_version < '3.11'", name = "numpy", source = {registry = "https://pypi.org/simple"}, version = "2.2.6"},
-  {marker = "python_full_version < '3.11'", name = "pandas", source = {registry = "https://pypi.org/simple"}, version = "2.3.3"},
-  {marker = "python_full_version >= '3.11'", name = "matplotlib", source = {registry = "https://pypi.org/simple"}, version = "3.11.1"},
-  {marker = "python_full_version >= '3.11'", name = "numpy", source = {registry = "https://pypi.org/simple"}, version = "2.4.6"},
-  {marker = "python_full_version >= '3.11'", name = "pandas", source = {registry = "https://pypi.org/simple"}, version = "3.0.5"}
+  {marker = "python_full_version < '3.11' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "matplotlib", source = {registry = "https://pypi.org/simple"}, version = "3.10.9"},
+  {marker = "python_full_version < '3.11' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "numpy", source = {registry = "https://pypi.org/simple"}, version = "2.2.6"},
+  {marker = "python_full_version < '3.11' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "pandas", source = {registry = "https://pypi.org/simple"}, version = "2.3.3"},
+  {marker = "python_full_version >= '3.11' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "matplotlib", source = {registry = "https://pypi.org/simple"}, version = "3.11.1"},
+  {marker = "python_full_version >= '3.11' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "numpy", source = {registry = "https://pypi.org/simple"}, version = "2.4.6"},
+  {marker = "python_full_version >= '3.11' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "pandas", source = {registry = "https://pypi.org/simple"}, version = "3.0.5"}
 ]
 name = "seaborn"
 sdist = {hash = "sha256:93e60a40988f4d65e9f4885df477e2fdaff6b73a9ded434c1ab356dd57eefff7", size = 1457696, upload-time = "2024-01-25T13:21:52.551Z", url = "https://files.pythonhosted.org/packages/86/59/a451d7420a77ab0b98f7affa3a1d78a313d2f7281a57afb1a34bae8ab412/seaborn-0.13.2.tar.gz"}
@@ -5371,15 +5958,16 @@ wheels = [
 
 [[package]]
 dependencies = [
-  {marker = "python_full_version < '3.11'", name = "numpy", source = {registry = "https://pypi.org/simple"}, version = "2.2.6"},
-  {marker = "python_full_version < '3.11'", name = "scikit-learn", source = {registry = "https://pypi.org/simple"}, version = "1.7.2"},
-  {marker = "python_full_version < '3.11'", name = "scipy", source = {registry = "https://pypi.org/simple"}, version = "1.15.3"},
-  {marker = "python_full_version == '3.11.*'", name = "scipy", source = {registry = "https://pypi.org/simple"}, version = "1.17.1"},
-  {marker = "python_full_version >= '3.11'", name = "numpy", source = {registry = "https://pypi.org/simple"}, version = "2.4.6"},
-  {marker = "python_full_version >= '3.11'", name = "scikit-learn", source = {registry = "https://pypi.org/simple"}, version = "1.9.0"},
-  {marker = "python_full_version >= '3.12'", name = "scipy", source = {registry = "https://pypi.org/simple"}, version = "1.18.0"},
+  {marker = "extra == 'extra-8-pelinker-gpu-cu12'", name = "torch", source = {registry = "https://download.pytorch.org/whl/cu126"}, version = "2.13.0+cu126"},
+  {marker = "extra == 'extra-8-pelinker-gpu-cu13' or extra != 'extra-8-pelinker-gpu-cu12'", name = "torch", source = {registry = "https://pypi.org/simple"}, version = "2.13.0"},
+  {marker = "python_full_version < '3.11' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "numpy", source = {registry = "https://pypi.org/simple"}, version = "2.2.6"},
+  {marker = "python_full_version < '3.11' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "scikit-learn", source = {registry = "https://pypi.org/simple"}, version = "1.7.2"},
+  {marker = "python_full_version < '3.11' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "scipy", source = {registry = "https://pypi.org/simple"}, version = "1.15.3"},
+  {marker = "python_full_version == '3.11.*' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "scipy", source = {registry = "https://pypi.org/simple"}, version = "1.17.1"},
+  {marker = "python_full_version >= '3.11' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "numpy", source = {registry = "https://pypi.org/simple"}, version = "2.4.6"},
+  {marker = "python_full_version >= '3.11' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "scikit-learn", source = {registry = "https://pypi.org/simple"}, version = "1.9.0"},
+  {marker = "python_full_version >= '3.12' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "scipy", source = {registry = "https://pypi.org/simple"}, version = "1.18.0"},
   {name = "huggingface-hub"},
-  {name = "torch"},
   {name = "tqdm"},
   {name = "transformers"},
   {name = "typing-extensions"}
@@ -5451,8 +6039,8 @@ wheels = [
 
 [[package]]
 dependencies = [
-  {marker = "python_full_version < '3.11'", name = "numpy", source = {registry = "https://pypi.org/simple"}, version = "2.2.6"},
-  {marker = "python_full_version >= '3.11'", name = "numpy", source = {registry = "https://pypi.org/simple"}, version = "2.4.6"},
+  {marker = "python_full_version < '3.11' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "numpy", source = {registry = "https://pypi.org/simple"}, version = "2.2.6"},
+  {marker = "python_full_version >= '3.11' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "numpy", source = {registry = "https://pypi.org/simple"}, version = "2.4.6"},
   {name = "catalogue"},
   {name = "confection"},
   {name = "cymem"},
@@ -5601,7 +6189,7 @@ wheels = [
 
 [[package]]
 dependencies = [
-  {marker = "python_full_version < '3.13'", name = "typing-extensions"},
+  {marker = "python_full_version < '3.13' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "typing-extensions"},
   {name = "anyio"}
 ]
 name = "starlette"
@@ -5635,10 +6223,10 @@ wheels = [
 
 [[package]]
 dependencies = [
-  {marker = "python_full_version < '3.11'", name = "keras", source = {registry = "https://pypi.org/simple"}, version = "3.12.4"},
-  {marker = "python_full_version < '3.11'", name = "numpy", source = {registry = "https://pypi.org/simple"}, version = "2.2.6"},
-  {marker = "python_full_version >= '3.11'", name = "keras", source = {registry = "https://pypi.org/simple"}, version = "3.15.1"},
-  {marker = "python_full_version >= '3.11'", name = "numpy", source = {registry = "https://pypi.org/simple"}, version = "2.4.6"},
+  {marker = "python_full_version < '3.11' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "keras", source = {registry = "https://pypi.org/simple"}, version = "3.12.4"},
+  {marker = "python_full_version < '3.11' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "numpy", source = {registry = "https://pypi.org/simple"}, version = "2.2.6"},
+  {marker = "python_full_version >= '3.11' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "keras", source = {registry = "https://pypi.org/simple"}, version = "3.15.1"},
+  {marker = "python_full_version >= '3.11' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "numpy", source = {registry = "https://pypi.org/simple"}, version = "2.4.6"},
   {name = "absl-py"},
   {name = "astunparse"},
   {name = "flatbuffers"},
@@ -5703,8 +6291,8 @@ wheels = [
 
 [[package]]
 dependencies = [
-  {marker = "python_full_version < '3.11'", name = "numpy", source = {registry = "https://pypi.org/simple"}, version = "2.2.6"},
-  {marker = "python_full_version >= '3.11'", name = "numpy", source = {registry = "https://pypi.org/simple"}, version = "2.4.6"},
+  {marker = "python_full_version < '3.11' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "numpy", source = {registry = "https://pypi.org/simple"}, version = "2.2.6"},
+  {marker = "python_full_version >= '3.11' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "numpy", source = {registry = "https://pypi.org/simple"}, version = "2.4.6"},
   {name = "blis"},
   {name = "catalogue"},
   {name = "confection"},
@@ -5870,23 +6458,38 @@ wheels = [
 
 [[package]]
 dependencies = [
-  {extra = ["cublas", "cudart", "cufft", "cufile", "cupti", "curand", "cusolver", "cusparse", "nvjitlink", "nvrtc", "nvtx"], marker = "sys_platform == 'linux'", name = "cuda-toolkit"},
-  {marker = "python_full_version < '3.11'", name = "networkx", source = {registry = "https://pypi.org/simple"}, version = "3.4.2"},
-  {marker = "python_full_version < '3.15' and sys_platform == 'linux'", name = "cuda-bindings"},
-  {marker = "python_full_version < '3.15' and sys_platform == 'linux'", name = "triton"},
-  {marker = "python_full_version >= '3.11'", name = "networkx", source = {registry = "https://pypi.org/simple"}, version = "3.6.1"},
-  {marker = "sys_platform == 'linux'", name = "nvidia-cudnn-cu13"},
-  {marker = "sys_platform == 'linux'", name = "nvidia-cusparselt-cu13"},
-  {marker = "sys_platform == 'linux'", name = "nvidia-nccl-cu13"},
-  {marker = "sys_platform == 'linux'", name = "nvidia-nvshmem-cu13"},
-  {name = "filelock"},
-  {name = "fsspec"},
-  {name = "jinja2"},
-  {name = "setuptools"},
-  {name = "sympy"},
-  {name = "typing-extensions"}
+  {extra = ["cublas", "cudart", "cufft", "cufile", "cupti", "curand", "cusolver", "cusparse", "nvjitlink", "nvrtc", "nvtx"], marker = "(sys_platform == 'linux' and extra != 'extra-8-pelinker-gpu-cu12') or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "cuda-toolkit", source = {registry = "https://pypi.org/simple"}, version = "13.0.3.0"},
+  {marker = "(python_full_version < '3.11' and extra != 'extra-8-pelinker-gpu-cu12') or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "networkx", source = {registry = "https://pypi.org/simple"}, version = "3.4.2"},
+  {marker = "(python_full_version < '3.15' and sys_platform == 'linux' and extra != 'extra-8-pelinker-gpu-cu12') or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "cuda-bindings", source = {registry = "https://pypi.org/simple"}, version = "13.3.1"},
+  {marker = "(python_full_version < '3.15' and sys_platform == 'linux' and extra != 'extra-8-pelinker-gpu-cu12') or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "triton"},
+  {marker = "(python_full_version >= '3.11' and extra != 'extra-8-pelinker-gpu-cu12') or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "networkx", source = {registry = "https://pypi.org/simple"}, version = "3.6.1"},
+  {marker = "(sys_platform == 'linux' and extra != 'extra-8-pelinker-gpu-cu12') or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "nvidia-cudnn-cu13"},
+  {marker = "(sys_platform == 'linux' and extra != 'extra-8-pelinker-gpu-cu12') or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "nvidia-cusparselt-cu13"},
+  {marker = "(sys_platform == 'linux' and extra != 'extra-8-pelinker-gpu-cu12') or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "nvidia-nccl-cu13"},
+  {marker = "(sys_platform == 'linux' and extra != 'extra-8-pelinker-gpu-cu12') or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "nvidia-nvshmem-cu13"},
+  {marker = "extra == 'extra-8-pelinker-gpu-cu13' or extra != 'extra-8-pelinker-gpu-cu12'", name = "filelock"},
+  {marker = "extra == 'extra-8-pelinker-gpu-cu13' or extra != 'extra-8-pelinker-gpu-cu12'", name = "fsspec"},
+  {marker = "extra == 'extra-8-pelinker-gpu-cu13' or extra != 'extra-8-pelinker-gpu-cu12'", name = "jinja2"},
+  {marker = "extra == 'extra-8-pelinker-gpu-cu13' or extra != 'extra-8-pelinker-gpu-cu12'", name = "setuptools"},
+  {marker = "extra == 'extra-8-pelinker-gpu-cu13' or extra != 'extra-8-pelinker-gpu-cu12'", name = "sympy"},
+  {marker = "extra == 'extra-8-pelinker-gpu-cu13' or extra != 'extra-8-pelinker-gpu-cu12'", name = "typing-extensions"}
 ]
 name = "torch"
+resolution-markers = [
+  "python_full_version < '3.11'",
+  "python_full_version == '3.11.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+  "python_full_version == '3.11.*' and sys_platform == 'emscripten'",
+  "python_full_version == '3.11.*' and sys_platform == 'win32'",
+  "python_full_version == '3.12.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+  "python_full_version == '3.12.*' and sys_platform == 'emscripten'",
+  "python_full_version == '3.12.*' and sys_platform == 'win32'",
+  "python_full_version == '3.13.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+  "python_full_version == '3.13.*' and sys_platform == 'emscripten'",
+  "python_full_version == '3.13.*' and sys_platform == 'win32'",
+  "python_full_version >= '3.14' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+  "python_full_version >= '3.14' and sys_platform == 'emscripten'",
+  "python_full_version >= '3.14' and sys_platform == 'win32'"
+]
 source = {registry = "https://pypi.org/simple"}
 version = "2.13.0"
 wheels = [
@@ -5917,6 +6520,67 @@ wheels = [
 ]
 
 [[package]]
+dependencies = [
+  {extra = ["cublas", "cudart", "cufft", "cufile", "cupti", "curand", "cusolver", "cusparse", "nvjitlink", "nvrtc", "nvtx"], marker = "(sys_platform == 'linux' and extra == 'extra-8-pelinker-gpu-cu12') or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "cuda-toolkit", source = {registry = "https://pypi.org/simple"}, version = "12.6.3"},
+  {marker = "(python_full_version < '3.11' and extra == 'extra-8-pelinker-gpu-cu12') or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "networkx", source = {registry = "https://pypi.org/simple"}, version = "3.4.2"},
+  {marker = "(python_full_version < '3.15' and sys_platform == 'linux' and extra == 'extra-8-pelinker-gpu-cu12') or (python_full_version >= '3.15' and extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13') or (sys_platform != 'linux' and extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "cuda-bindings", source = {registry = "https://pypi.org/simple"}, version = "12.9.9"},
+  {marker = "(python_full_version < '3.15' and sys_platform == 'linux' and extra == 'extra-8-pelinker-gpu-cu12') or (python_full_version >= '3.15' and extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13') or (sys_platform != 'linux' and extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "triton"},
+  {marker = "(python_full_version >= '3.11' and extra == 'extra-8-pelinker-gpu-cu12') or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "networkx", source = {registry = "https://pypi.org/simple"}, version = "3.6.1"},
+  {marker = "(sys_platform == 'linux' and extra == 'extra-8-pelinker-gpu-cu12') or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "nvidia-cudnn-cu12"},
+  {marker = "(sys_platform == 'linux' and extra == 'extra-8-pelinker-gpu-cu12') or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "nvidia-cusparselt-cu12"},
+  {marker = "(sys_platform == 'linux' and extra == 'extra-8-pelinker-gpu-cu12') or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "nvidia-nccl-cu12"},
+  {marker = "(sys_platform == 'linux' and extra == 'extra-8-pelinker-gpu-cu12') or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "nvidia-nvshmem-cu12"},
+  {marker = "extra == 'extra-8-pelinker-gpu-cu12'", name = "filelock"},
+  {marker = "extra == 'extra-8-pelinker-gpu-cu12'", name = "fsspec"},
+  {marker = "extra == 'extra-8-pelinker-gpu-cu12'", name = "jinja2"},
+  {marker = "extra == 'extra-8-pelinker-gpu-cu12'", name = "setuptools"},
+  {marker = "extra == 'extra-8-pelinker-gpu-cu12'", name = "sympy"},
+  {marker = "extra == 'extra-8-pelinker-gpu-cu12'", name = "typing-extensions"}
+]
+name = "torch"
+resolution-markers = [
+  "python_full_version < '3.11'",
+  "python_full_version == '3.11.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+  "python_full_version == '3.11.*' and sys_platform == 'emscripten'",
+  "python_full_version == '3.11.*' and sys_platform == 'win32'",
+  "python_full_version == '3.12.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+  "python_full_version == '3.12.*' and sys_platform == 'emscripten'",
+  "python_full_version == '3.12.*' and sys_platform == 'win32'",
+  "python_full_version == '3.13.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+  "python_full_version == '3.13.*' and sys_platform == 'emscripten'",
+  "python_full_version == '3.13.*' and sys_platform == 'win32'",
+  "python_full_version >= '3.14' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+  "python_full_version >= '3.14' and sys_platform == 'emscripten'",
+  "python_full_version >= '3.14' and sys_platform == 'win32'"
+]
+source = {registry = "https://download.pytorch.org/whl/cu126"}
+version = "2.13.0+cu126"
+wheels = [
+  {hash = "sha256:0c303b4bdf6257020b09551e0968cb25ce4781dd786f3ce329ad7def3d9564ff", upload-time = "2026-07-08T19:33:02Z", url = "https://download-r2.pytorch.org/whl/cu126/torch-2.13.0%2Bcu126-cp310-cp310-manylinux_2_28_aarch64.whl"},
+  {hash = "sha256:0f4e49e334e24b552f694f6315e0676fb3f816fb0f727871b9c6d1f73784cc25", upload-time = "2026-07-08T19:38:03Z", url = "https://download-r2.pytorch.org/whl/cu126/torch-2.13.0%2Bcu126-cp311-cp311-manylinux_2_28_x86_64.whl"},
+  {hash = "sha256:1318821b09feb4e4e55c16c09c2d5c7cbdc6589480f37a4bcff4187ed9b62344", upload-time = "2026-07-08T19:55:07Z", url = "https://download-r2.pytorch.org/whl/cu126/torch-2.13.0%2Bcu126-cp314-cp314t-manylinux_2_28_x86_64.whl"},
+  {hash = "sha256:136a8383b152dadc73d8944af9a796a76ff2038d59de666660d419a381b68078", upload-time = "2026-07-08T19:52:51Z", url = "https://download-r2.pytorch.org/whl/cu126/torch-2.13.0%2Bcu126-cp314-cp314-win_amd64.whl"},
+  {hash = "sha256:24b2f3b177b3a715c30ab893a72db08dde2c55d070339d661347873b18adaa03", upload-time = "2026-07-08T19:42:12Z", url = "https://download-r2.pytorch.org/whl/cu126/torch-2.13.0%2Bcu126-cp312-cp312-manylinux_2_28_aarch64.whl"},
+  {hash = "sha256:349ce4cc6d6f6027ce9274fb26bc696572398ec3700e09d8b110dc39ad6a1052", upload-time = "2026-07-08T19:35:40Z", url = "https://download-r2.pytorch.org/whl/cu126/torch-2.13.0%2Bcu126-cp310-cp310-win_amd64.whl"},
+  {hash = "sha256:380081ea098bf2b9e727aa85205d94790d884d17c62df3bb00a4f6a1047010a2", upload-time = "2026-07-08T19:44:46Z", url = "https://download-r2.pytorch.org/whl/cu126/torch-2.13.0%2Bcu126-cp312-cp312-win_amd64.whl"},
+  {hash = "sha256:4198c8d7478ab47ad2569309387d88b21fb553a1cf8ab06260fbd5a6ab9b9712", upload-time = "2026-07-08T19:47:07Z", url = "https://download-r2.pytorch.org/whl/cu126/torch-2.13.0%2Bcu126-cp313-cp313-manylinux_2_28_x86_64.whl"},
+  {hash = "sha256:4e890303ca93958ab2cdca8352922ea04397ebd1aadeb34e8a2d350c17fad760", upload-time = "2026-07-08T19:58:36Z", url = "https://download-r2.pytorch.org/whl/cu126/torch-2.13.0%2Bcu126-cp315-cp315-manylinux_2_28_aarch64.whl"},
+  {hash = "sha256:50a984ba2624232f8a8f8db294124167df238f4ca7167da4d4708b19d2c7b9da", upload-time = "2026-07-08T19:54:28Z", url = "https://download-r2.pytorch.org/whl/cu126/torch-2.13.0%2Bcu126-cp314-cp314t-manylinux_2_28_aarch64.whl"},
+  {hash = "sha256:8095729db14e7fd5178a39676fdd679208eff4041407ea34e3d898336c90f5c5", upload-time = "2026-07-08T19:40:16Z", url = "https://download-r2.pytorch.org/whl/cu126/torch-2.13.0%2Bcu126-cp311-cp311-win_amd64.whl"},
+  {hash = "sha256:83d4559903f2d04e9900ce0f3ca58b8659f9e74607dc27ba50aa8658c9a854fb", upload-time = "2026-07-08T19:37:25Z", url = "https://download-r2.pytorch.org/whl/cu126/torch-2.13.0%2Bcu126-cp311-cp311-manylinux_2_28_aarch64.whl"},
+  {hash = "sha256:8695f3c6b7966d44560275b90c5c28e5091ba33ddbb1ab33b2173782ca1e9145", upload-time = "2026-07-08T19:42:50Z", url = "https://download-r2.pytorch.org/whl/cu126/torch-2.13.0%2Bcu126-cp312-cp312-manylinux_2_28_x86_64.whl"},
+  {hash = "sha256:a1b8a5bfe240d8dfdf2d4f0b70530552e1935050ccd57d4503f91829e3773370", upload-time = "2026-07-08T19:50:25Z", url = "https://download-r2.pytorch.org/whl/cu126/torch-2.13.0%2Bcu126-cp314-cp314-manylinux_2_28_aarch64.whl"},
+  {hash = "sha256:ad14bf40b2fe04d88302e058bdd2349f7aa55baa21194fc839a186d332fc02bf", upload-time = "2026-07-08T19:59:13Z", url = "https://download-r2.pytorch.org/whl/cu126/torch-2.13.0%2Bcu126-cp315-cp315-manylinux_2_28_x86_64.whl"},
+  {hash = "sha256:affd3b49a4e48aef895ffd9e196181bd505422d7c37b4a6f9afa76899d2acd3d", upload-time = "2026-07-08T19:50:59Z", url = "https://download-r2.pytorch.org/whl/cu126/torch-2.13.0%2Bcu126-cp314-cp314-manylinux_2_28_x86_64.whl"},
+  {hash = "sha256:b2618235bacb29eea37357ce660aab5296d9729eacfd4629d50327382da11f7f", upload-time = "2026-07-08T19:46:32Z", url = "https://download-r2.pytorch.org/whl/cu126/torch-2.13.0%2Bcu126-cp313-cp313-manylinux_2_28_aarch64.whl"},
+  {hash = "sha256:cb91b2f91d053bb91e413459a13ec8b036ff348d03e411e9c29988cc6edb7b32", upload-time = "2026-07-08T19:48:48Z", url = "https://download-r2.pytorch.org/whl/cu126/torch-2.13.0%2Bcu126-cp313-cp313-win_amd64.whl"},
+  {hash = "sha256:cbdcf95acc35f2b31958b98765294fc277306406eea49af14d436fe8723a9190", upload-time = "2026-07-08T20:00:27Z", url = "https://download-r2.pytorch.org/whl/cu126/torch-2.13.0%2Bcu126-cp315-cp315t-manylinux_2_28_x86_64.whl"},
+  {hash = "sha256:ce9a4d6b778af6be1f4a700b64a3c57bb01e98aeee69243c8731099fb6e4df29", upload-time = "2026-07-08T19:33:50Z", url = "https://download-r2.pytorch.org/whl/cu126/torch-2.13.0%2Bcu126-cp310-cp310-manylinux_2_28_x86_64.whl"},
+  {hash = "sha256:cf9aeb6f087bd3299e4833066bf2921178a52c5ce683346902a9b2963b6ad391", upload-time = "2026-07-08T19:59:50Z", url = "https://download-r2.pytorch.org/whl/cu126/torch-2.13.0%2Bcu126-cp315-cp315t-manylinux_2_28_aarch64.whl"},
+  {hash = "sha256:f50c0df3604e118003b5e598855be74a5725593b402fa855cc645f1ee18ffa9f", upload-time = "2026-07-08T19:56:53Z", url = "https://download-r2.pytorch.org/whl/cu126/torch-2.13.0%2Bcu126-cp314-cp314t-win_amd64.whl"}
+]
+
+[[package]]
 name = "tornado"
 sdist = {hash = "sha256:66c513a76cda70d53907bc27cf1447557699c2e95aa48ba27a442ff61c3ddfc2", size = 519252, upload-time = "2026-06-08T17:34:51.232Z", url = "https://files.pythonhosted.org/packages/64/24/95ec527ad67b76d59299e5465b3935d05e4294b7e0290a3924b7487df30b/tornado-6.5.7.tar.gz"}
 source = {registry = "https://pypi.org/simple"}
@@ -5935,7 +6599,7 @@ wheels = [
 
 [[package]]
 dependencies = [
-  {marker = "sys_platform == 'win32'", name = "colorama"}
+  {marker = "sys_platform == 'win32' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "colorama"}
 ]
 name = "tqdm"
 sdist = {hash = "sha256:55b0b0dbd97462d06ebee91e4dac24ed4d4702be82b24f07e6c1d27e08cea220", size = 795438, upload-time = "2026-07-27T11:33:15.271Z", url = "https://files.pythonhosted.org/packages/21/3b/6c24bec5be5e743ffd99576daa5cc077722fc7d5bbc00bd133fa0c698dc6/tqdm-4.70.0.tar.gz"}
@@ -5956,8 +6620,8 @@ wheels = [
 
 [[package]]
 dependencies = [
-  {marker = "python_full_version < '3.11'", name = "numpy", source = {registry = "https://pypi.org/simple"}, version = "2.2.6"},
-  {marker = "python_full_version >= '3.11'", name = "numpy", source = {registry = "https://pypi.org/simple"}, version = "2.4.6"},
+  {marker = "python_full_version < '3.11' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "numpy", source = {registry = "https://pypi.org/simple"}, version = "2.2.6"},
+  {marker = "python_full_version >= '3.11' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "numpy", source = {registry = "https://pypi.org/simple"}, version = "2.4.6"},
   {name = "huggingface-hub"},
   {name = "packaging"},
   {name = "pyyaml"},
@@ -6030,7 +6694,7 @@ wheels = [
 
 [[package]]
 dependencies = [
-  {marker = "sys_platform == 'win32'", name = "colorama"},
+  {marker = "sys_platform == 'win32' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "colorama"},
   {name = "annotated-doc"},
   {name = "rich"},
   {name = "shellingham"}
@@ -6075,13 +6739,13 @@ wheels = [
 
 [[package]]
 dependencies = [
-  {marker = "python_full_version < '3.11'", name = "numpy", source = {registry = "https://pypi.org/simple"}, version = "2.2.6"},
-  {marker = "python_full_version < '3.11'", name = "scikit-learn", source = {registry = "https://pypi.org/simple"}, version = "1.7.2"},
-  {marker = "python_full_version < '3.11'", name = "scipy", source = {registry = "https://pypi.org/simple"}, version = "1.15.3"},
-  {marker = "python_full_version == '3.11.*'", name = "scipy", source = {registry = "https://pypi.org/simple"}, version = "1.17.1"},
-  {marker = "python_full_version >= '3.11'", name = "numpy", source = {registry = "https://pypi.org/simple"}, version = "2.4.6"},
-  {marker = "python_full_version >= '3.11'", name = "scikit-learn", source = {registry = "https://pypi.org/simple"}, version = "1.9.0"},
-  {marker = "python_full_version >= '3.12'", name = "scipy", source = {registry = "https://pypi.org/simple"}, version = "1.18.0"},
+  {marker = "python_full_version < '3.11' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "numpy", source = {registry = "https://pypi.org/simple"}, version = "2.2.6"},
+  {marker = "python_full_version < '3.11' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "scikit-learn", source = {registry = "https://pypi.org/simple"}, version = "1.7.2"},
+  {marker = "python_full_version < '3.11' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "scipy", source = {registry = "https://pypi.org/simple"}, version = "1.15.3"},
+  {marker = "python_full_version == '3.11.*' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "scipy", source = {registry = "https://pypi.org/simple"}, version = "1.17.1"},
+  {marker = "python_full_version >= '3.11' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "numpy", source = {registry = "https://pypi.org/simple"}, version = "2.4.6"},
+  {marker = "python_full_version >= '3.11' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "scikit-learn", source = {registry = "https://pypi.org/simple"}, version = "1.9.0"},
+  {marker = "python_full_version >= '3.12' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "scipy", source = {registry = "https://pypi.org/simple"}, version = "1.18.0"},
   {name = "numba"},
   {name = "pynndescent"},
   {name = "tqdm"}
@@ -6110,7 +6774,7 @@ wheels = [
 
 [[package]]
 dependencies = [
-  {marker = "python_full_version < '3.11'", name = "typing-extensions"},
+  {marker = "python_full_version < '3.11' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "typing-extensions"},
   {name = "click"},
   {name = "h11"}
 ]
@@ -6124,7 +6788,7 @@ wheels = [
 
 [[package]]
 dependencies = [
-  {marker = "python_full_version < '3.11'", name = "typing-extensions"},
+  {marker = "python_full_version < '3.11' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "typing-extensions"},
   {name = "distlib"},
   {name = "filelock"},
   {name = "platformdirs"},
@@ -6140,7 +6804,7 @@ wheels = [
 
 [[package]]
 dependencies = [
-  {marker = "sys_platform == 'win32'", name = "colorama"}
+  {marker = "sys_platform == 'win32' or (extra == 'extra-8-pelinker-gpu-cu12' and extra == 'extra-8-pelinker-gpu-cu13')", name = "colorama"}
 ]
 name = "wasabi"
 sdist = {hash = "sha256:4bb3008f003809db0c3e28b4daf20906ea871a2bb43f9914197d540f4f2e0878", size = 30391, upload-time = "2024-05-31T16:56:18.99Z", url = "https://files.pythonhosted.org/packages/ac/f9/054e6e2f1071e963b5e746b48d1e3727470b2a490834d18ad92364929db3/wasabi-1.1.3.tar.gz"}

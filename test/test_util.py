@@ -143,6 +143,31 @@ def test_map_spans_to_spans_basic_overlapping_sliding_windows():
     assert miti[(6, 18)] == [1, 2]
 
 
+def test_map_spans_to_spans_basic_matches_brute_force():
+    """The sorted-span fast path and the unsorted fallback agree with a full scan."""
+    import random
+
+    rng = random.Random(7)
+    for _ in range(200):
+        cuts = sorted(rng.sample(range(1, 80), 12))
+        tokens = [(a, b) for a, b in zip([0] + cuts, cuts)] + [(0, 0)] * 3
+        if rng.random() < 0.3:
+            rng.shuffle(tokens)
+        words = []
+        for _ in range(15):
+            a = rng.randrange(0, 80)
+            words.append((a, a + rng.randrange(1, 20)))
+        expected = {
+            w: [
+                j
+                for j, (ta, tb) in enumerate(tokens)
+                if tb > ta and ta < w[1] and tb > w[0]
+            ]
+            for w in words
+        }
+        assert map_spans_to_spans_basic(words, tokens) == expected
+
+
 class _FakeChunkMapper:
     @staticmethod
     def map_chunk_to_text(_itext, _ichunk):
