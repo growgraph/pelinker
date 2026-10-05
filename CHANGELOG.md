@@ -177,6 +177,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The `gpu` extra installs `cupy-cuda13x[ctk]`, matching the CUDA 13 runtime torch ships
+  with; `cupy-cuda12x` failed to import beside it.
+
 - **`pelinker-fit` and the selection CLIs default to `class_view=reldir`** and therefore
   need the pairs KB (`properties.synthesis.2.pairs.csv`): as `kb_path` for the fit, or as
   `--class-kb-path` for the searches. Pass `class_view=raw` / `--class-view raw` to
@@ -310,6 +313,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- `install-cuda121.sh`: GPU setup is `uv sync --extra gpu`.
 - `mypy` from the `dev` extra and the unused `.pylintrc` — neither was wired into
   pre-commit or CI.
 - `pip` and a duplicate `cupy-cuda12x` from the runtime dependencies. `cupy` is not
