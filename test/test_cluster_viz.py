@@ -5,7 +5,7 @@ from __future__ import annotations
 import numpy as np
 from sklearn.decomposition import PCA
 
-from pelinker.transform import EmbeddingTransformer, TransformConfig
+from pelinker.clustering.transform import EmbeddingTransformer, TransformConfig
 
 
 def test_cluster_viz_pca_matches_manual_projection() -> None:

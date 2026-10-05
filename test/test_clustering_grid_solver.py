@@ -1,10 +1,10 @@
-"""Tests for typed grid aggregation and smoothed min_cluster_size selection."""
+"""Tests for typed grid aggregation and min_cluster_size selection."""
 
 import numpy as np
 import pandas as pd
 import pytest
 
-from pelinker.clustering_grid import (
+from pelinker.clustering.grid import (
     AggregatedGridPoint,
     AggregatedGridReport,
     ScalarMetricAggregate,
@@ -113,66 +113,91 @@ def test_solve_empty_report_raises() -> None:
         solve_optimal_min_cluster_size_from_aggregated(AggregatedGridReport(points=()))
 
 
-def test_solve_plateau_prefers_leftmost_high_flat_region() -> None:
-    """Sharp rise then flat top: derivative small on the right; pick early plateau x."""
-    sizes = [10, 15, 20, 25, 30, 35, 40]
-    means = [0.1, 0.2, 0.5, 1.5, 2.0, 2.01, 2.0]
-    stds = [0.05] * len(sizes)
-    counts = [10] * len(sizes)
-    r = _report_from_arrays(sizes, means, stds, counts)
-    out = solve_optimal_min_cluster_size_from_aggregated(
-        r,
-        method="mean",
-        smooth_window=3,
-        plateau_fraction=0.9,
-        derivative_rel_tol=0.2,
-        precision_weighted_smooth=False,
-    )
-    assert out.selection == "plateau_derivative"
-    assert out.chosen_min_cluster_size in {25, 30, 35}
-    assert out.score_mean_at_chosen == pytest.approx(
-        means[sizes.index(out.chosen_min_cluster_size)]
-    )
-
-
-def test_solve_smoothed_argmax_when_no_plateau() -> None:
-    """Strictly increasing objective: derivative stays positive → fall back to smoothed peak."""
+def test_solve_takes_argmax_when_nothing_ties() -> None:
+    """Well-separated peak with tight errors: the one-SE rule must not wander off it."""
     sizes = [10, 15, 20, 25, 30]
     means = [0.1, 0.4, 0.7, 1.0, 1.3]
     r = _report_from_arrays(sizes, means, [0.01] * 5, [5] * 5)
     out = solve_optimal_min_cluster_size_from_aggregated(
-        r,
-        method="mean",
-        smooth_window=3,
-        plateau_fraction=0.999,
-        derivative_rel_tol=1e-9,
-        precision_weighted_smooth=False,
+        r, objective="dbcv", smooth_window=1
     )
-    assert out.selection == "smoothed_argmax"
+    assert out.selection == "argmax"
     assert out.chosen_min_cluster_size == 30
+    assert out.argmax_min_cluster_size == 30
 
 
-def test_solve_lower_bound_objective() -> None:
+def test_solve_slides_right_across_a_statistical_tie() -> None:
+    """Flat top within noise: prefer the largest tying min_cluster_size (parsimony)."""
+    sizes = [10, 15, 20, 25, 30, 35, 40]
+    means = [0.1, 0.2, 0.5, 1.5, 2.00, 2.01, 2.00]
+    r = _report_from_arrays(sizes, means, [0.30] * len(sizes), [10] * len(sizes))
+    out = solve_optimal_min_cluster_size_from_aggregated(
+        r, objective="dbcv", smooth_window=1, one_se_k=1.0
+    )
+    assert out.argmax_min_cluster_size == 35
+    assert out.chosen_min_cluster_size == 40
+    assert out.selection == "one_se_paired"
+
+
+def test_one_se_never_promotes_a_worse_mean() -> None:
+    """The old ``mean - k*std`` discount let a low-variance, low-mean point win. It must not."""
     sizes = [10, 20]
     means = [0.2, 1.0]
-    stds = [0.05, 0.01]
+    stds = [0.05, 0.40]  # the *worse* point is far more precise
     r = _report_from_arrays(sizes, means, stds, [5, 5])
     out = solve_optimal_min_cluster_size_from_aggregated(
-        r,
-        method="lower_bound",
-        uncertainty_penalty=1.0,
-        smooth_window=1,
-        plateau_fraction=0.9,
-        derivative_rel_tol=1.0,
-        precision_weighted_smooth=False,
+        r, objective="dbcv", smooth_window=1
     )
     assert out.chosen_min_cluster_size == 20
 
 
-def test_solve_unknown_method_raises() -> None:
-    r = _report_from_arrays([10], [1.0], [0.0], [1])
-    with pytest.raises(ValueError, match="Unknown optimization method"):
-        solve_optimal_min_cluster_size_from_aggregated(r, method="nope")
+def test_one_se_k_zero_is_pure_argmax() -> None:
+    sizes = [10, 20, 30]
+    r = _report_from_arrays(sizes, [1.0, 2.0, 1.99], [0.5] * 3, [8] * 3)
+    tied = solve_optimal_min_cluster_size_from_aggregated(
+        r, objective="dbcv", smooth_window=1, one_se_k=1.0
+    )
+    strict = solve_optimal_min_cluster_size_from_aggregated(
+        r, objective="dbcv", smooth_window=1, one_se_k=0.0
+    )
+    assert tied.chosen_min_cluster_size == 30
+    assert strict.chosen_min_cluster_size == 20
+    assert strict.selection == "argmax"
+
+
+def test_contiguity_blocks_an_isolated_far_point() -> None:
+    """A wide-error point past a clearly worse one is not part of the plateau."""
+    sizes = [10, 20, 30, 40]
+    means = [1.0, 2.0, 0.1, 1.95]
+    stds = [0.05, 0.05, 0.05, 0.05]
+    r = _report_from_arrays(sizes, means, stds, [50] * 4)
+    contig = solve_optimal_min_cluster_size_from_aggregated(
+        r, objective="dbcv", smooth_window=1, one_se_k=5.0, one_se_contiguous=True
+    )
+    loose = solve_optimal_min_cluster_size_from_aggregated(
+        r, objective="dbcv", smooth_window=1, one_se_k=5.0, one_se_contiguous=False
+    )
+    assert contig.chosen_min_cluster_size == 20
+    assert loose.chosen_min_cluster_size == 40
+
+
+def test_one_se_rule_is_skipped_below_min_samples() -> None:
+    """An SE estimated from 3 numbers is mostly noise; acting on it hurts reproducibility."""
+    sizes = [10, 20, 30]
+    means = [1.0, 2.0, 1.99]
+    r = _report_from_arrays(sizes, means, [0.5] * 3, [3] * 3)
+    out = solve_optimal_min_cluster_size_from_aggregated(
+        r, objective="dbcv", smooth_window=1, one_se_k=1.0, one_se_min_samples=6
+    )
+    assert out.chosen_min_cluster_size == 20
+    assert out.selection == "argmax"
+    assert out.one_se_k == 0.0  # records the k actually applied
+
+    enough = _report_from_arrays(sizes, means, [0.5] * 3, [8] * 3)
+    slid = solve_optimal_min_cluster_size_from_aggregated(
+        enough, objective="dbcv", smooth_window=1, one_se_k=1.0, one_se_min_samples=6
+    )
+    assert slid.chosen_min_cluster_size == 30
 
 
 def test_solve_unknown_objective_raises() -> None:
@@ -184,88 +209,26 @@ def test_solve_unknown_objective_raises() -> None:
         )
 
 
-def test_user_style_noisy_sequence_reasonable_choice() -> None:
-    """Noisy scores that rise then wiggle near a ceiling (similar to user example)."""
-    sizes = list(range(10, 10 + 8 * 5, 5))
-    means = [0.9, 0.8, 1.6, 2.2, 2.4, 2.3, 2.5, 2.6]
-    stds = [0.15] * len(sizes)
-    counts = [8] * len(sizes)
-    r = _report_from_arrays(sizes, means, stds, counts)
-    out = solve_optimal_min_cluster_size_from_aggregated(
-        r,
-        method="mean",
-        smooth_window=3,
-        plateau_fraction=0.88,
-        derivative_rel_tol=0.25,
-        precision_weighted_smooth=True,
-    )
-    assert out.chosen_min_cluster_size in set(sizes)
-    assert out.score_mean_at_chosen in means
-    assert len(out.dy_dx) == len(out.x)
-
-
-def test_noisy_dbcv_does_not_pick_spurious_early_plateau() -> None:
-    """Regression: fractional ``plateau_fraction * y_max`` used to admit mediocre early points."""
-    sizes = [10, 15, 20, 25, 30, 35, 40, 45, 50, 55]
-    means = [
-        0.399424,
-        0.379638,
-        0.412020,
-        0.369532,
-        0.414304,
-        0.389333,
-        0.400889,
-        0.402151,
-        0.396124,
-        0.464974,
-    ]
-    r = _report_from_arrays(sizes, means, [0.02] * len(sizes), [5] * len(sizes))
-    out = solve_optimal_min_cluster_size_from_aggregated(
-        r,
-        objective="dbcv",
-        method="mean",
-        smooth_window=3,
-        plateau_fraction=0.92,
-        derivative_rel_tol=0.12,
-        precision_weighted_smooth=False,
-    )
-    assert out.chosen_min_cluster_size == 55
-
-
 def test_cluster_count_reward_prefers_more_clusters_on_flat_dbcv() -> None:
-    """When DBCV is flat, log cluster penalty should favor smaller min_cluster_size (more clusters)."""
+    """When DBCV is flat, the log cluster reward should favour smaller min_cluster_size."""
     sizes = [20, 40, 60, 80]
     means = [0.70, 0.71, 0.69, 0.70]
     n_clusters = [120.0, 80.0, 60.0, 50.0]
     r = _report_from_arrays(sizes, means, [0.02] * 4, [5] * 4, n_clusters=n_clusters)
     without = solve_optimal_min_cluster_size_from_aggregated(
-        r,
-        objective="dbcv",
-        method="mean",
-        smooth_window=1,
-        plateau_fraction=0.5,
-        derivative_rel_tol=1.0,
-        precision_weighted_smooth=False,
-        cluster_count_reward=0.0,
+        r, objective="dbcv", smooth_window=1, cluster_count_reward=0.0
     )
     with_reward = solve_optimal_min_cluster_size_from_aggregated(
-        r,
-        objective="dbcv",
-        method="mean",
-        smooth_window=1,
-        plateau_fraction=0.5,
-        derivative_rel_tol=1.0,
-        precision_weighted_smooth=False,
-        cluster_count_reward=0.15,
+        r, objective="dbcv", smooth_window=1, cluster_count_reward=0.15
     )
     assert without.chosen_min_cluster_size >= with_reward.chosen_min_cluster_size
-    assert with_reward.chosen_min_cluster_size == 20
+    assert with_reward.argmax_min_cluster_size == 20
     assert with_reward.y_cluster_term[0] == pytest.approx(0.0)
     assert all(t <= 0.0 for t in with_reward.y_cluster_term)
 
 
 def test_pooled_grid_solve_from_metrics_dfs_returns_y_objective() -> None:
-    from pelinker.analysis import pooled_grid_solve_from_metrics_dfs
+    from pelinker.search.grid_solver import pooled_grid_solve_from_metrics_dfs
 
     sizes = [20, 40, 60]
     df = pd.DataFrame(
@@ -277,11 +240,10 @@ def test_pooled_grid_solve_from_metrics_dfs_returns_y_objective() -> None:
             "ari": [0.9, 0.91, 0.92],
         }
     )
-    solved = pooled_grid_solve_from_metrics_dfs(
-        [df],
-        optimization_config=None,
-    )
+    solved = pooled_grid_solve_from_metrics_dfs([df], optimization_config=None)
     assert len(solved.y_objective) == len(solved.x)
+    assert len(solved.y_se) == len(solved.x)
+    assert len(solved.y_eligible) == len(solved.x)
     assert solved.chosen_min_cluster_size in sizes
 
 
@@ -296,10 +258,6 @@ def test_finite_mask_drops_non_finite_objective() -> None:
     means = [float("nan"), 1.0, 2.0]
     r = _report_from_arrays(sizes, means, [0.0, 0.0, 0.0], [1, 1, 1])
     out = solve_optimal_min_cluster_size_from_aggregated(
-        r,
-        smooth_window=1,
-        plateau_fraction=0.5,
-        derivative_rel_tol=1.0,
-        precision_weighted_smooth=False,
+        r, objective="dbcv", smooth_window=1
     )
     assert out.x == (15.0, 20.0)

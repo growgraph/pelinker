@@ -53,7 +53,7 @@ from sklearn.metrics import (
     roc_curve,
 )
 
-from pelinker.io.json_files import load_json_path
+from pelinker.data.json_files import load_json_path
 
 # ─── Aesthetic constants ──────────────────────────────────────────────────────
 

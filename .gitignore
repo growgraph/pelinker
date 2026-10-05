@@ -165,6 +165,16 @@ cython_debug/
 nbs/
 debug/
 
-reports/
-paper/
+# Anchored: measurement output at the repo root. Unanchored, this also matched the
+# package source directory pelinker/reports/, which then never reached the repository.
+/reports/
+models/
+**/models/
+*.pth
+*.bin
+*.pt
+*.pkl
+*.joblib
 pelinker/store/*gz
+
+.env*

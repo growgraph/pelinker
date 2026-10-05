@@ -8,8 +8,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from pelinker.config import DistillationGateConfig
-from pelinker.distillation import (
+from pelinker.core.config import DistillationGateConfig
+from pelinker.linker.distillation import (
     DistillationFidelityMetrics,
     apply_gates,
     cluster_to_entity_map,
@@ -17,7 +17,7 @@ from pelinker.distillation import (
     evaluate_gates,
     grouped_holdout_split,
 )
-from pelinker.entity_head import fit_mlp_entity_head
+from pelinker.linker.entity_head import fit_mlp_entity_head
 
 NEG = "__NEGATIVE__"
 
@@ -83,7 +83,7 @@ def test_single_group_falls_back_to_row_split_with_a_warning(caplog) -> None:
     """One pmid cannot be split by group; the fallback must be reported, not silent."""
     frame = _frame(n_groups=1, per_group=20)
 
-    with caplog.at_level(logging.WARNING, logger="pelinker.distillation"):
+    with caplog.at_level(logging.WARNING, logger="pelinker.linker.distillation"):
         split = grouped_holdout_split(frame, holdout_fraction=0.2, random_state=0)
 
     assert split.grouping == "row"
@@ -95,7 +95,7 @@ def test_single_group_falls_back_to_row_split_with_a_warning(caplog) -> None:
 def test_missing_group_column_falls_back_to_row_split_with_a_warning(caplog) -> None:
     frame = pd.DataFrame({"entity": [f"e{i % 3}" for i in range(20)]})
 
-    with caplog.at_level(logging.WARNING, logger="pelinker.distillation"):
+    with caplog.at_level(logging.WARNING, logger="pelinker.linker.distillation"):
         split = grouped_holdout_split(frame, holdout_fraction=0.2, random_state=0)
 
     assert split.grouping == "row"
@@ -336,7 +336,7 @@ def test_an_unmeasurable_agreement_gate_passes_and_says_why() -> None:
 
 
 def test_apply_gates_warns_by_default_and_keeps_going(caplog) -> None:
-    with caplog.at_level(logging.WARNING, logger="pelinker.distillation"):
+    with caplog.at_level(logging.WARNING, logger="pelinker.linker.distillation"):
         results = apply_gates(
             _metrics_with(entity_agreement=0.50), DistillationGateConfig()
         )

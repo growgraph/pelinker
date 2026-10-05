@@ -4,7 +4,7 @@ import pathlib
 
 import pytest
 
-from pelinker.clustering_fusion_ranking import (
+from pelinker.clustering.fusion_ranking import (
     singleton_items_by_dbcv_score,
     top_k_fusion_candidates_by_dbcv_proxy,
 )

@@ -9,7 +9,7 @@ import pandas as pd
 
 from numpy.random import RandomState
 
-from pelinker.config import (
+from pelinker.core.config import (
     ClusteringOptimizationConfig,
     EmbeddingModelMetadata,
     EmbeddingSourceSpec,
@@ -17,13 +17,13 @@ from pelinker.config import (
     NegativeScreenerConfig,
 )
 from pelinker.model import Linker
-from pelinker.onto import NEGATIVE_LABEL
-from pelinker.reporting import (
-    LINKER_FIT_CLUSTERING_REPORT_BASENAME,
+from pelinker.core.onto import NEGATIVE_LABEL
+from pelinker.reports.io import (
     read_clustering_report_json,
     write_clustering_report_json,
 )
-from pelinker.transform import TransformConfig
+from pelinker.reports.paths import LINKER_FIT_CLUSTERING_REPORT_BASENAME
+from pelinker.clustering.transform import TransformConfig
 
 
 def _two_source_parquets(tmp_path, n_ent: int, pmids: tuple[str, ...]):
@@ -205,7 +205,7 @@ def test_fit_with_synthetic_negatives_screener_metrics_and_dump_load(tmp_path):
 
 
 def test_evaluate_selection_from_paths_multi_file_paths(tmp_path):
-    from pelinker.selection import evaluate_selection_from_paths
+    from pelinker.search.selection import evaluate_selection_from_paths
 
     p1 = tmp_path / "s0.parquet"
     p2 = tmp_path / "s1.parquet"

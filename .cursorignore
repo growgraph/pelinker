@@ -1,0 +1,25 @@
+.venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+__pycache__/
+*.egg-info/
+site/
+dist/
+build/
+
+# Trained artifacts and large outputs
+models/
+reports/
+nbs/
+debug/
+*.pth
+*.bin
+*.pt
+*.pkl
+*.joblib
+*.parquet
+*.gz
+
+# HuggingFace / spaCy caches (outside repo but common nearby)
+.cache/

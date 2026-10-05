@@ -8,16 +8,16 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from pelinker.config import (
+from pelinker.core.config import (
     EmbeddingModelMetadata,
     EmbeddingSourceSpec,
     LinkerFitConfig,
     ManifoldOovScreenerConfig,
     TransformConfig,
 )
-from pelinker.entity_head import fit_linear_svc_entity_head, fit_mlp_entity_head
+from pelinker.linker.entity_head import fit_linear_svc_entity_head, fit_mlp_entity_head
 from pelinker.model import Linker
-from pelinker.transform import is_parametric_umap
+from pelinker.clustering.transform import is_parametric_umap
 
 
 def test_mlp_entity_head_recovers_blob_labels() -> None:

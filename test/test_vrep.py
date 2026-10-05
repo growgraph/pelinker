@@ -1,5 +1,5 @@
-from pelinker.util import texts_to_vrep
-from pelinker.onto import WordGrouping, MAX_LENGTH
+from pelinker.text.embed import texts_to_vrep
+from pelinker.core.onto import MAX_LENGTH, WordGrouping
 
 
 def test_vrep_word_groupings(tokenizer_model_scibert, nlp):

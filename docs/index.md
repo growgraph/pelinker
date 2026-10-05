@@ -8,6 +8,7 @@ The current **package version** is defined in `pyproject.toml` (see the `[projec
 
 - **[Run scripts & CLIs](user_guide/run_scripts_and_cli.md)** — `pelinker-fit`, `pelinker-serves`, `pelinker-link-files`, and how they connect to scripts under `run/` (including OOV / anomaly analysis).
 - **[Vector representations](user_guide/vector_representation.md)** — how `texts_to_vrep` turns text and transformer layers into pooled embeddings for sliding token windows.
+- **[Gold evaluation](user_guide/evaluation.md)** — the human-verified gold set: canonical predicate vocabulary, LLM pre-annotation, annotator agreement, and the reference baselines.
 - **API Reference** — auto-generated from package docstrings (`pelinker`).
 - **Repository run guide** — long-form tables and preprocessing live in [`run/README.md`](https://github.com/growgraph/pelinker/blob/main/run/README.md) on GitHub.
 

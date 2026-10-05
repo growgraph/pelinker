@@ -17,7 +17,7 @@ from hdbscan import approximate_predict
 import pathlib
 import logging
 
-from pelinker.config import (
+from pelinker.core.config import (
     ClusterCompositionSnapshot,
     ClusteringOptimizationConfig,
     EmbeddingModelMetadata,
@@ -28,37 +28,43 @@ from pelinker.config import (
     NegativeScreenerConfig,
     TransformConfig,
 )
-from pelinker.distillation import (
+from pelinker.linker.distillation import (
     DistillationFidelityMetrics,
     apply_gates,
     cluster_to_entity_map,
     evaluate_distillation_fidelity,
     grouped_holdout_split,
 )
-from pelinker.entity_head import EntityHead, fit_mlp_entity_head
-from pelinker.screener.projection_screener import (
+from pelinker.linker.entity_head import EntityHead, fit_mlp_entity_head
+from pelinker.screener.projection import (
     ManifoldOovScoreModel,
     build_projection_training_arrays,
     evaluate_projection_cv,
     fit_projection_lda_no_cv,
     fit_projection_score_model,
 )
-from pelinker.screener.ambient_screener import NegativeClassScreener
-from pelinker.analysis import (
+from pelinker.screener.ambient import NegativeClassScreener
+from pelinker.screener.evaluation import (
     fit_ambient_screener_with_metrics,
     split_by_negative_label,
 )
-from pelinker.clustering_fit import fit_manifold_clustering
-from pelinker.embedder import embed_kb_corpus
-from pelinker.embedding_fusion import (
+from pelinker.clustering.fit import fit_manifold_clustering
+from pelinker.embed.corpus import embed_kb_corpus
+from pelinker.data.fusion import (
     MENTION_PROVENANCE_COLUMNS,
     fused_property_vectors_from_paths,
     property_fused_dataframe_for_linker_order,
 )
-from pelinker.sampling import draw_selection_sample, stratified_mention_sample
-from pelinker.scaling import MinClusterSizeProvenance, resolve_min_cluster_size
-from pelinker.selection import load_selection_frame
-from pelinker.transform import (
+from pelinker.search.sampling import draw_selection_sample, stratified_mention_sample
+from pelinker.core.scaling import MinClusterSizeProvenance, resolve_min_cluster_size
+from pelinker.kb.classes import (
+    RELATION_COLUMN,
+    RELATION_DIRECTION_COLUMN,
+    VIEW_COLUMNS,
+    file_sha256,
+)
+from pelinker.search.selection import load_selection_frame
+from pelinker.clustering.transform import (
     EmbeddingTransformer,
     TransformArtifacts,
     load_clustering_manifold,
@@ -67,42 +73,40 @@ from pelinker.transform import (
     score_transform_artifacts,
     is_parametric_umap,
 )
-from pelinker.reporting import (
+from pelinker.data.frames import entity_negative_label_mask_01
+from pelinker.reports.schema import (
     ClusteringFitMetrics,
     ClusteringHyperparameters,
     LinkerFitDiagnostics,
     ModelSelectionReport,
     NegativeScreenerInSampleMetrics,
-    entity_negative_label_mask_01,
     subsample_diagnostics_stratified,
 )
-from pelinker.kb_out import (
+from pelinker.kb.kb_out import (
     KbOutFitProvenance,
     KbOutNamingConfig,
+    annotate_cluster_directions,
     build_kb_out_catalog,
 )
-from pelinker.linker_cluster_training import (
+from pelinker.linker.cluster_training import (
     cluster_composition_from_training_frame,
     consensus_cluster_names,
     provisional_cluster_assignments_from_training_frame as _provisional_cluster_assignments_from_training_frame,
 )
-from pelinker.linker_kb_lemma import (
+from pelinker.linker.kb_lemma import (
     build_kb_lemma_index,
     enrich_entity_predictions_kb_validation,
     lookup_kb_training_entity_label,
 )
-from pelinker.onto import (
+from pelinker.core.onto import (
     MAX_LENGTH,
     MentionCandidate,
     NEGATIVE_LABEL,
     WordGrouping,
 )
-from pelinker.util import (
-    extract_ordered_mention_tensors,
-    keep_expression_for_prediction,
-    load_models,
-    texts_to_vrep,
-)
+from pelinker.text.embed import extract_ordered_mention_tensors, texts_to_vrep
+from pelinker.text.models import load_models
+from pelinker.text.tokenize import keep_expression_for_prediction
 
 logger = logging.getLogger(__name__)
 
@@ -130,7 +134,7 @@ _LINKER_LOAD_DEFAULTS: dict[str, object] = {
     "kb_in_entity_clusters": {},
     "cluster_id_to_entity_id": {},
     "kb_out_catalog": None,
-    "nlp_model_name": "en_core_web_trf",
+    "nlp_model_name": "en_core_web_lg",
     "_nlp": None,
     "screener_in_sample_metrics": None,
     "clustering_fit_metrics": None,
@@ -139,6 +143,7 @@ _LINKER_LOAD_DEFAULTS: dict[str, object] = {
     "predict_mode": "legacy",
     "min_cluster_size_provenance": None,
     "distillation_fidelity": None,
+    "cluster_direction": {},
 }
 
 
@@ -621,6 +626,11 @@ def _build_training_cluster_frame(
     for col in MENTION_PROVENANCE_COLUMNS:
         if col in manifold_full.columns:
             frame[col] = manifold_full[col].values
+    # The matcher's direction and the class-view columns travel with each mention, so
+    # the catalog can read merges between relations and a direction per cluster.
+    for col in ("direction", *VIEW_COLUMNS):
+        if col in manifold_full.columns:
+            frame[col] = manifold_full[col].values
     frame["cluster"] = cluster_labels
     frame["screener_score"] = screener_decision[manifold_mask]
     frame["projection_score"] = projection_scores[manifold_mask]
@@ -660,23 +670,31 @@ def _finalize_linker_cluster_state(
     kb_out_naming: KbOutNamingConfig | None = None,
     kb_in_labels_map_path: str | None = None,
 ) -> None:
+    tcf = linker.training_cluster_frame
+    assert tcf is not None
+    # Under a class view, composition is read between canonical relations: the two
+    # voices of one relation are one entity whose clusters differ in direction, not two
+    # entities a cluster merged. Direction is summarized per cluster below.
+    composition_frame = (
+        tcf.assign(entity=tcf[RELATION_COLUMN])
+        if RELATION_COLUMN in tcf.columns
+        else tcf
+    )
     linker.cluster_composition = cluster_composition_from_training_frame(
-        linker.training_cluster_frame
+        composition_frame
     )
     linker.cluster_consensus_names = consensus_cluster_names(linker.cluster_composition)
 
     linker.kb_in_labels_map = dict(linker.labels_map)
     linker.kb_in_entity_clusters = _provisional_cluster_assignments_from_training_frame(
         linker.kb_in_labels_map,
-        linker.training_cluster_frame,
+        composition_frame,
     )
     linker.cluster_assignments = dict(linker.kb_in_entity_clusters)
 
-    tcf = linker.training_cluster_frame
-    assert tcf is not None
     assign_cols = ["entity", "cluster", "pmid", "mention"]
     assign_cols.extend(c for c in MENTION_PROVENANCE_COLUMNS if c in tcf.columns)
-    assignments = tcf[assign_cols].copy()
+    assignments = composition_frame[assign_cols].copy()
 
     linker.kb_out_catalog = build_kb_out_catalog(
         linker.cluster_composition,
@@ -686,6 +704,11 @@ def _finalize_linker_cluster_state(
         fit_provenance=fit_provenance,
         naming=kb_out_naming,
         kb_in_labels_map_path=kb_in_labels_map_path,
+    )
+    linker.cluster_direction = (
+        annotate_cluster_directions(linker.kb_out_catalog, tcf)
+        if RELATION_DIRECTION_COLUMN in tcf.columns
+        else {}
     )
     labels_map = linker.kb_out_catalog["labels_map"]
     linker.labels_map = {str(k): str(v) for k, v in labels_map.items()}
@@ -848,6 +871,9 @@ class Linker:
         self.kb_in_labels_map: dict[str, str] = {}
         self.kb_in_entity_clusters: dict[str, int] = {}
         self.cluster_id_to_entity_id: dict[int, str] = {}
+        self.cluster_direction: dict[str, str] = {}
+        """KB-out entity id → dominant direction of its training mentions, relative to
+        the canonical relation. Empty for a fit without a class view."""
         self.kb_out_catalog: dict[str, object] | None = None
         self.screener: NegativeClassScreener | None = None
         self.screener_in_sample_metrics: NegativeScreenerInSampleMetrics | None = None
@@ -865,7 +891,7 @@ class Linker:
         self._hf_tokenizer = None
         self._hf_model = None
         self._hf_models_by_type: dict[str, tuple[object, object]] = {}
-        self.nlp_model_name: str = kwargs.pop("nlp_model_name", "en_core_web_trf")
+        self.nlp_model_name: str = kwargs.pop("nlp_model_name", "en_core_web_lg")
         self._nlp: object | None = None
         self._fit_clustering_report: ModelSelectionReport | None = None
 
@@ -955,7 +981,7 @@ class Linker:
 
     def take_fit_clustering_report(self) -> ModelSelectionReport | None:
         """
-        Consume the :class:`~pelinker.reporting.ClusteringReport` produced by the last :meth:`fit`.
+        Consume the :class:`~pelinker.reports.schema.ModelSelectionReport` produced by the last :meth:`fit`.
 
         Call **before** :meth:`dump` if you need JSON or other persistence: the report is
         not serialized on the linker artifact (only prediction state is pickled).
@@ -984,7 +1010,7 @@ class Linker:
         training_diagnostics: LinkerFitDiagnostics | None = None,
     ) -> ModelSelectionReport | None:
         """
-        Build a :class:`~pelinker.reporting.ClusteringReport` when full training rows exist.
+        Build a :class:`~pelinker.reports.schema.ModelSelectionReport` when full training rows exist.
 
         After a normal :meth:`fit`, heavy training payloads are removed for prediction; use
         :meth:`take_fit_clustering_report` immediately after fitting instead.
@@ -1125,15 +1151,15 @@ class Linker:
         Args:
             embeddings: Path or sequence of paths to parquet file(s) (mention-level rows:
                         ``pmid``, ``entity``, ``mention``, ``embed``). Multiple files are
-                        fused like :func:`~pelinker.selection.load_selection_frame` (inner join
+                        fused like :func:`~pelinker.search.selection.load_selection_frame` (inner join
                         on keys, concat embeddings). Order must match
                         ``embedding_metadata.sources``. If None, ``embed_kb_corpus`` is run
                         (one output file per source).
             transform_config: TransformConfig instance
             min_cluster_size: HDBSCAN ``min_cluster_size`` (choose upstream, e.g. via
-                ``pelinker.model_selection``). When ``None``, it is resolved from
+                ``pelinker.search.model_selection``). When ``None``, it is resolved from
                 ``fit_config.scale_curve`` against the realized manifold row count, or
-                falls back to :data:`~pelinker.scaling.DEFAULT_MIN_CLUSTER_SIZE`. An
+                falls back to :data:`~pelinker.core.scaling.DEFAULT_MIN_CLUSTER_SIZE`. An
                 explicit value always wins; either way the choice and its origin land on
                 ``min_cluster_size_provenance`` and in the fit report.
             fit_config: Parquet read batching, mention load filters, subsample settings, and screener config.
@@ -1148,10 +1174,10 @@ class Linker:
             Sets ``cluster_composition`` (mention-weighted property mass and per-cluster
             mixtures), ``cluster_consensus_names`` (short labels from those mixtures),
             ``screener_in_sample_metrics``, and ``clustering_fit_metrics``. Mention-level
-            training tables and manifold arrays used for :class:`~pelinker.reporting.ClusteringReport`
+            training tables and manifold arrays used for :class:`~pelinker.reports.schema.ModelSelectionReport`
             are stripped after each fit; persist JSON with :meth:`take_fit_clustering_report` and
-            :func:`~pelinker.reporting.write_clustering_report_json` at
-            :func:`~pelinker.reporting.linker_fit_clustering_report_path` (same layout as
+            :func:`~pelinker.reports.io.write_clustering_report_json` at
+            :func:`~pelinker.reports.paths.linker_fit_clustering_report_path` (same layout as
             ``pelinker-fit`` ``report_path``) before :meth:`dump`.
 
         Returns:
@@ -1421,6 +1447,12 @@ class Linker:
                 min_cluster_size=min_cluster_size,
                 clustering_sample_index=fit_cfg.clustering_sample_index,
                 seed=fit_cfg.base_seed,
+                class_view=fit_cfg.class_view,
+                class_kb_sha256=(
+                    file_sha256(fit_cfg.class_kb_path)
+                    if fit_cfg.class_kb_path is not None
+                    else None
+                ),
             ),
             kb_out_naming=kb_out_naming,
             kb_in_labels_map_path=kb_in_labels_map_path,
@@ -1494,7 +1526,8 @@ class Linker:
             import spacy
 
             logger.info("Loading spaCy model %r for predict()", self.nlp_model_name)
-            self._nlp = spacy.load(self.nlp_model_name)
+            # Entities are never read; NER is a large share of spaCy time.
+            self._nlp = spacy.load(self.nlp_model_name, exclude=["ner"])
         return self._nlp
 
     @staticmethod
@@ -1703,7 +1736,7 @@ class Linker:
         ``ichunk``, ``word_grouping`` and ``lemma`` (space-joined token lemmas, used for
         KB-match lookups).
 
-        Mentions are filtered with :func:`~pelinker.util.keep_expression_for_prediction`
+        Mentions are filtered with :func:`~pelinker.text.tokenize.keep_expression_for_prediction`
         (drop windows containing punctuation; drop windows whose tokens are all stop
         words).
         """
@@ -1817,7 +1850,7 @@ class Linker:
 
         Tokenization uses the spaCy pipeline named by ``nlp_model_name`` (set from
         ``EmbeddingTrainingConfig.nlp_model`` during corpus embedding, else default
-        ``en_core_web_trf``).
+        ``en_core_web_lg``).
 
         Each ``entities`` row includes ``score``: HDBSCAN approximate cluster
         membership probability from ``approximate_predict`` on UMAP coordinates.
@@ -2081,6 +2114,10 @@ class Linker:
                 projection_score=float(oov_scores_k[j]),
             )
             cast(dict[str, object], row)["mention_source_index"] = int(mention_i)
+            if self.cluster_direction:
+                cast(dict[str, object], row)["direction_predicted"] = (
+                    self.cluster_direction.get(predicted_entity)
+                )
             candidates.append(row)
 
         deduped = self._dedupe_overlapping_prediction_rows(candidates)
@@ -2111,7 +2148,7 @@ class Linker:
         return deduped, None
 
     def _kb_lemma_index_by_wg(self, nlp: object) -> dict[WordGrouping, dict[str, str]]:
-        """Build lemma→KB training-entity index; see :func:`pelinker.linker_kb_lemma.build_kb_lemma_index`."""
+        """Build lemma→KB training-entity index; see :func:`pelinker.linker.kb_lemma.build_kb_lemma_index`."""
         return build_kb_lemma_index(self.labels_map, nlp)
 
     def compute_mention_anomaly(

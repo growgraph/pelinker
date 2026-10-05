@@ -9,15 +9,17 @@ import numpy as np
 from sklearn.decomposition import PCA
 
 from pelinker.model import Linker
-from pelinker.ops import load_dataframe
-from pelinker.util import load_models, embed_texts
+from pelinker.data.tables import load_dataframe
+from pelinker.text.embed import embed_texts
+from pelinker.text.models import load_models
 from sklearn.cluster import KMeans
 
-from pelinker.analysis import (
-    embeddings_dict_to_dataframe,
-    get_word_frequencies_from_library,
+from pelinker.data.frames import embeddings_dict_to_dataframe
+from pelinker.text.lexical import (
     compute_kb_generality_scores,
+    get_word_frequencies_from_library,
 )
+from pelinker.core.paths import ExpandedPath
 
 logger = logging.getLogger(__name__)
 
@@ -106,7 +108,7 @@ def select_diverse_entities(
 @click.command()
 @click.option(
     "--input-table-path",
-    type=click.Path(path_type=pathlib.Path),
+    type=ExpandedPath(path_type=pathlib.Path),
     required=True,
     help="Path to the dataframe to load (CSV/TSV, optionally gzipped).",
 )
@@ -134,7 +136,7 @@ def select_diverse_entities(
     "--model-type",
     type=click.STRING,
     default="pubmedbert",
-    help="Backbone model identifier passed to pelinker.util.load_models.",
+    help="Backbone model identifier passed to pelinker.text.models.load_models.",
 )
 @click.option(
     "--layers-spec",
@@ -167,7 +169,7 @@ def select_diverse_entities(
 )
 @click.option(
     "--output-path",
-    type=click.Path(path_type=pathlib.Path),
+    type=ExpandedPath(path_type=pathlib.Path),
     required=True,
     help="Path for saving selected entities CSV file.",
 )
@@ -222,7 +224,7 @@ def run(
 
     # Load spacy model for texts_to_vrep
     logger.info("Loading spaCy model")
-    nlp = spacy.load("en_core_web_trf")
+    nlp = spacy.load("en_core_web_lg")
 
     # Filter rows where both id and label are not null
     df_filtered = df[[id_column, label_column]].dropna()

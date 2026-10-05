@@ -1,6 +1,6 @@
 # Vector representations (`texts_to_vrep`)
 
-This page describes the pipeline implemented by `texts_to_vrep` in `pelinker.util`: how raw strings become layer activations, how those align with spaCy token windows, and what objects you get back. Generated API entries live under **API Reference** (e.g. `pelinker.util`, `pelinker.onto`).
+This page describes the pipeline implemented by `texts_to_vrep` in `pelinker.text.embed`: how raw strings become layer activations, how those align with spaCy token windows, and what objects you get back. Generated API entries live under **API Reference** (e.g. `pelinker.text.embed`, `pelinker.core.onto`).
 
 ## Purpose
 
@@ -73,4 +73,4 @@ The transformer is run **once**; the loop over `word_modes` only recomputes spaC
 ## See also
 
 - **[Run scripts & CLIs](run_scripts_and_cli.md)** — training, server, and batch linking entry points.
-- Generated module pages: **API Reference** → `pelinker.util`, `pelinker.onto`.
+- Generated module pages: **API Reference** → `pelinker.text.embed`, `pelinker.text.chunking`, `pelinker.core.onto`.

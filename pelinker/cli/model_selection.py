@@ -6,24 +6,30 @@ import pathlib
 
 import click
 
-from pelinker.model_selection import run_model_selection
-from pelinker.model_selection_checkpoint import DEFAULT_CHECKPOINT_NAME, RunMode
-from pelinker.onto import NEGATIVE_LABEL
-from pelinker.reporting import MODEL_SELECTION_RUN_REPORT_BASENAME
+from pelinker.search.model_selection import run_model_selection
+from pelinker.search.model_selection_checkpoint import DEFAULT_CHECKPOINT_NAME, RunMode
+from pelinker.core.onto import NEGATIVE_LABEL
+from pelinker.reports.paths import MODEL_SELECTION_RUN_REPORT_BASENAME
+from pelinker.core.paths import ExpandedPath
+from pelinker.kb.classes import check_class_view
 
 _EPILOG = """
 MCS = min_cluster_size (HDBSCAN hyperparameter on the inner grid).
 
 Metrics (same two-level stack as dim selection):
 
-  Inner (choose MCS): grid_objective=dbcv_ari_mean_minmax —
-    min-max normalize mean DBCV and mean ARI on the MCS curve, average,
-    smooth, and pick the left plateau.
+  Inner (choose MCS): grid_objective=dbcv_ari_geomean —
+    clip mean DBCV and mean ARI at 0, take sqrt(dbcv*ari) per bootstrap
+    sample, smooth, then pick the largest MCS within one *paired*
+    standard error of the best (grid_one_se_k, default 1.0).
+    The geometric mean's ranking is invariant to the scales of DBCV and
+    ARI, so neither metric has to be normalized against the curve.
 
   Outer (rank model × layer): at each combo's pooled MCS, combine mean
-    DBCV and mean ARI with the same DBCV+ARI pooling (minmax across
-    candidates). best_score stays mean DBCV for heatmaps; outer_score
-    chooses the winner. Fusion proxies use resume-safe 0.5·(DBCV+ARI).
+    DBCV and mean ARI with the *same* clipped geometric mean. Each row is
+    scored from its own numbers, so adding a candidate cannot reorder the
+    others. best_score stays mean DBCV for heatmaps; outer_score chooses
+    the winner.
 """
 
 
@@ -33,13 +39,13 @@ Metrics (same two-level stack as dim selection):
 )
 @click.option(
     "--input-dir",
-    type=click.Path(path_type=pathlib.Path),
+    type=ExpandedPath(path_type=pathlib.Path),
     required=True,
     help="Directory containing parquet files",
 )
 @click.option(
     "--report-path",
-    type=click.Path(path_type=pathlib.Path),
+    type=ExpandedPath(path_type=pathlib.Path),
     required=True,
     help=(
         "Directory for all run outputs. Canonical artifact: "
@@ -145,6 +151,23 @@ Metrics (same two-level stack as dim selection):
     help="Seed for per-entity mention cap draws (default: --seed).",
 )
 @click.option(
+    "--class-view",
+    type=click.Choice(["raw", "rel", "reldir"]),
+    default="reldir",
+    show_default=True,
+    help=(
+        "Classes the objective's ARI scores clusters against: raw matched label, "
+        "canonical relation, or canonical relation + direction. rel/reldir need "
+        "--class-kb-path."
+    ),
+)
+@click.option(
+    "--class-kb-path",
+    type=ExpandedPath(path_type=pathlib.Path, dir_okay=False, exists=True),
+    default=None,
+    help="Pairs KB (*.pairs.csv) the mentions were embedded with; required unless --class-view raw.",
+)
+@click.option(
     "--batch-size",
     type=click.INT,
     default=1000,
@@ -164,7 +187,7 @@ Metrics (same two-level stack as dim selection):
 )
 @click.option(
     "--selected-labels-kb-path",
-    type=click.Path(path_type=pathlib.Path),
+    type=ExpandedPath(path_type=pathlib.Path),
     default=None,
     help="Optional path to selected labels KB CSV file. If provided, clustering will only use labels from this KB.",
 )
@@ -220,7 +243,7 @@ Metrics (same two-level stack as dim selection):
 )
 @click.option(
     "--checkpoint-path",
-    type=click.Path(path_type=pathlib.Path),
+    type=ExpandedPath(path_type=pathlib.Path),
     default=None,
     help=f"Checkpoint JSON path (default: <report-path>/{DEFAULT_CHECKPOINT_NAME})",
 )
@@ -266,6 +289,8 @@ def main(
     max_mentions_per_entity: int | None,
     max_mentions_negative: int | None,
     mention_cap_seed: int | None,
+    class_view: str,
+    class_kb_path: pathlib.Path | None,
     batch_size: int,
     n_sample: int,
     prefix: str,
@@ -299,6 +324,8 @@ def main(
         max_mentions_per_entity=max_mentions_per_entity,
         max_mentions_negative=max_mentions_negative,
         mention_cap_seed=seed if mention_cap_seed is None else mention_cap_seed,
+        class_view=check_class_view(class_view, class_kb_path),
+        class_kb_path=class_kb_path,
         batch_size=batch_size,
         n_sample=n_sample,
         prefix=prefix,

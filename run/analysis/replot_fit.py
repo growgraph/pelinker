@@ -26,7 +26,7 @@ import numpy as np
 import pandas as pd
 import seaborn as sns
 
-from pelinker.cluster_composition_viz import (
+from pelinker.clustering.composition import (
     DEFAULT_MAX_CLUSTERS_FOR_PLOTS,
     DEFAULT_MAX_ENTITIES_FOR_FLOW_PLOTS,
     HDBSCAN_NOISE_CLUSTER_ID,
@@ -37,21 +37,24 @@ from pelinker.cluster_composition_viz import (
     with_noise_cluster_label,
 )
 
-from pelinker.kb_out import cluster_labels_from_catalog
+from pelinker.kb.kb_out import cluster_labels_from_catalog
 from pelinker.plotting import (
     build_fit_cluster_viz_plot_df,
     enrich_fit_cluster_viz_plot_df_with_context,
     plot_cluster_entity_sankey,
     plot_cluster_viz,
 )
-from pelinker.reporting import (
-    linker_fit_cluster_composition_path,
-    linker_fit_clustering_report_path,
-    linker_fit_kb_out_path,
+from pelinker.reports.io import (
     read_cluster_composition_json,
     read_clustering_report_json,
     read_kb_out_json,
 )
+from pelinker.reports.paths import (
+    linker_fit_cluster_composition_path,
+    linker_fit_clustering_report_path,
+    linker_fit_kb_out_path,
+)
+from pelinker.core.paths import ExpandedPath
 
 _PIE_SAMPLE_MAX_CLUSTERS = 6
 _FIGURE_EXTS = ("png", "pdf")
@@ -255,7 +258,7 @@ def _load_composition_df(
         if stored_exclude is True:
             needs_rebuild = True
         if needs_rebuild:
-            from pelinker.reporting import ModelSelectionReport
+            from pelinker.reports.schema import ModelSelectionReport
 
             if isinstance(report, ModelSelectionReport):
                 return build_cluster_composition_df(
@@ -266,7 +269,7 @@ def _load_composition_df(
                     max_clusters=max_clusters,
                 )
         return df
-    from pelinker.reporting import ModelSelectionReport
+    from pelinker.reports.schema import ModelSelectionReport
 
     if not isinstance(report, ModelSelectionReport):
         raise TypeError("report must be a ModelSelectionReport")
@@ -288,7 +291,7 @@ def _load_composition_df(
 )
 @click.argument(
     "report_dir",
-    type=click.Path(
+    type=ExpandedPath(
         path_type=pathlib.Path, exists=True, file_okay=False, dir_okay=True
     ),
 )
@@ -321,7 +324,7 @@ def _load_composition_df(
 )
 @click.option(
     "--pmid-text-table",
-    type=click.Path(path_type=pathlib.Path, dir_okay=False),
+    type=ExpandedPath(path_type=pathlib.Path, dir_okay=False),
     default=None,
     help=(
         "TSV/CSV (optional gzip) with PMID and full text columns. "

@@ -6,23 +6,25 @@ requires = ["hatchling"]
 authors = [{email = "abelikov@gmail.com", name = "Alexander Belikov"}]
 dependencies = [
   "click>=8.1,<9",
-  "cupy-cuda12x>=13.6.0",
   "dataclass-wizard>=0.35.1",
   "fastapi>=0.115.0,<1",
   "hdbscan>=0.8.41",
   "hydra-core>=1.3.2",
   "joblib>=1.4.2,<2",
+  "matplotlib>=3.9",
   "pandas>=2.3.3",
-  "pip>=26.0.1",
+  "plotly>=6.2.0,<7",
   "pyarrow>=23.0.1",
+  "pysankey>=0.0.1",
   "rich>=14.1.0",
   "scikit-learn>=1.5.0,<2",
   "scikit-optimize>=0.10.2",
-  "sentence-transformers>=3.0.1,<4",
+  "seaborn>=0.13.2,<0.14",
+  "sentence-transformers>=5.6,<6",
   "spacy>=3.7.5,<4",
   "tf-keras>=2.16.0",
-  "torch>=2.9.1",
-  "transformers>=4.41.2,<5",
+  "torch>=2.13.0",
+  "transformers>=5.5.0,<6",
   "umap-learn[parametric-umap]>=0.5.11",
   "uvicorn>=0.42.0",
   "wordfreq>=3.1.1"
@@ -35,13 +37,12 @@ version = "0.2.0"
 
 [project.optional-dependencies]
 dev = [
-  "bumplot>=0.2.1",
-  "mypy>=1.11",
-  "plotly>=6.2.0,<7",
+  # Pinned as a real dependency rather than left to `spacy download`: any `uv sync`
+  # prunes a downloaded model, which silently re-skips every test that needs it.
+  "en-core-web-lg @ https://github.com/explosion/spacy-models/releases/download/en_core_web_lg-3.8.0/en_core_web_lg-3.8.0-py3-none-any.whl",
   "pre-commit>=4.0.1,<5",
-  "pysankey>=0.0.1",
   "pytest>=9.0.2",
-  "seaborn>=0.13.2,<0.14"
+  "ty>=0.0.1a10"
 ]
 docs = [
   "griffe<2.0.0",
@@ -54,8 +55,29 @@ docs = [
   "mkdocstrings-python>=2.0.3",
   "mkdocstrings[python]>=0.29.1"
 ]
-gpu = [
-  "cupy-cuda12x>=13.6.0"
+eval = [
+  # LLM-assisted gold pre-annotation and the LLM linking baseline; the linker itself
+  # never calls an LLM. Every provider seam in pelinker/eval/llm.py ships here: the
+  # agreement slice needs a second model *family*, and the linking baseline a third
+  # model that did not annotate the gold, so one SDK is never enough in practice.
+  "anthropic>=0.40",
+  "google-genai>=1.0",
+  "openai>=1.60"
+]
+# GPU extras are mutually exclusive; pick the one matching the "CUDA Version" that
+# `nvidia-smi` reports (the driver's ceiling — an installed toolkit is not used).
+gpu-cu12 = [
+  "cupy-cuda12x[ctk]>=14.2.0",
+  "torch>=2.13.0"
+]
+gpu-cu13 = [
+  "cupy-cuda13x[ctk]>=14.2.0",
+  "torch>=2.13.0"
+]
+preprocess = [
+  # KB regeneration only (run/preprocessing/extract_properties_*.py); the linker never
+  # parses ontologies at fit or serve time.
+  "rdflib>=7.0"
 ]
 
 [project.scripts]
@@ -73,11 +95,31 @@ include = ["pelinker"]
 [tool.hatch.build.targets.wheel]
 include = ["pelinker"]
 
+[tool.hatch.metadata]
+# the pinned en_core_web_lg wheel in the `dev` extra is a direct URL reference
+allow-direct-references = true
+
 [tool.pytest.ini_options]
 addopts = "-q"
 markers = [
-  "heavy: needs large out-of-band assets (spaCy en_core_web_trf, HF weights); skipped automatically when absent"
+  "heavy: needs large out-of-band assets (spaCy en_core_web_lg, HF weights); skipped automatically when absent"
 ]
 testpaths = ["test"]
 
+[tool.ruff.lint]
+# The pre-commit defaults were not reporting unused imports, which is how ~100 of them
+# accumulated. F401 is the point of this block; the rest is ruff's default set.
+ignore = ["E722"]
+select = ["E4", "E7", "E9", "F"]
+
 [tool.uv]
+conflicts = [[{extra = "gpu-cu12"}, {extra = "gpu-cu13"}]]
+
+[[tool.uv.index]]
+explicit = true
+name = "pytorch-cu126"
+url = "https://download.pytorch.org/whl/cu126"
+
+[tool.uv.sources]
+# PyPI's Linux torch is built against CUDA 13; CUDA 12 drivers need the cu126 build.
+torch = [{extra = "gpu-cu12", index = "pytorch-cu126"}]

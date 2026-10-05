@@ -2,7 +2,8 @@
 
 import pytest
 
-from pelinker.util import normalize_layers_spec, split_text_into_token_budget
+from pelinker.text.chunking import split_text_into_token_budget
+from pelinker.text.models import normalize_layers_spec
 
 
 def test_normalize_layers_spec_digit_string() -> None:

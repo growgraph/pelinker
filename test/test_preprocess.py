@@ -1,4 +1,4 @@
-from pelinker.preprocess import pre_process_properties
+from pelinker.kb.preprocess import pre_process_properties
 
 
 def test_prep(df_properties):

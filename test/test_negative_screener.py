@@ -6,24 +6,24 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from pelinker.analysis import (
+from pelinker.screener.evaluation import (
     fit_ambient_screener_with_metrics,
     split_by_negative_label,
 )
-from pelinker.selection import evaluate_selection_sample
-from pelinker.config import ClusteringOptimizationConfig, NegativeScreenerConfig
-from pelinker.screener.ambient_screener import NegativeClassScreener
-from pelinker.onto import NEGATIVE_LABEL
-from pelinker.reporting import (
+from pelinker.search.selection import evaluate_selection_sample
+from pelinker.core.config import ClusteringOptimizationConfig, NegativeScreenerConfig
+from pelinker.screener.ambient import NegativeClassScreener
+from pelinker.core.onto import NEGATIVE_LABEL
+from pelinker.reports.schema import (
     AllScreenerCvResult,
     BinaryClassifierMetrics,
     ClusteringSearchSummaryRow,
     HyperparameterSearchStats,
     MeanWithUncertainty,
     MetricMeanStd,
-    clustering_search_summary_row_from_flat_dict,
 )
-from pelinker.transform import TransformConfig
+from pelinker.reports.summary import clustering_search_summary_row_from_flat_dict
+from pelinker.clustering.transform import TransformConfig
 
 
 def _tiny_frame(*, dim: int = 8, n_pos: int = 40, n_neg: int = 15) -> pd.DataFrame:

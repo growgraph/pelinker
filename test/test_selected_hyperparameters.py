@@ -13,7 +13,7 @@ from pelinker.cli.fit import (
     FitCliConfig,
     _resolve_selection_hyperparameters,
 )
-from pelinker.selected_hyperparameters import (
+from pelinker.search.selected_hyperparameters import (
     SELECTED_HYPERPARAMETERS_BASENAME,
     SELECTED_HYPERPARAMETERS_SCHEMA,
     SelectedHyperparameters,
@@ -57,7 +57,7 @@ def test_handoff_round_trips_through_disk(tmp_path: Path) -> None:
 
 def test_handoff_rejects_an_unknown_schema(tmp_path: Path) -> None:
     p = tmp_path / SELECTED_HYPERPARAMETERS_BASENAME
-    p.write_text(json.dumps({"schema": "pelinker.selected_hyperparameters.v99"}))
+    p.write_text(json.dumps({"schema": "pelinker.search.selected_hyperparameters.v99"}))
 
     with pytest.raises(ValueError, match="expected schema"):
         load_selected_hyperparameters(p)
@@ -145,3 +145,43 @@ def test_matching_manifold_produces_no_warning(tmp_path: Path, caplog) -> None:
         )
 
     assert "different coordinates" not in caplog.text
+
+
+def test_the_class_view_round_trips_and_defaults_to_raw(tmp_path: Path) -> None:
+    write_selected_hyperparameters(_selected(class_view="reldir"), tmp_path)
+    assert load_selected_hyperparameters(tmp_path).class_view == "reldir"
+
+    legacy = _selected()
+    assert legacy.class_view is None
+    assert legacy.effective_class_view == "raw"
+
+
+def test_a_class_view_mismatch_between_search_and_fit_is_warned(
+    tmp_path: Path, caplog
+) -> None:
+    """MCS chosen against raw labels does not transfer to a reldir fit."""
+    import logging
+
+    write_selected_hyperparameters(_selected(manifold_kind="umap"), tmp_path)
+
+    with caplog.at_level(logging.WARNING, logger="pelinker.cli.fit"):
+        _resolve_selection_hyperparameters(
+            _cfg(selection_report=str(tmp_path), predict_mode="legacy")
+        )
+
+    assert "different reference partition" in caplog.text
+
+
+def test_a_matching_class_view_produces_no_warning(tmp_path: Path, caplog) -> None:
+    import logging
+
+    write_selected_hyperparameters(
+        _selected(manifold_kind="umap", class_view="reldir"), tmp_path
+    )
+
+    with caplog.at_level(logging.WARNING, logger="pelinker.cli.fit"):
+        _resolve_selection_hyperparameters(
+            _cfg(selection_report=str(tmp_path), predict_mode="legacy")
+        )
+
+    assert "different reference partition" not in caplog.text

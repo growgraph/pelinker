@@ -2,7 +2,7 @@
 
 import pandas as pd
 
-from pelinker.config import ClusterCompositionSnapshot
+from pelinker.core.config import ClusterCompositionSnapshot
 from pelinker.model import (
     cluster_composition_from_training_frame,
     consensus_cluster_names,

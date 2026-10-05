@@ -6,22 +6,28 @@ import pathlib
 
 import click
 
-from pelinker.dim_selection import run_dim_selection
-from pelinker.dim_selection.checkpoint import DEFAULT_CHECKPOINT_NAME
-from pelinker.dim_selection.grids import DEFAULT_PCA_GRID, DEFAULT_UMAP_GRID
-from pelinker.onto import NEGATIVE_LABEL
+from pelinker.search.dim_selection import run_dim_selection
+from pelinker.search.dim_selection.checkpoint import DEFAULT_CHECKPOINT_NAME
+from pelinker.search.dim_selection.grids import DEFAULT_PCA_GRID, DEFAULT_UMAP_GRID
+from pelinker.core.onto import NEGATIVE_LABEL
+from pelinker.core.paths import ExpandedPath
+from pelinker.kb.classes import check_class_view
 
 _EPILOG = """
 MCS = min_cluster_size (HDBSCAN hyperparameter on the inner grid).
 
 Metrics (same two-level stack as model selection):
 
-  Inner (choose MCS): grid_objective=dbcv_ari_mean_minmax —
-    min-max normalize mean DBCV and mean ARI on the MCS curve, average,
-    smooth, and pick the left plateau.
+  Inner (choose MCS): grid_objective=dbcv_ari_geomean —
+    clip mean DBCV and mean ARI at 0, take sqrt(dbcv*ari) per bootstrap
+    sample, smooth, then pick the largest MCS within one *paired*
+    standard error of the best (grid_one_se_k, default 1.0).
+    The geometric mean's ranking is invariant to the scales of DBCV and
+    ARI, so neither metric has to be normalized against the curve.
 
   Outer (rank pca × umap cells): at each cell's pooled MCS, combine mean
-    DBCV and mean ARI with the same DBCV+ARI pooling (minmax across cells).
+    DBCV and mean ARI with the *same* clipped geometric mean. Each cell is
+    scored from its own numbers, independently of the other cells.
     best_score stays mean DBCV for heatmaps; outer_score chooses the winner.
 """
 
@@ -32,13 +38,13 @@ Metrics (same two-level stack as model selection):
 )
 @click.option(
     "--input-parquet",
-    type=click.Path(path_type=pathlib.Path),
+    type=ExpandedPath(path_type=pathlib.Path),
     required=True,
     help="Single mention-level embedding parquet (one model/layer).",
 )
 @click.option(
     "--report-path",
-    type=click.Path(path_type=pathlib.Path),
+    type=ExpandedPath(path_type=pathlib.Path),
     required=True,
     help="Directory for dim-selection outputs and checkpoint.",
 )
@@ -149,6 +155,23 @@ Metrics (same two-level stack as model selection):
     help="Seed for per-entity mention cap draws (default: --seed).",
 )
 @click.option(
+    "--class-view",
+    type=click.Choice(["raw", "rel", "reldir"]),
+    default="reldir",
+    show_default=True,
+    help=(
+        "Classes the objective's ARI scores clusters against: raw matched label, "
+        "canonical relation, or canonical relation + direction. rel/reldir need "
+        "--class-kb-path."
+    ),
+)
+@click.option(
+    "--class-kb-path",
+    type=ExpandedPath(path_type=pathlib.Path, dir_okay=False, exists=True),
+    default=None,
+    help="Pairs KB (*.pairs.csv) the mentions were embedded with; required unless --class-view raw.",
+)
+@click.option(
     "--batch-size",
     type=click.INT,
     default=1000,
@@ -181,7 +204,7 @@ Metrics (same two-level stack as model selection):
 )
 @click.option(
     "--selected-labels-kb-path",
-    type=click.Path(path_type=pathlib.Path),
+    type=ExpandedPath(path_type=pathlib.Path),
     default=None,
     help="Optional path to selected labels KB CSV. If provided, clustering uses only those labels.",
 )
@@ -219,7 +242,7 @@ Metrics (same two-level stack as model selection):
 )
 @click.option(
     "--checkpoint-path",
-    type=click.Path(path_type=pathlib.Path),
+    type=ExpandedPath(path_type=pathlib.Path),
     default=None,
     help=f"Checkpoint JSON path (default: <report-path>/{DEFAULT_CHECKPOINT_NAME})",
 )
@@ -236,6 +259,16 @@ Metrics (same two-level stack as model selection):
     default="lda",
     show_default=True,
     help="Estimator saved on Linker when fitting from this pipeline (analysis always logs both).",
+)
+@click.option(
+    "--persist-labels/--no-persist-labels",
+    default=False,
+    show_default=True,
+    help=(
+        "Write per-bootstrap cluster assignments to sample_cluster_labels.parquet, so "
+        "cluster-identity stability can be measured across draws (run/analysis/"
+        "cluster_stability.py). Off by default: it adds one row per mention per draw."
+    ),
 )
 def main(
     input_parquet: pathlib.Path,
@@ -256,6 +289,8 @@ def main(
     max_mentions_per_entity: int | None,
     max_mentions_negative: int | None,
     mention_cap_seed: int | None,
+    class_view: str,
+    class_kb_path: pathlib.Path | None,
     batch_size: int,
     n_sample: int,
     prefix: str,
@@ -269,6 +304,7 @@ def main(
     checkpoint_path: pathlib.Path | None,
     negative_label: str,
     screener_kind: str,
+    persist_labels: bool,
 ) -> None:
     run_dim_selection(
         input_parquet=input_parquet,
@@ -289,6 +325,8 @@ def main(
         max_mentions_per_entity=max_mentions_per_entity,
         max_mentions_negative=max_mentions_negative,
         mention_cap_seed=seed if mention_cap_seed is None else mention_cap_seed,
+        class_view=check_class_view(class_view, class_kb_path),
+        class_kb_path=class_kb_path,
         batch_size=batch_size,
         n_sample=n_sample,
         prefix=prefix,
@@ -302,6 +340,7 @@ def main(
         checkpoint_path=checkpoint_path,
         negative_label=negative_label,
         screener_kind=screener_kind,
+        persist_labels=persist_labels,
     )
 
 

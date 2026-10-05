@@ -2,9 +2,10 @@ import click
 import pathlib
 import logging
 
-from pelinker.config import EmbeddingModelMetadata, EmbeddingTrainingConfig
-from pelinker.embedder import embed_kb_corpus
-from pelinker.onto import NEGATIVE_LABEL
+from pelinker.core.config import EmbeddingModelMetadata, EmbeddingTrainingConfig
+from pelinker.embed.corpus import embed_kb_corpus
+from pelinker.core.onto import NEGATIVE_LABEL
+from pelinker.core.paths import ExpandedPath
 
 logger = logging.getLogger(__name__)
 
@@ -24,19 +25,19 @@ logger = logging.getLogger(__name__)
 )
 @click.option(
     "--input-text-table-path",
-    type=click.Path(path_type=pathlib.Path),
+    type=ExpandedPath(path_type=pathlib.Path),
     default=pathlib.Path("data/test/mag_sample.tsv.gz"),
     help="Input file (TSV/CSV, optionally gzipped) with pmid and text columns. Headers are auto-detected.",
 )
 @click.option(
     "--kb-csv-path",
-    type=click.Path(path_type=pathlib.Path),
+    type=ExpandedPath(path_type=pathlib.Path),
     default=pathlib.Path("data/derived/properties.synthesis.2.csv"),
     help="Path to csv with `label`, `entity_id` columns.",
 )
 @click.option(
     "--output-parquet-path",
-    type=click.Path(path_type=pathlib.Path),
+    type=ExpandedPath(path_type=pathlib.Path),
     help="output Parquet file to append to",
 )
 @click.option(
@@ -62,7 +63,7 @@ logger = logging.getLogger(__name__)
 @click.option(
     "--nlp-model",
     type=click.STRING,
-    default="en_core_web_trf",
+    default="en_core_web_lg",
     help="spaCy model to use for tokenization/lemmas.",
 )
 @click.option(

@@ -7,7 +7,7 @@ import pathlib
 
 import pytest
 
-from pelinker.model_selection_checkpoint import (
+from pelinker.search.model_selection_checkpoint import (
     CHECKPOINT_VERSION,
     ModelSelectionCheckpoint,
     combination_key_from_members,
@@ -18,12 +18,12 @@ from pelinker.model_selection_checkpoint import (
     reconcile_fusion_checkpoint_params,
     save_checkpoint_atomic,
 )
-from pelinker.reporting import (
+from pelinker.reports.schema import (
     ClusteringSearchSummaryRow,
     HyperparameterSearchStats,
     MeanWithUncertainty,
-    clustering_search_summary_row_from_flat_dict,
 )
+from pelinker.reports.summary import clustering_search_summary_row_from_flat_dict
 
 
 def test_combination_key_sorted_stable() -> None:

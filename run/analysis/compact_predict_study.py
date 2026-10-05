@@ -38,20 +38,20 @@ import pandas as pd
 from hdbscan import approximate_predict
 from sklearn.metrics import adjusted_rand_score
 
-from pelinker.config import TransformConfig
-from pelinker.clustering_fit import fit_manifold_clustering
-from pelinker.distillation import (
+from pelinker.core.config import TransformConfig
+from pelinker.clustering.fit import fit_manifold_clustering
+from pelinker.linker.distillation import (
     cluster_to_entity_map,
     grouped_holdout_split,
     labels_to_entities,
 )
-from pelinker.entity_head import (
+from pelinker.linker.entity_head import (
     EntityHead,
     fit_linear_svc_entity_head,
     fit_mlp_entity_head,
 )
-from pelinker.onto import NEGATIVE_LABEL
-from pelinker.transform import (
+from pelinker.core.onto import NEGATIVE_LABEL
+from pelinker.clustering.transform import (
     EmbeddingTransformer,
     is_parametric_umap,
     save_clustering_manifold,
@@ -113,7 +113,7 @@ def _split_idx(
 
     Previously a plain row shuffle, which put mentions of the same document on both
     sides and made every agreement number optimistic. Grouping is delegated to
-    :func:`~pelinker.distillation.grouped_holdout_split` so the study and the in-fit
+    :func:`~pelinker.linker.distillation.grouped_holdout_split` so the study and the in-fit
     measurement leak the same way (i.e. not at all) and stay comparable.
     """
     hold_split = grouped_holdout_split(frame, holdout_fraction=0.20, random_state=seed)

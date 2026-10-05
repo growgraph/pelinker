@@ -1,23 +1,23 @@
 import torch
 
-from pelinker.onto import (
-    ChunkMapper,
+from pelinker.core.onto import (
     Expression,
     ExpressionHolder,
     ExpressionHolderBatch,
     NEGATIVE_LABEL,
     WordGrouping,
 )
-from pelinker.util import (
+from pelinker.text.chunking import ChunkMapper
+from pelinker.core.onto import SimplifiedToken
+from pelinker.text.chunking import split_text_into_batches
+from pelinker.text.embed import extract_and_embed_mentions
+from pelinker.text.tokenize import (
     get_word_boundaries,
     keep_expression_for_prediction,
     map_spans_to_spans_basic,
-    text_to_tokens,
     map_words_to_tokens,
-    split_text_into_batches,
+    text_to_tokens,
     token_list_with_window,
-    SimplifiedToken,
-    extract_and_embed_mentions,
 )
 
 
@@ -143,6 +143,31 @@ def test_map_spans_to_spans_basic_overlapping_sliding_windows():
     assert miti[(6, 18)] == [1, 2]
 
 
+def test_map_spans_to_spans_basic_matches_brute_force():
+    """The sorted-span fast path and the unsorted fallback agree with a full scan."""
+    import random
+
+    rng = random.Random(7)
+    for _ in range(200):
+        cuts = sorted(rng.sample(range(1, 80), 12))
+        tokens = [(a, b) for a, b in zip([0] + cuts, cuts)] + [(0, 0)] * 3
+        if rng.random() < 0.3:
+            rng.shuffle(tokens)
+        words = []
+        for _ in range(15):
+            a = rng.randrange(0, 80)
+            words.append((a, a + rng.randrange(1, 20)))
+        expected = {
+            w: [
+                j
+                for j, (ta, tb) in enumerate(tokens)
+                if tb > ta and ta < w[1] and tb > w[0]
+            ]
+            for w in words
+        }
+        assert map_spans_to_spans_basic(words, tokens) == expected
+
+
 class _FakeChunkMapper:
     @staticmethod
     def map_chunk_to_text(_itext, _ichunk):
@@ -154,6 +179,7 @@ class _FakeReport:
         self.texts = texts
         self._by_wg = by_wg
         self.chunk_mapper = _FakeChunkMapper()
+        self.stokens_per_chunk = None  # no parse: every label is matched lexically
 
     def available_groupings(self):
         return list(self._by_wg.keys())
@@ -193,11 +219,11 @@ def _fake_report_for_negatives():
 
 def test_extract_mentions_negative_sampling_is_deterministic(monkeypatch):
     monkeypatch.setattr(
-        "pelinker.util.texts_to_vrep",
+        "pelinker.text.embed.texts_to_vrep",
         lambda *args, **kwargs: _fake_report_for_negatives(),
     )
     monkeypatch.setattr(
-        "pelinker.util.text_to_tokens",
+        "pelinker.text.embed.text_to_tokens",
         lambda nlp, text: [_st(0, text, lemma=text.lower())],
     )
     rows_a = extract_and_embed_mentions(
@@ -230,11 +256,11 @@ def test_extract_mentions_negative_sampling_is_deterministic(monkeypatch):
 
 def test_extract_mentions_negatives_are_global_not_per_entity(monkeypatch):
     monkeypatch.setattr(
-        "pelinker.util.texts_to_vrep",
+        "pelinker.text.embed.texts_to_vrep",
         lambda *args, **kwargs: _fake_report_for_negatives(),
     )
     monkeypatch.setattr(
-        "pelinker.util.text_to_tokens",
+        "pelinker.text.embed.text_to_tokens",
         lambda nlp, text: [_st(0, text, lemma=text.lower())],
     )
     rows = extract_and_embed_mentions(

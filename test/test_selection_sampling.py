@@ -5,9 +5,9 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from pelinker.config import ClusteringOptimizationConfig
-from pelinker.onto import NEGATIVE_LABEL
-from pelinker.sampling import (
+from pelinker.core.config import ClusteringOptimizationConfig
+from pelinker.core.onto import NEGATIVE_LABEL
+from pelinker.search.sampling import (
     cap_mentions_per_entity,
     draw_selection_sample,
     selection_sample_target_size,

@@ -6,7 +6,7 @@ import math
 
 import pytest
 
-from pelinker.scaling import (
+from pelinker.core.scaling import (
     MIN_RUNGS_FOR_FIT,
     ScaleCurve,
     ScaleRung,

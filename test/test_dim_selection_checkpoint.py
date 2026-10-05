@@ -7,7 +7,7 @@ import pathlib
 
 import pytest
 
-from pelinker.dim_selection.checkpoint import (
+from pelinker.search.dim_selection.checkpoint import (
     CHECKPOINT_VERSION,
     DimSelectionCheckpoint,
     compute_run_fingerprint,
@@ -17,7 +17,7 @@ from pelinker.dim_selection.checkpoint import (
     new_checkpoint,
     save_checkpoint_atomic,
 )
-from pelinker.dim_selection.grids import cell_key
+from pelinker.search.dim_selection.grids import cell_key
 
 
 def test_checkpoint_save_load_roundtrip(tmp_path: pathlib.Path) -> None:

@@ -8,22 +8,24 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from pelinker.onto import NEGATIVE_LABEL
+from pelinker.core.onto import NEGATIVE_LABEL
 from pelinker.plotting import diagnostics_to_pairgrid_dataframe
-from pelinker.reporting import (
-    ClusteringHyperparameters,
-    LinkerFitDiagnostics,
-    ModelSelectionReport,
-    ClusteringSearchSummaryRow,
-    entity_negative_label_mask_01,
+from pelinker.data.frames import entity_negative_label_mask_01
+from pelinker.reports.io import (
     read_cluster_composition_json,
     read_clustering_report_json,
-    subsample_diagnostics_stratified,
-    summarize_clustering_reports_for_search,
     write_cluster_composition_json,
     write_clustering_report_json,
 )
-from pelinker.cluster_composition_viz import build_cluster_composition_df
+from pelinker.reports.schema import (
+    ClusteringHyperparameters,
+    ClusteringSearchSummaryRow,
+    LinkerFitDiagnostics,
+    ModelSelectionReport,
+    subsample_diagnostics_stratified,
+)
+from pelinker.reports.summary import summarize_clustering_reports_for_search
+from pelinker.clustering.composition import build_cluster_composition_df
 
 
 def _minimal_report(

@@ -7,7 +7,7 @@ import pathlib
 import pandas as pd
 import pytest
 
-from pelinker.grid_export import GRID_COL_CHOSEN_MIN_CLUSTER_SIZE
+from pelinker.search.grid_export import GRID_COL_CHOSEN_MIN_CLUSTER_SIZE
 from pelinker.plotting import _layer_spec_code, plot_dbcv_vs_ari_from_grid
 
 
@@ -54,7 +54,9 @@ def test_plot_dbcv_vs_ari_uses_chosen_mcs_not_other_grid_points(
     """Scatter must use (dbcv, ari) at chosen_min_cluster_size, not other grid rows."""
     df = _grid_df_for_combo(chosen_mcs=20)
     # If the plot used mcs=10 or arbitrary dedupe, means would differ from chosen-mcs values.
-    from pelinker.grid_export import select_grid_points_at_chosen_min_cluster_size
+    from pelinker.search.grid_export import (
+        select_grid_points_at_chosen_min_cluster_size,
+    )
 
     pts = select_grid_points_at_chosen_min_cluster_size(df)
     expected_x = float(pts["dbcv"].mean())

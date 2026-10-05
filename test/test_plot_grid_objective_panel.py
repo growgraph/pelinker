@@ -4,8 +4,10 @@ import pathlib
 
 import pandas as pd
 
-from pelinker.clustering_grid import SmoothedGridOptimumResult
-from pelinker.plotting import plot_metrics_with_error_bars
+from matplotlib import pyplot as plt
+
+from pelinker.clustering.grid import SmoothedGridOptimumResult
+from pelinker.plotting import plot_metrics, plot_metrics_with_error_bars
 
 
 def _synthetic_metrics_list() -> list[pd.DataFrame]:
@@ -38,10 +40,27 @@ def _synthetic_grid_solve() -> SmoothedGridOptimumResult:
         y_objective=(0.55, 0.58, 0.52),
         y_cluster_term=(-0.05, -0.02, -0.08),
         y_smooth=(0.54, 0.57, 0.53),
-        dy_dx=(0.01, 0.0, -0.02),
-        d2y_dx2=(0.0, 0.0, 0.0),
-        selection="plateau_derivative",
+        selection="one_se_paired",
+        argmax_min_cluster_size=30,
+        y_se=(0.02, 0.0, 0.03),
+        y_eligible=(False, True, True),
+        one_se_k=1.0,
+        n_samples=5,
     )
+
+
+def _objective_axis(monkeypatch) -> list[plt.Axes]:
+    """Capture the figures a plot call closes, so panels can be inspected after the fact."""
+    captured: list[plt.Figure] = []
+    real_close = plt.close
+
+    def _spy(fig):
+        if hasattr(fig, "axes"):
+            captured.append(fig)
+        return real_close(fig)
+
+    monkeypatch.setattr(plt, "close", _spy)
+    return captured
 
 
 def test_plot_metrics_with_error_bars_writes_four_panels_with_grid_solve(
@@ -58,14 +77,51 @@ def test_plot_metrics_with_error_bars_writes_four_panels_with_grid_solve(
     assert out.exists()
 
 
-def test_plot_metrics_with_error_bars_grid_solve_sets_vline(
-    tmp_path: pathlib.Path,
+def test_objective_panel_is_populated_on_the_live_run_path(
+    tmp_path: pathlib.Path, monkeypatch
 ) -> None:
-    out = tmp_path / "metrics.png"
-    solve = _synthetic_grid_solve()
+    """Regression: runners pass ``chosen_min_cluster_size`` and no ``grid_solve``.
+
+    That combination used to short-circuit the solve and leave the fourth axis empty with
+    an "(unavailable)" title in every real run — only the replot path rendered it.
+    """
+    figs = _objective_axis(monkeypatch)
     plot_metrics_with_error_bars(
         _synthetic_metrics_list(),
-        out,
-        grid_solve=solve,
+        tmp_path / "live.png",
+        chosen_min_cluster_size=20.0,
     )
+    assert figs, "no figure captured"
+    ax_obj = figs[-1].axes[3]
+    assert "unavailable" not in ax_obj.get_title().lower()
+    assert ax_obj.lines, "objective panel has no curves"
+
+
+def test_single_sample_plot_metrics_also_gets_an_objective_panel(
+    tmp_path: pathlib.Path, monkeypatch
+) -> None:
+    figs = _objective_axis(monkeypatch)
+    plot_metrics(_synthetic_metrics_list()[0], tmp_path / "single.png")
+    assert figs
+    fig = figs[-1]
+    assert len(fig.axes) == 4
+    ax_obj = fig.axes[3]
+    assert "unavailable" not in ax_obj.get_title().lower()
+    assert ax_obj.lines
+
+
+def test_plot_metrics_with_error_bars_grid_solve_sets_vline(
+    tmp_path: pathlib.Path, monkeypatch
+) -> None:
+    figs = _objective_axis(monkeypatch)
+    out = tmp_path / "metrics.png"
+    solve = _synthetic_grid_solve()
+    plot_metrics_with_error_bars(_synthetic_metrics_list(), out, grid_solve=solve)
     assert out.exists()
+    # The vline marks the solver's choice on every panel.
+    xs = {
+        round(line.get_xdata()[0], 6)
+        for line in figs[-1].axes[0].lines
+        if len(set(line.get_xdata())) == 1
+    }
+    assert float(solve.chosen_min_cluster_size) in xs

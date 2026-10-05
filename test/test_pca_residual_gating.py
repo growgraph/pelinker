@@ -8,9 +8,9 @@ from click.testing import CliRunner
 
 from pelinker.cli import link_files
 from pelinker.model import Linker, LinkerPredictResult
-from pelinker.screener.ambient_screener import NegativeClassScreener
-from pelinker.onto import MentionCandidate, NEGATIVE_LABEL, WordGrouping
-from pelinker.transform import (
+from pelinker.screener.ambient import NegativeClassScreener
+from pelinker.core.onto import MentionCandidate, NEGATIVE_LABEL, WordGrouping
+from pelinker.clustering.transform import (
     EmbeddingTransformer,
     TransformConfig,
     compute_transform_artifacts,

@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 
-from pelinker.embedding_fusion import (
+from pelinker.data.fusion import (
     JOIN_KEYS,
     dedupe_mean_embed_by_keys,
     fused_property_vectors_from_paths,

@@ -1,0 +1,537 @@
+"""KB-out catalog: provenance-bearing cluster entity ids, display names, and ambiguity indices."""
+
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass
+from typing import Any
+
+import pandas as pd
+
+from pelinker.clustering.composition import (
+    HDBSCAN_NOISE_CLUSTER_ID,
+    NOISE_CLUSTER_LABEL,
+    aggregate_cluster_entity_mass,
+    cluster_entity_mass_summary,
+    cluster_score_percentile_summary,
+    filter_emergent_assignments,
+)
+from pelinker.core.config import ClusterCompositionSnapshot, KBConfig
+from pelinker.core.onto import NEGATIVE_LABEL
+from pelinker.kb.classes import RELATION_DIRECTION_COLUMN
+from pelinker.linker.cluster_training import (
+    _disambiguate_consensus_names,
+    consensus_cluster_names,
+)
+
+KB_OUT_SCHEMA = "pelinker.kb.kb_out.v1"
+_MAX_SPLIT_MENTIONS = 500
+_SLUG_INVALID_RE = re.compile(r"[^a-zA-Z0-9._-]+")
+
+
+@dataclass(frozen=True, slots=True)
+class KbOutNamingConfig:
+    """Parameters for composite cluster display names."""
+
+    min_fraction: float = 0.05
+    top_n: int = 3
+    ambiguity_min_capture: float = 0.10
+    style: str = "weighted_dash"
+
+
+@dataclass(frozen=True, slots=True)
+class KbOutFitProvenance:
+    """Fit-time parameters stored in the KB-out catalog."""
+
+    min_cluster_size: int
+    clustering_sample_index: int = 0
+    seed: int | None = None
+    class_view: str | None = None
+    """Class view the fit's agreement metrics scored against (:mod:`pelinker.kb.classes`)."""
+    class_kb_sha256: str | None = None
+    """Content hash of the pairs KB that view was computed from."""
+
+
+def kb_slug_from_config(kb_config: KBConfig | None, *, fallback: str = "kb") -> str:
+    """Sanitized ``{name}_{version}`` slug for KB-out entity id prefixes."""
+    if kb_config is None:
+        return _sanitize_kb_slug(fallback)
+    name = kb_config.name.strip() or fallback
+    return _sanitize_kb_slug(f"{name}_{kb_config.version}")
+
+
+def _sanitize_kb_slug(raw: str) -> str:
+    slug = _SLUG_INVALID_RE.sub("_", raw.strip())
+    slug = slug.strip("_")
+    return slug or "kb"
+
+
+def format_kb_out_entity_id(kb_slug: str, cluster_id: int) -> str:
+    """Provenance prefix + zero-padded HDBSCAN cluster id."""
+    return f"{kb_slug}::C{int(cluster_id):04d}"
+
+
+def format_cluster_display_name(
+    mass_frac: dict[str, float],
+    *,
+    min_fraction: float = 0.05,
+    top_n: int = 3,
+    pct_decimals: int = 0,
+) -> str:
+    """
+    Composite display name from within-cluster entity fractions.
+
+    Example: ``alpha-67--beta-33--gamma-15`` (top components above ``min_fraction``).
+    Falls back to the single top entity when none meet the threshold.
+    """
+    if not mass_frac:
+        return ""
+    sorted_entities = sorted(mass_frac.items(), key=lambda kv: (-kv[1], kv[0]))
+    significant = [e for e, f in sorted_entities if f >= min_fraction][:top_n]
+    if not significant:
+        significant = [sorted_entities[0][0]]
+
+    parts: list[str] = []
+    for ent in significant:
+        frac = mass_frac[ent]
+        if pct_decimals <= 0:
+            pct = int(round(frac * 100.0))
+        else:
+            pct = round(frac * 100.0, pct_decimals)
+        parts.append(f"{ent}-{pct}")
+    return "--".join(parts)
+
+
+def build_entity_membership(
+    composition: ClusterCompositionSnapshot,
+    cluster_id_to_entity_id: dict[int, str],
+) -> dict[str, list[dict[str, Any]]]:
+    """KB-in entity label → all emergent clusters where it has mass."""
+    by_entity: dict[str, list[dict[str, Any]]] = {}
+    for cid, mass_frac in composition.cluster_within_fraction.items():
+        if int(cid) == HDBSCAN_NOISE_CLUSTER_ID:
+            continue
+        capture = composition.cluster_fraction_of_property_mass.get(int(cid), {})
+        entity_id = cluster_id_to_entity_id.get(int(cid))
+        for ent, within_frac in mass_frac.items():
+            by_entity.setdefault(str(ent), []).append(
+                {
+                    "cluster_id": int(cid),
+                    "entity_id": entity_id,
+                    "within_cluster_fraction": float(within_frac),
+                    "capture_fraction": float(capture.get(ent, 0.0)),
+                }
+            )
+    for ent in by_entity:
+        by_entity[ent] = sorted(
+            by_entity[ent],
+            key=lambda row: (-float(row["capture_fraction"]), int(row["cluster_id"])),
+        )
+    return by_entity
+
+
+def find_ambiguous_entities(
+    entity_membership: dict[str, list[dict[str, Any]]],
+    *,
+    min_capture: float,
+) -> list[dict[str, Any]]:
+    """Entities with capture ≥ ``min_capture`` in two or more clusters (polysemy)."""
+    out: list[dict[str, Any]] = []
+    for ent, rows in sorted(entity_membership.items()):
+        significant = [r for r in rows if float(r["capture_fraction"]) >= min_capture]
+        if len(significant) < 2:
+            continue
+        out.append(
+            {
+                "entity": ent,
+                "clusters": significant,
+                "n_clusters": len(significant),
+            }
+        )
+    return out
+
+
+def find_split_mentions(
+    assignments: pd.DataFrame,
+    *,
+    min_clusters: int = 2,
+    max_rows: int = _MAX_SPLIT_MENTIONS,
+) -> list[dict[str, Any]]:
+    """
+    Mentions assigned to more than one emergent cluster (homonymy signal).
+
+    Groups by ``(pmid, mention, a_abs)`` when ``a_abs`` is present; otherwise
+    ``(pmid, mention)``.
+    """
+    required = {"pmid", "mention", "cluster"}
+    if not required.issubset(assignments.columns):
+        return []
+    work = filter_emergent_assignments(assignments)
+    if len(work) == 0:
+        return []
+
+    has_abs = "a_abs" in work.columns
+    keys: list[tuple[str, ...]] = []
+    cluster_lists: list[list[int]] = []
+    entity_lists: list[list[str]] = []
+
+    if has_abs:
+        grouped = work.groupby(
+            [
+                work["pmid"].astype(str),
+                work["mention"].astype(str),
+                work["a_abs"].astype("Int64"),
+            ],
+            sort=False,
+        )
+    else:
+        grouped = work.groupby(
+            [work["pmid"].astype(str), work["mention"].astype(str)],
+            sort=False,
+        )
+
+    for key, grp in grouped:
+        clusters = sorted({int(c) for c in grp["cluster"].astype(int)})
+        if len(clusters) < min_clusters:
+            continue
+        if isinstance(key, tuple):
+            key_tuple = tuple(str(k) if k is not pd.NA else "" for k in key)
+        else:
+            key_tuple = (str(key),)
+        keys.append(key_tuple)
+        cluster_lists.append(clusters)
+        entity_lists.append(sorted({str(e) for e in grp["entity"].astype(str)}))
+
+    if not keys:
+        return []
+
+    order = sorted(
+        range(len(keys)),
+        key=lambda i: (-len(cluster_lists[i]), keys[i]),
+    )[: int(max_rows)]
+
+    out: list[dict[str, Any]] = []
+    for i in order:
+        key = keys[i]
+        row: dict[str, Any] = {
+            "pmid": key[0],
+            "mention": key[1],
+            "cluster_ids": cluster_lists[i],
+            "entities": entity_lists[i],
+            "n_clusters": len(cluster_lists[i]),
+        }
+        if has_abs and len(key) > 2:
+            abs_val = key[2]
+            row["a_abs"] = int(abs_val) if abs_val != "" else None
+        out.append(row)
+    return out
+
+
+def build_kb_out_catalog(
+    composition: ClusterCompositionSnapshot,
+    assignments: pd.DataFrame,
+    kb_in_labels_map: dict[str, str],
+    *,
+    kb_config: KBConfig | None,
+    fit_provenance: KbOutFitProvenance,
+    naming: KbOutNamingConfig | None = None,
+    kb_in_labels_map_path: str | None = None,
+) -> dict[str, Any]:
+    """Build the canonical KB-out catalog (schema ``pelinker.kb.kb_out.v1``)."""
+    naming_cfg = naming or KbOutNamingConfig()
+    kb_slug = kb_slug_from_config(kb_config)
+
+    mass = aggregate_cluster_entity_mass(
+        assignments, weight_by_entity=True, exclude_noise=True
+    )
+    cluster_totals: dict[int, float] = {}
+    if not mass.empty:
+        for cid, grp in mass.groupby("cluster", sort=False):
+            cluster_totals[int(cid)] = float(grp["count"].sum())
+
+    ordered_ids = sorted(
+        cluster_totals.keys(),
+        key=lambda c: (-cluster_totals[c], c),
+    )
+
+    short_labels = consensus_cluster_names(composition)
+    raw_display: dict[int, str] = {}
+    for cid in ordered_ids:
+        if int(cid) == HDBSCAN_NOISE_CLUSTER_ID:
+            continue
+        mass_frac = composition.cluster_within_fraction.get(int(cid), {})
+        raw_display[int(cid)] = format_cluster_display_name(
+            mass_frac,
+            min_fraction=naming_cfg.min_fraction,
+            top_n=naming_cfg.top_n,
+        )
+    display_names = _disambiguate_consensus_names(raw_display)
+
+    cluster_id_to_entity_id: dict[int, str] = {}
+    clusters_out: list[dict[str, Any]] = []
+    labels_map: dict[str, str] = {}
+
+    emergent = filter_emergent_assignments(assignments)
+    for cid in ordered_ids:
+        if int(cid) == HDBSCAN_NOISE_CLUSTER_ID:
+            continue
+        icid = int(cid)
+        entity_id = format_kb_out_entity_id(kb_slug, icid)
+        cluster_id_to_entity_id[icid] = entity_id
+        display_name = display_names.get(icid, str(icid))
+        labels_map[entity_id] = display_name
+
+        mass_frac = composition.cluster_within_fraction.get(icid, {})
+        capture = composition.cluster_fraction_of_property_mass.get(icid, {})
+        top_sorted = sorted(mass_frac.items(), key=lambda kv: (-kv[1], kv[0]))[
+            : naming_cfg.top_n
+        ]
+        components = [
+            {
+                "entity": ent,
+                "within_cluster_fraction": float(frac),
+                "capture_fraction": float(capture.get(ent, 0.0)),
+            }
+            for ent, frac in top_sorted
+        ]
+        dominant_fraction = float(top_sorted[0][1]) if top_sorted else 0.0
+        mention_count = int((emergent["cluster"].astype(int) == icid).sum())
+        clusters_out.append(
+            {
+                "cluster_id": icid,
+                "entity_id": entity_id,
+                "display_name": display_name,
+                "short_label": short_labels.get(icid, str(icid)),
+                "weighted_mass": cluster_totals.get(icid, 0.0),
+                "mention_count": mention_count,
+                "dominant_entity_fraction": dominant_fraction,
+                "components": components,
+                "provenance": {
+                    "hdbscan_cluster_id": icid,
+                    "kb_slug": kb_slug,
+                },
+            }
+        )
+
+    entity_membership = build_entity_membership(composition, cluster_id_to_entity_id)
+    ambiguous_entities = find_ambiguous_entities(
+        entity_membership,
+        min_capture=naming_cfg.ambiguity_min_capture,
+    )
+    split_mentions = find_split_mentions(assignments)
+
+    summary = cluster_entity_mass_summary(assignments)
+    score_pcts = cluster_score_percentile_summary(assignments)
+    noise_within = composition.cluster_within_fraction.get(HDBSCAN_NOISE_CLUSTER_ID, {})
+    noise_top = sorted(noise_within.items(), key=lambda kv: (-kv[1], kv[0]))[
+        : naming_cfg.top_n
+    ]
+    noise_diag: dict[str, Any] = {
+        "label": NOISE_CLUSTER_LABEL,
+        "n_mentions": int(summary["n_noise_mentions"]),
+        "noise_fraction": float(summary["noise_fraction"]),
+        "top_entities": [
+            {
+                "entity": ent,
+                "within_cluster_fraction": float(frac),
+            }
+            for ent, frac in noise_top
+        ],
+        "cluster_score_percentiles": score_pcts["noise"],
+    }
+
+    kb_out_meta: dict[str, Any] = {
+        "entity_count": len(labels_map),
+    }
+    if kb_config is not None:
+        kb_out_meta.update(
+            {
+                "name": kb_config.name,
+                "version": kb_config.version,
+                "created_at": kb_config.created_at.isoformat(),
+                "description": kb_config.description,
+            }
+        )
+
+    kb_in_provenance: dict[str, Any] = {
+        "entity_count": len(kb_in_labels_map),
+        "labels_map": dict(kb_in_labels_map),
+    }
+    if kb_in_labels_map_path is not None:
+        kb_in_provenance["labels_map_path"] = kb_in_labels_map_path
+    if kb_config is not None:
+        kb_in_provenance["name"] = kb_config.name
+        kb_in_provenance["version"] = kb_config.version
+
+    fit_prov: dict[str, Any] = {
+        "min_cluster_size": int(fit_provenance.min_cluster_size),
+        "clustering_sample_index": int(fit_provenance.clustering_sample_index),
+    }
+    if fit_provenance.seed is not None:
+        fit_prov["seed"] = int(fit_provenance.seed)
+    if fit_provenance.class_view is not None:
+        fit_prov["class_view"] = fit_provenance.class_view
+    if fit_provenance.class_kb_sha256 is not None:
+        fit_prov["class_kb_sha256"] = fit_provenance.class_kb_sha256
+
+    return {
+        "schema": KB_OUT_SCHEMA,
+        "kb_out": kb_out_meta,
+        "provenance": {
+            "kb_in": kb_in_provenance,
+            "fit": fit_prov,
+        },
+        "naming": {
+            "min_fraction": float(naming_cfg.min_fraction),
+            "top_n": int(naming_cfg.top_n),
+            "ambiguity_min_capture": float(naming_cfg.ambiguity_min_capture),
+            "style": naming_cfg.style,
+        },
+        "n_emergent_clusters": int(summary["n_emergent_clusters"]),
+        "n_noise_mentions": int(summary["n_noise_mentions"]),
+        "noise_fraction": float(summary["noise_fraction"]),
+        "noise": noise_diag,
+        "clusters": clusters_out,
+        "entity_membership": entity_membership,
+        "ambiguous_entities": ambiguous_entities,
+        "split_mentions": split_mentions,
+        "labels_map": labels_map,
+        "cluster_id_to_entity_id": {
+            str(k): v for k, v in sorted(cluster_id_to_entity_id.items())
+        },
+    }
+
+
+def kb_out_to_kb_in_map(catalog: dict[str, Any]) -> dict[str, str]:
+    """Minted KB-out entity id → dominant input-KB entity id.
+
+    Each catalog cluster carries its ``components`` (KB-in entity *labels* with
+    within-cluster mass, dominant first) and the KB-in provenance block carries the
+    ``entity_id → label`` map. Resolving the dominant component's label back to its id
+    yields the translation :func:`~pelinker.kb.ground_truth
+    .score_predictions_against_ground_truth` needs as ``predicted_id_to_kb_in`` — without
+    it, minted ids (``kb::C0007``) never match gold ids (``PEL.000032``) and entity
+    accuracy stays undefined.
+
+    Clusters whose dominant component is the synthetic negative label, or whose label has
+    no KB-in id, are omitted: predictions there stay non-comparable rather than being
+    scored against an arbitrary id. When several KB-in ids share one label, the
+    lexicographically smallest id wins, deterministically.
+    """
+    kb_in = catalog.get("provenance", {}).get("kb_in", {})
+    id_to_label = kb_in.get("labels_map", {})
+    label_to_id: dict[str, str] = {}
+    for eid in sorted(id_to_label):
+        label = str(id_to_label[eid])
+        label_to_id.setdefault(label, str(eid))
+
+    out: dict[str, str] = {}
+    for cluster in catalog.get("clusters", []):
+        components = cluster.get("components") or []
+        if not components:
+            continue
+        dominant_label = str(components[0]["entity"])
+        if dominant_label == NEGATIVE_LABEL:
+            continue
+        kb_in_id = label_to_id.get(dominant_label)
+        if kb_in_id is None:
+            continue
+        out[str(cluster["entity_id"])] = kb_in_id
+    return out
+
+
+def cluster_direction_summary(
+    assignments: pd.DataFrame,
+    *,
+    direction_column: str = RELATION_DIRECTION_COLUMN,
+) -> dict[int, dict[str, Any]]:
+    """Per emergent cluster: the share of mention mass in each direction, and the mode.
+
+    Directions are relative to each mention's canonical relation (see
+    :func:`pelinker.kb.classes.add_view_columns`), so a cluster that holds both voices of
+    one relation shows up as a mixed cluster here rather than as a merge of two entries.
+    The dominant direction breaks ties by name, deterministically. Noise is excluded.
+    """
+    if direction_column not in assignments.columns or "cluster" not in assignments:
+        return {}
+    work = assignments.loc[
+        assignments["cluster"].astype(int) != HDBSCAN_NOISE_CLUSTER_ID,
+        ["cluster", direction_column],
+    ]
+    out: dict[int, dict[str, Any]] = {}
+    for cid, grp in work.groupby("cluster", sort=True):
+        counts = grp[direction_column].astype(str).value_counts()
+        total = int(counts.sum())
+        if total == 0:
+            continue
+        mix = {str(d): float(n) / total for d, n in sorted(counts.items())}
+        dominant = min(mix, key=lambda d: (-mix[d], d))
+        out[int(cid)] = {
+            "direction_mix": mix,
+            "dominant_direction": dominant,
+            "direction_mentions": total,
+        }
+    return out
+
+
+def annotate_cluster_directions(
+    catalog: dict[str, Any], assignments: pd.DataFrame
+) -> dict[str, str]:
+    """Add ``direction_mix`` / ``dominant_direction`` to each catalog cluster, in place.
+
+    Returns:
+        KB-out entity id → dominant direction, for the clusters that have one. This is
+        the direction the linker emits for a mention it links to that entity.
+    """
+    summary = cluster_direction_summary(assignments)
+    by_entity: dict[str, str] = {}
+    for cluster in catalog.get("clusters", []):
+        info = summary.get(int(cluster["cluster_id"]))
+        if info is None:
+            continue
+        cluster.update(info)
+        by_entity[str(cluster["entity_id"])] = str(info["dominant_direction"])
+    return by_entity
+
+
+def kb_out_to_reldir_map(catalog: dict[str, Any]) -> dict[str, tuple[str, str | None]]:
+    """Minted KB-out entity id → (dominant input-KB id, dominant direction).
+
+    The id half is :func:`kb_out_to_kb_in_map`. The direction is ``None`` for a catalog
+    built without a class view, which carries no per-cluster direction.
+    """
+    ids = kb_out_to_kb_in_map(catalog)
+    direction_of = {
+        str(c["entity_id"]): c.get("dominant_direction")
+        for c in catalog.get("clusters", [])
+    }
+    return {eid: (kb_in, direction_of.get(eid)) for eid, kb_in in ids.items()}
+
+
+def cluster_labels_from_catalog(
+    catalog: dict[str, Any],
+    *,
+    label_kind: str = "display",
+) -> dict[int, str]:
+    """Build ``cluster_id → label`` from a KB-out catalog.
+
+    Injects HDBSCAN noise (``-1`` → ``noise``) when the catalog has a ``noise`` block
+    or when any assignment-side consumer needs a display label for outliers.
+    """
+    clusters = catalog.get("clusters", [])
+    out: dict[int, str] = {}
+    for cluster in clusters:
+        cid = int(cluster["cluster_id"])
+        if label_kind == "short":
+            out[cid] = str(cluster.get("short_label", cluster.get("display_name", cid)))
+        else:
+            out[cid] = str(cluster.get("display_name", cid))
+    noise_block = catalog.get("noise")
+    if isinstance(noise_block, dict):
+        out.setdefault(
+            HDBSCAN_NOISE_CLUSTER_ID,
+            str(noise_block.get("label", NOISE_CLUSTER_LABEL)),
+        )
+    else:
+        out.setdefault(HDBSCAN_NOISE_CLUSTER_ID, NOISE_CLUSTER_LABEL)
+    return out

@@ -5,7 +5,7 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
-from pelinker.dim_selection.grids import (
+from pelinker.search.dim_selection.grids import (
     cell_key,
     cluster_viz_components_for_umap,
     coarse_cells,

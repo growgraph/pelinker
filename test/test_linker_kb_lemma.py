@@ -7,12 +7,12 @@ from typing import cast
 
 import torch
 
-from pelinker.linker_kb_lemma import (
+from pelinker.linker.kb_lemma import (
     enrich_entity_predictions_kb_validation,
     lookup_kb_training_entity_label,
 )
 from pelinker.model import Linker, LinkerPredictResult
-from pelinker.onto import MentionCandidate, WordGrouping
+from pelinker.core.onto import MentionCandidate, WordGrouping
 
 
 def test_lookup_kb_training_entity_label() -> None:

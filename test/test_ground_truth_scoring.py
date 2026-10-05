@@ -7,12 +7,12 @@ from pathlib import Path
 
 import pytest
 
-from pelinker.ground_truth import (
+from pelinker.kb.ground_truth import (
     GtSpan,
     load_ground_truth_spans,
     score_predictions_against_ground_truth,
 )
-from pelinker.linker_kb_lemma import aggregate_kb_lemma_validation
+from pelinker.linker.kb_lemma import aggregate_kb_lemma_validation
 
 
 def _pred(a: int, b: int, eid: str | None = None, itext: int = 0) -> dict:
@@ -53,6 +53,63 @@ def test_loads_a_list_of_documents_and_defaults_itext(tmp_path: Path) -> None:
 def test_zero_length_span_is_rejected() -> None:
     with pytest.raises(ValueError, match="span end must exceed start"):
         GtSpan(itext=0, a=5, b=5)
+
+
+def test_loads_direction_and_provenance_fields(tmp_path: Path) -> None:
+    p = tmp_path / "gt.json"
+    p.write_text(
+        json.dumps(
+            {
+                "text": "IL-6 is activated by TAMs",
+                "ground_truth": [
+                    {
+                        "a": 5,
+                        "b": 20,
+                        "entity_id": "PEL.000032",
+                        "direction": "inverse",
+                        "subject_span": [21, 25],
+                        "object_span": [0, 4],
+                        "surface": "is activated by",
+                        "annotator": "llm-a",
+                        "source": "llm",
+                        "confidence": 0.9,
+                    },
+                    # A legacy hit in the same file stays loadable.
+                    {"a": 0, "b": 4, "entity_id": "PEL.000001"},
+                ],
+            }
+        )
+    )
+
+    spans = load_ground_truth_spans(p)
+
+    assert spans[0].direction == "inverse"
+    assert spans[0].subject_span == (21, 25)
+    assert spans[0].object_span == (0, 4)
+    assert spans[0].source == "llm"
+    assert spans[0].confidence == 0.9
+    assert spans[1].direction is None
+    assert spans[1].subject_span is None
+
+
+def test_unknown_direction_is_rejected() -> None:
+    with pytest.raises(ValueError, match="direction must be one of"):
+        GtSpan(itext=0, a=0, b=3, direction="backwards")
+
+
+def test_malformed_subject_span_is_rejected(tmp_path: Path) -> None:
+    p = tmp_path / "gt.json"
+    p.write_text(
+        json.dumps(
+            {
+                "text": "x",
+                "ground_truth": [{"a": 0, "b": 3, "subject_span": [1]}],
+            }
+        )
+    )
+
+    with pytest.raises(ValueError, match="subject_span must be"):
+        load_ground_truth_spans(p)
 
 
 # ----------------------------------------------------------------------- detection
@@ -234,3 +291,53 @@ def test_unenriched_rows_lower_the_resolvable_rate_rather_than_the_match_rate() 
     assert m.n_predicted == 2
     assert m.n_resolvable == 1
     assert m.match_rate == 1.0
+
+
+def test_a_converse_id_counts_as_the_relation_it_names() -> None:
+    """Gold is canonical; "regulated by" is the same relation seen from the other end."""
+    preds = [_pred(0, 5, "RO.2")]
+    gold = [_gold(0, 5, "PEL.1")]
+
+    s = score_predictions_against_ground_truth(
+        preds, gold, canonicalize={"RO.2": "PEL.1", "PEL.1": "PEL.1"}
+    )
+
+    assert s.n_id_comparable == 1
+    assert s.entity_accuracy == 1.0
+
+
+def test_canonicalization_does_not_excuse_a_genuinely_wrong_id() -> None:
+    preds = [_pred(0, 5, "PEL.9")]
+    gold = [_gold(0, 5, "PEL.1")]
+
+    s = score_predictions_against_ground_truth(
+        preds, gold, canonicalize={"RO.2": "PEL.1", "PEL.1": "PEL.1", "PEL.9": "PEL.9"}
+    )
+
+    assert (s.n_id_comparable, s.n_id_correct) == (1, 0)
+
+
+def test_an_id_outside_the_canonical_map_is_left_alone() -> None:
+    """An id the KB never mentions is not this map's to rewrite — it is still comparable."""
+    preds = [_pred(0, 5, "PEL.1")]
+    gold = [_gold(0, 5, "PEL.1")]
+
+    s = score_predictions_against_ground_truth(
+        preds, gold, canonicalize={"RO.2": "PEL.1"}
+    )
+
+    assert s.entity_accuracy == 1.0
+
+
+def test_canonicalization_applies_after_the_kb_out_bridge() -> None:
+    preds = [_pred(0, 5, "kb::C0007")]
+    gold = [_gold(0, 5, "PEL.1")]
+
+    s = score_predictions_against_ground_truth(
+        preds,
+        gold,
+        predicted_id_to_kb_in={"kb::C0007": "RO.2"},
+        canonicalize={"RO.2": "PEL.1"},
+    )
+
+    assert s.entity_accuracy == 1.0

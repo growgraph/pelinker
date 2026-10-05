@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import numpy as np
 
-from pelinker.config import ManifoldOovScreenerConfig
-from pelinker.screener.projection_screener import (
+from pelinker.core.config import ManifoldOovScreenerConfig
+from pelinker.screener.projection import (
     ManifoldOovScoreModel,
     evaluate_projection_cv,
     fit_projection_score_model,
