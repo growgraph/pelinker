@@ -24,7 +24,7 @@ jobs:
             run: uv sync --locked --extra dev
 
         -   name: Cache Hugging Face weights
-            uses: actions/cache@v4
+            uses: actions/cache@v6
             with:
                 path: ~/.cache/huggingface
                 key: hf-${{ runner.os }}-${{ hashFiles('uv.lock') }}
